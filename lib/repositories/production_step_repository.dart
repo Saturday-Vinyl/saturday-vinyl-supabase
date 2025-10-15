@@ -21,16 +21,45 @@ class ProductionStepRepository {
           .from('production_steps')
           .select()
           .eq('product_id', productId)
-          .order('step_order');
+          .order('step_order', ascending: true);
 
       final steps = (response as List)
-          .map((json) => ProductionStep.fromJson(json as Map<String, dynamic>))
+          .map((json) => ProductionStep.fromJson(json))
           .toList();
 
       AppLogger.info('Fetched ${steps.length} production steps');
       return steps;
     } catch (error, stackTrace) {
       AppLogger.error('Failed to fetch production steps', error, stackTrace);
+      rethrow;
+    }
+  }
+
+  /// Get all production steps for a product with their associated gCode files
+  Future<List<ProductionStep>> getStepsForProductWithGCode(String productId) async {
+    try {
+      AppLogger.info('Fetching production steps with gCode files for product: $productId');
+
+      final response = await _supabase
+          .from('production_steps')
+          .select('''
+            *,
+            step_gcode_files (
+              *,
+              gcode_files (*)
+            )
+          ''')
+          .eq('product_id', productId)
+          .order('step_order', ascending: true);
+
+      final steps = (response as List)
+          .map((json) => ProductionStep.fromJson(json))
+          .toList();
+
+      AppLogger.info('Fetched ${steps.length} production steps with gCode files');
+      return steps;
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to fetch production steps with gCode files', error, stackTrace);
       rethrow;
     }
   }
@@ -73,6 +102,13 @@ class ProductionStepRepository {
         'file_url': fileUrl,
         'file_name': fileName,
         'file_type': fileType,
+        'step_type': step.stepType.value,
+        'engrave_qr': step.engraveQr,
+        'qr_x_offset': step.qrXOffset,
+        'qr_y_offset': step.qrYOffset,
+        'qr_size': step.qrSize,
+        'qr_power_percent': step.qrPowerPercent,
+        'qr_speed_mm_min': step.qrSpeedMmMin,
         'created_at': now.toIso8601String(),
         'updated_at': now.toIso8601String(),
       });
@@ -86,6 +122,13 @@ class ProductionStepRepository {
         fileUrl: fileUrl,
         fileName: fileName,
         fileType: fileType,
+        stepType: step.stepType,
+        engraveQr: step.engraveQr,
+        qrXOffset: step.qrXOffset,
+        qrYOffset: step.qrYOffset,
+        qrSize: step.qrSize,
+        qrPowerPercent: step.qrPowerPercent,
+        qrSpeedMmMin: step.qrSpeedMmMin,
         createdAt: now,
         updatedAt: now,
       );
@@ -148,6 +191,13 @@ class ProductionStepRepository {
         'file_url': fileUrl,
         'file_name': fileName,
         'file_type': fileType,
+        'step_type': step.stepType.value,
+        'engrave_qr': step.engraveQr,
+        'qr_x_offset': step.qrXOffset,
+        'qr_y_offset': step.qrYOffset,
+        'qr_size': step.qrSize,
+        'qr_power_percent': step.qrPowerPercent,
+        'qr_speed_mm_min': step.qrSpeedMmMin,
         'updated_at': now.toIso8601String(),
       }).eq('id', step.id);
 
@@ -192,7 +242,7 @@ class ProductionStepRepository {
           .eq('id', stepId)
           .single();
 
-      final step = ProductionStep.fromJson(response as Map<String, dynamic>);
+      final step = ProductionStep.fromJson(response);
 
       // Delete from database first
       await _supabase.from('production_steps').delete().eq('id', stepId);

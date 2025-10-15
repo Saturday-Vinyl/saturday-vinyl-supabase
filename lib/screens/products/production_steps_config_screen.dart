@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:saturday_app/config/theme.dart';
 import 'package:saturday_app/models/product.dart';
+import 'package:saturday_app/models/production_step.dart';
 import 'package:saturday_app/providers/auth_provider.dart';
 import 'package:saturday_app/providers/production_step_provider.dart';
 import 'package:saturday_app/screens/products/production_step_form_screen.dart';
@@ -23,6 +24,7 @@ class ProductionStepsConfigScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final hasPermission = ref.watch(hasPermissionProvider('manage_products'));
     final stepsAsync = ref.watch(productionStepsProvider(product.id));
+    final localSteps = ref.watch(localProductionStepsProvider(product.id));
 
     return Scaffold(
       appBar: AppBar(
@@ -62,7 +64,10 @@ class ProductionStepsConfigScreen extends ConsumerWidget {
 
           return stepsAsync.when(
             data: (steps) {
-              if (steps.isEmpty) {
+              // Use local steps if available (for optimistic updates), otherwise use server data
+              final displaySteps = localSteps ?? steps;
+
+              if (displaySteps.isEmpty) {
                 return EmptyState(
                   icon: Icons.list_alt,
                   message: 'No production steps configured.\nAdd your first step to get started.',
@@ -96,17 +101,20 @@ class ProductionStepsConfigScreen extends ConsumerWidget {
                   // Reorderable list
                   Expanded(
                     child: ReorderableListView.builder(
-                      itemCount: steps.length,
+                      buildDefaultDragHandles: false,
+                      padding: const EdgeInsets.only(bottom: 80),
+                      itemCount: displaySteps.length,
                       onReorder: (oldIndex, newIndex) {
-                        _handleReorder(context, ref, steps, oldIndex, newIndex);
+                        _handleReorder(context, ref, displaySteps, oldIndex, newIndex);
                       },
                       itemBuilder: (context, index) {
-                        final step = steps[index];
+                        final step = displaySteps[index];
                         return ProductionStepItem(
                           key: ValueKey(step.id),
                           step: step,
                           isEditable: true,
                           showDragHandle: true,
+                          reorderIndex: index,
                           onEdit: () => _navigateToEditStep(context, ref, step),
                           onDelete: () => _handleDelete(context, ref, step),
                         );
@@ -249,6 +257,16 @@ class ProductionStepsConfigScreen extends ConsumerWidget {
     final step = reorderedSteps.removeAt(oldIndex);
     reorderedSteps.insert(newIndex, step);
 
+    // Update step orders
+    final updatedSteps = <ProductionStep>[];
+    for (int i = 0; i < reorderedSteps.length; i++) {
+      final s = reorderedSteps[i] as ProductionStep;
+      updatedSteps.add(s.copyWith(stepOrder: i + 1));
+    }
+
+    // Optimistically update local state immediately
+    ref.read(localProductionStepsProvider(product.id).notifier).state = updatedSteps;
+
     // Extract step IDs in new order
     final stepIds = reorderedSteps.map((s) => s.id as String).toList();
 
@@ -266,6 +284,9 @@ class ProductionStepsConfigScreen extends ConsumerWidget {
         );
       }
     } catch (error) {
+      // Revert optimistic update on error
+      ref.read(localProductionStepsProvider(product.id).notifier).state = null;
+
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(

@@ -14,6 +14,9 @@ class AppConstants {
   static const String shopifyAccessTokenKey = 'SHOPIFY_ACCESS_TOKEN';
   static const String googleClientIdKey = 'GOOGLE_CLIENT_ID';
   static const String appBaseUrlKey = 'APP_BASE_URL';
+  static const String githubTokenKey = 'GITHUB_TOKEN';
+  static const String githubRepoOwnerKey = 'GITHUB_REPO_OWNER';
+  static const String githubRepoNameKey = 'GITHUB_REPO_NAME';
 
   // API Timeouts (in milliseconds)
   static const int apiTimeoutShort = 10000; // 10 seconds

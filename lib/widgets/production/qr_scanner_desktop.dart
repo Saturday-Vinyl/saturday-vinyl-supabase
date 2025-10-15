@@ -42,7 +42,10 @@ class _QRScannerDesktopState extends State<QRScannerDesktop> {
   }
 
   Future<void> _processInput(String input) async {
-    if (_isProcessing || input.isEmpty) return;
+    // Strip prefix and trim whitespace
+    String cleanInput = input.trim();
+
+    if (_isProcessing || cleanInput.isEmpty) return;
 
     setState(() {
       _isProcessing = true;
@@ -50,8 +53,8 @@ class _QRScannerDesktopState extends State<QRScannerDesktop> {
     });
 
     try {
-      // Process the scanned code
-      final uuid = await _scannerService.processScannedCode(input);
+      // Process the scanned code (stripPrefix already called in service)
+      final uuid = await _scannerService.processScannedCode(cleanInput);
 
       if (mounted) {
         widget.onScanned(uuid);

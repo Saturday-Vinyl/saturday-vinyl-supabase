@@ -41,5 +41,7 @@
 			</array>
 		</dict>
 	</array>
+	<key>NSUSBUsageDescription</key>
+	<string>This app needs access to USB devices to connect to CNC machines and laser cutters for production control.</string>
 </dict>
 </plist>

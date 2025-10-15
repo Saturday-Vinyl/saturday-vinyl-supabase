@@ -9,6 +9,7 @@ class ProductionStepItem extends StatelessWidget {
   final VoidCallback? onDelete;
   final bool isEditable;
   final bool showDragHandle;
+  final int? reorderIndex;
 
   const ProductionStepItem({
     super.key,
@@ -17,6 +18,7 @@ class ProductionStepItem extends StatelessWidget {
     this.onDelete,
     this.isEditable = false,
     this.showDragHandle = false,
+    this.reorderIndex,
   });
 
   @override
@@ -32,10 +34,13 @@ class ProductionStepItem extends StatelessWidget {
         child: Row(
           children: [
             // Drag handle (if enabled)
-            if (showDragHandle) ...[
-              Icon(
-                Icons.drag_indicator,
-                color: SaturdayColors.secondaryGrey,
+            if (showDragHandle && reorderIndex != null) ...[
+              ReorderableDragStartListener(
+                index: reorderIndex!,
+                child: Icon(
+                  Icons.drag_indicator,
+                  color: SaturdayColors.secondaryGrey,
+                ),
               ),
               const SizedBox(width: 12),
             ],

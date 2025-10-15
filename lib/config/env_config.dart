@@ -35,6 +35,15 @@ class EnvConfig {
     if (appBaseUrl.isEmpty) {
       missingVars.add(AppConstants.appBaseUrlKey);
     }
+    if (githubToken.isEmpty) {
+      missingVars.add(AppConstants.githubTokenKey);
+    }
+    if (githubRepoOwner.isEmpty) {
+      missingVars.add(AppConstants.githubRepoOwnerKey);
+    }
+    if (githubRepoName.isEmpty) {
+      missingVars.add(AppConstants.githubRepoNameKey);
+    }
 
     if (missingVars.isNotEmpty) {
       throw Exception(
@@ -63,6 +72,11 @@ class EnvConfig {
 
   // Application Configuration
   static String get appBaseUrl => _get(AppConstants.appBaseUrlKey);
+
+  // GitHub Configuration
+  static String get githubToken => _get(AppConstants.githubTokenKey);
+  static String get githubRepoOwner => _get(AppConstants.githubRepoOwnerKey);
+  static String get githubRepoName => _get(AppConstants.githubRepoNameKey);
 
   /// Check if environment is loaded
   static bool get isLoaded => dotenv.isInitialized;

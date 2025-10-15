@@ -15,6 +15,12 @@ final productionStepsProvider = FutureProvider.family<List<ProductionStep>, Stri
   return await repository.getStepsForProduct(productId);
 });
 
+/// Local state provider for optimistic UI updates during reordering
+/// This holds the locally modified order before the server confirms
+final localProductionStepsProvider = StateProvider.family<List<ProductionStep>?, String>((ref, productId) {
+  return null; // null means use the data from productionStepsProvider
+});
+
 /// Provider for production step management actions
 final productionStepManagementProvider = Provider((ref) => ProductionStepManagement(ref));
 
@@ -83,7 +89,8 @@ class ProductionStepManagement {
       final repository = ref.read(productionStepRepositoryProvider);
       await repository.reorderSteps(productId, stepIds);
 
-      // Invalidate the steps provider to refresh the list
+      // Clear local state and refresh from server
+      ref.read(localProductionStepsProvider(productId).notifier).state = null;
       ref.invalidate(productionStepsProvider(productId));
 
       AppLogger.info('Production steps reordered successfully');

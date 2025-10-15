@@ -14,6 +14,10 @@ import '../../services/printer_service.dart';
 import '../../services/qr_service.dart';
 import '../../repositories/settings_repository.dart';
 import '../../utils/app_logger.dart';
+import '../../widgets/settings/scanner_config_card.dart';
+import '../../widgets/settings/gcode_sync_card.dart';
+import '../../widgets/settings/machine_config_card.dart';
+import '../settings/machine_macros_settings_screen.dart';
 
 /// Settings screen for application configuration
 class SettingsScreen extends ConsumerStatefulWidget {
@@ -180,7 +184,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       AppLogger.info('Generating QR code...');
       final qrCode = await _qrService.generateQRCode(
         'TEST-LABEL-${DateTime.now().millisecondsSinceEpoch}',
-        size: 200,
+        size: 512,  // Higher resolution for better thermal printing
+        embedLogo: true,
       ).timeout(
         const Duration(seconds: 5),
         onTimeout: () {
@@ -206,6 +211,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       );
       AppLogger.info('Test label PDF generated (${testLabel.length} bytes)');
 
+      // Preview PDF for debugging - this will open a share dialog
+      AppLogger.info('Opening PDF preview for inspection...');
+      await _printerService.previewPdf(
+        testLabel,
+        'test-label-${DateTime.now().millisecondsSinceEpoch}.pdf',
+      );
+
       // Find and select the printer
       AppLogger.info('Finding printer: $_selectedPrinterId');
       final printer = await _printerService.findPrinterById(_selectedPrinterId!);
@@ -216,9 +228,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         throw Exception('Printer not found: $_selectedPrinterId');
       }
 
-      // Print the test label with timeout
-      AppLogger.info('Sending to printer...');
-      final success = await _printerService.printQRLabel(testLabel).timeout(
+      // Print the test label with timeout, passing label dimensions
+      AppLogger.info('Sending to printer with dimensions: $_labelWidth" x $_labelHeight"...');
+      final success = await _printerService.printQRLabel(
+        testLabel,
+        labelWidth: _labelWidth,
+        labelHeight: _labelHeight,
+      ).timeout(
         const Duration(seconds: 30),
         onTimeout: () {
           AppLogger.warning('Print operation timed out after 30 seconds');
@@ -417,6 +433,34 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               // File Associations Section (desktop only)
               if (Platform.isMacOS || Platform.isWindows || Platform.isLinux)
                 _buildFileAssociationsSection(),
+
+              if (Platform.isMacOS || Platform.isWindows || Platform.isLinux)
+                const SizedBox(height: 32),
+
+              // Scanner Configuration Section (desktop only)
+              if (Platform.isMacOS || Platform.isWindows || Platform.isLinux)
+                const ScannerConfigCard(),
+
+              if (Platform.isMacOS || Platform.isWindows || Platform.isLinux)
+                const SizedBox(height: 32),
+
+              // gCode Repository Sync Section (desktop only)
+              if (Platform.isMacOS || Platform.isWindows || Platform.isLinux)
+                const GCodeSyncCard(),
+
+              if (Platform.isMacOS || Platform.isWindows || Platform.isLinux)
+                const SizedBox(height: 32),
+
+              // Machine Configuration Section (desktop only)
+              if (Platform.isMacOS || Platform.isWindows || Platform.isLinux)
+                const MachineConfigCard(),
+
+              if (Platform.isMacOS || Platform.isWindows || Platform.isLinux)
+                const SizedBox(height: 32),
+
+              // Machine Macros Section (desktop only)
+              if (Platform.isMacOS || Platform.isWindows || Platform.isLinux)
+                _buildMachineMacrosSection(),
 
               if (Platform.isMacOS || Platform.isWindows || Platform.isLinux)
                 const SizedBox(height: 32),
@@ -720,6 +764,54 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   ),
                 );
               }),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMachineMacrosSection() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Machine Macros',
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+            ),
+            const Divider(height: 24),
+            const Text(
+              'Create and manage gcode macros for quick execution on CNC and Laser machines.',
+              style: TextStyle(
+                fontSize: 14,
+                color: SaturdayColors.secondaryGrey,
+              ),
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const MachineMacrosSettingsScreen(),
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.settings),
+                label: const Text('Manage Macros'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: SaturdayColors.primaryDark,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+              ),
+            ),
           ],
         ),
       ),

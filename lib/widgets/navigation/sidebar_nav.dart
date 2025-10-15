@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:saturday_app/config/constants.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:saturday_app/config/theme.dart';
 import 'package:saturday_app/providers/auth_provider.dart';
 import 'package:saturday_app/widgets/common/user_avatar.dart';
@@ -33,41 +33,17 @@ class SidebarNav extends ConsumerWidget {
       ),
       child: Column(
         children: [
-          // Logo and app name
+          // Logo
           Container(
             padding: const EdgeInsets.all(24),
-            child: Row(
-              children: [
-                Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const Center(
-                    child: Text(
-                      'S!',
-                      style: TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                        color: SaturdayColors.primaryDark,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                const Expanded(
-                  child: Text(
-                    AppConstants.appName,
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                    ),
-                  ),
-                ),
-              ],
+            child: SvgPicture.asset(
+              'assets/images/saturday-logo.svg',
+              width: 180,
+              height: 40,
+              colorFilter: const ColorFilter.mode(
+                Colors.white,
+                BlendMode.srcIn,
+              ),
             ),
           ),
 

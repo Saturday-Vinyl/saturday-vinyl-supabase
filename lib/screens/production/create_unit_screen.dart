@@ -342,8 +342,12 @@ class _CreateUnitScreenState extends ConsumerState<CreateUnitScreen> {
         }
       }
 
-      // Print the label
-      final success = await printerService.printQRLabel(labelData);
+      // Print the label with proper dimensions
+      final success = await printerService.printQRLabel(
+        labelData,
+        labelWidth: 1.0,  // 1 inch labels
+        labelHeight: 1.0,
+      );
 
       if (mounted) {
         if (success) {

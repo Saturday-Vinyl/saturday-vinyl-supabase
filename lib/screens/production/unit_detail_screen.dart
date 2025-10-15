@@ -11,7 +11,6 @@ import 'package:saturday_app/providers/production_unit_provider.dart';
 import 'package:saturday_app/providers/product_provider.dart';
 import 'package:saturday_app/screens/production/complete_step_screen.dart';
 import 'package:saturday_app/screens/production/firmware_flash_screen.dart';
-import 'package:saturday_app/screens/production/qr_scan_screen.dart';
 import 'package:saturday_app/services/qr_service.dart';
 import 'package:saturday_app/services/supabase_service.dart';
 import 'package:saturday_app/utils/app_logger.dart';
@@ -56,11 +55,6 @@ class _UnitDetailScreenState extends ConsumerState<UnitDetailScreen> {
               onPressed: () => _printLabel(context, ref),
               tooltip: 'Print Label',
             ),
-          IconButton(
-            icon: const Icon(Icons.qr_code_scanner),
-            onPressed: () => _scanNextQR(context),
-            tooltip: 'Scan Next QR',
-          ),
         ],
       ),
       body: unitAsync.when(
@@ -445,15 +439,6 @@ class _UnitDetailScreenState extends ConsumerState<UnitDetailScreen> {
     }
   }
 
-  void _scanNextQR(BuildContext context) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => const QRScanScreen(),
-      ),
-    );
-  }
-
   Future<void> _completeStep(
     BuildContext context,
     WidgetRef ref,
@@ -495,10 +480,6 @@ class _UnitDetailScreenState extends ConsumerState<UnitDetailScreen> {
           context: context,
           builder: (context) => CompletionConfirmation(
             isUnitComplete: isUnitComplete,
-            onScanNext: () {
-              Navigator.of(context).pop();
-              _scanNextQR(context);
-            },
             onPrintLabel: () {
               Navigator.of(context).pop();
               _printLabel(context, ref);
@@ -539,10 +520,6 @@ class _UnitDetailScreenState extends ConsumerState<UnitDetailScreen> {
         context: context,
         builder: (context) => CompletionConfirmation(
           isUnitComplete: isUnitComplete,
-          onScanNext: () {
-            Navigator.of(context).pop(); // Close confirmation
-            _scanNextQR(context);
-          },
           onPrintLabel: () {
             Navigator.of(context).pop(); // Close confirmation
             _printLabel(context, ref);

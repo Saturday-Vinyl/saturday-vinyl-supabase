@@ -110,7 +110,11 @@ class _PrintPreviewDialogState extends ConsumerState<PrintPreviewDialog> {
         await _printerService.selectPrinter(_selectedPrinter!);
       }
 
-      final success = await _printerService.printQRLabel(_labelData!);
+      final success = await _printerService.printQRLabel(
+        _labelData!,
+        labelWidth: 1.0,  // 1 inch labels
+        labelHeight: 1.0,
+      );
 
       if (success) {
         if (mounted) {

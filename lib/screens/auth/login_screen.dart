@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import '../../config/theme.dart';
-import '../../config/constants.dart';
 import '../../providers/auth_provider.dart';
 import '../../widgets/common/app_button.dart';
 import '../../widgets/common/loading_indicator.dart';
@@ -63,33 +63,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 // Logo
-                Container(
-                  width: 120,
+                SvgPicture.asset(
+                  'assets/images/saturday-logo.svg',
+                  width: 200,
                   height: 120,
-                  decoration: BoxDecoration(
-                    color: SaturdayColors.primaryDark,
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: const Center(
-                    child: Text(
-                      'S!',
-                      style: TextStyle(
-                        fontSize: 64,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.white,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 24),
-
-                // App name
-                Text(
-                  AppConstants.appName,
-                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                    color: SaturdayColors.primaryDark,
-                    fontWeight: FontWeight.bold,
-                  ),
                 ),
                 const SizedBox(height: 8),
 
