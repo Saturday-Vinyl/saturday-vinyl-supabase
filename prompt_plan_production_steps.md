@@ -31,14 +31,17 @@ This document contains a series of prompts designed for implementing advanced pr
 
 ### Prompt 36: Step Types and gCode Repository Schema
 
+> **⚠️ DEPRECATED - GitHub Repository Integration**
+> The GitHub repository sync portion of this prompt has been deprecated and replaced with a unified file library system (see migration 013_file_library.sql). The step types (general, cnc_milling, laser_cutting) are still used, but files are now managed through the Files screen and Supabase Storage instead of GitHub sync.
+
 **Context:** We currently have a basic production step system (from Prompt 12) that supports name, description, file attachments, and label printing. We need to extend this to support different step types with machine-specific configurations.
 
 We're adding three step types:
 1. **General** - Current functionality (default)
-2. **CNC Milling** - Requires gCode from GitHub repo, uses grblHAL protocol
+2. **CNC Milling** - Requires gCode files, uses grblHAL protocol
 3. **Laser Cutting/Engraving** - Same as CNC plus QR code engraving capability
 
-**User Story:** As an admin, I want to configure production steps with specific machine requirements and gCode files from our repository, so that workers can execute automated machining operations during production.
+**User Story:** As an admin, I want to configure production steps with specific machine requirements and gCode files, so that workers can execute automated machining operations during production.
 
 **Prompt:**
 

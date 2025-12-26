@@ -7,10 +7,12 @@ import 'package:saturday_app/config/theme.dart';
 import 'package:saturday_app/models/product.dart';
 import 'package:saturday_app/models/production_step.dart';
 import 'package:saturday_app/models/step_type.dart';
-import 'package:saturday_app/providers/gcode_file_provider.dart';
+import 'package:saturday_app/providers/file_provider.dart';
 import 'package:saturday_app/providers/production_step_provider.dart';
 import 'package:saturday_app/providers/step_label_provider.dart';
+import 'package:saturday_app/providers/step_timer_provider.dart';
 import 'package:saturday_app/widgets/common/app_button.dart';
+import 'package:saturday_app/widgets/products/step_file_selector.dart';
 import 'package:saturday_app/widgets/products/step_type_config.dart';
 
 /// Form screen for creating or editing a production step
@@ -58,6 +60,10 @@ class _ProductionStepFormScreenState
   // Multiple label controllers
   List<TextEditingController> _labelControllers = [];
 
+  // Multiple timer controllers
+  List<Map<String, TextEditingController>> _timerControllers = [];
+  bool _isLoadingTimers = false;
+
   @override
   void initState() {
     super.initState();
@@ -87,15 +93,14 @@ class _ProductionStepFormScreenState
         _qrSpeedController.text = widget.step!.qrSpeedMmMin.toString();
       }
 
-      // Load gCode files
-      if (widget.step!.gcodeFiles != null) {
-        _selectedGCodeFileIds = widget.step!.gcodeFiles!
-            .map((sgf) => sgf.gcodeFileId)
-            .toList();
-      }
+      // Load attached files from new file system
+      _loadExistingFiles();
 
       // Load existing labels
       _loadExistingLabels();
+
+      // Load existing timers
+      _loadExistingTimers();
     }
   }
 
@@ -133,6 +138,68 @@ class _ProductionStepFormScreenState
     }
   }
 
+  Future<void> _loadExistingTimers() async {
+    if (widget.step == null) return;
+
+    setState(() {
+      _isLoadingTimers = true;
+    });
+
+    try {
+      final timers =
+          await ref.read(stepTimersProvider(widget.step!.id).future);
+
+      if (mounted) {
+        setState(() {
+          _timerControllers = timers
+              .map((timer) => {
+                    'name': TextEditingController(text: timer.timerName),
+                    'duration': TextEditingController(
+                        text: timer.durationMinutes.toString()),
+                  })
+              .toList();
+          _isLoadingTimers = false;
+        });
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _isLoadingTimers = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to load timers: $error'),
+            backgroundColor: SaturdayColors.error,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _loadExistingFiles() async {
+    if (widget.step == null) return;
+
+    try {
+      final stepFiles =
+          await ref.read(stepFilesProvider(widget.step!.id).future);
+
+      if (mounted) {
+        setState(() {
+          _selectedGCodeFileIds = stepFiles.map((sf) => sf.fileId).toList();
+        });
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to load attached files: $error'),
+            backgroundColor: SaturdayColors.error,
+          ),
+        );
+      }
+    }
+  }
+
   @override
   void dispose() {
     _nameController.dispose();
@@ -144,6 +211,10 @@ class _ProductionStepFormScreenState
     _qrSpeedController.dispose();
     for (final controller in _labelControllers) {
       controller.dispose();
+    }
+    for (final timerControllerMap in _timerControllers) {
+      timerControllerMap['name']?.dispose();
+      timerControllerMap['duration']?.dispose();
     }
     super.dispose();
   }
@@ -158,6 +229,23 @@ class _ProductionStepFormScreenState
     setState(() {
       _labelControllers[index].dispose();
       _labelControllers.removeAt(index);
+    });
+  }
+
+  void _addTimer() {
+    setState(() {
+      _timerControllers.add({
+        'name': TextEditingController(),
+        'duration': TextEditingController(),
+      });
+    });
+  }
+
+  void _removeTimer(int index) {
+    setState(() {
+      _timerControllers[index]['name']?.dispose();
+      _timerControllers[index]['duration']?.dispose();
+      _timerControllers.removeAt(index);
     });
   }
 
@@ -262,95 +350,30 @@ class _ProductionStepFormScreenState
               ),
 
               const SizedBox(height: 24),
+
+              // File Attachments (for all step types)
+              // Workers can attach gcode files, spec documents, instructions, etc.
+              StepFileSelector(
+                stepId: widget.step?.id,
+                selectedFileIds: _selectedGCodeFileIds,
+                onFilesChanged: (ids) {
+                  setState(() {
+                    _selectedGCodeFileIds = ids;
+                  });
+                },
+              ),
+              const SizedBox(height: 24),
+
               const Divider(),
               const SizedBox(height: 24),
 
-              // File section
-              Text(
-                'Attach File (Optional)',
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Attach a gcode file, design file, or instruction document',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: SaturdayColors.secondaryGrey,
-                    ),
-              ),
-              const SizedBox(height: 16),
-
-              // File picker
-              if (_selectedFileName != null) ...[
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: SaturdayColors.light,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: SaturdayColors.info),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(
-                        Icons.attach_file,
-                        color: SaturdayColors.info,
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              _selectedFileName!,
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .bodyMedium
-                                  ?.copyWith(
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                            ),
-                            if (_selectedFileSize != null) ...[
-                              const SizedBox(height: 4),
-                              Text(
-                                _formatFileSize(_selectedFileSize!),
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .bodySmall
-                                    ?.copyWith(
-                                      color: SaturdayColors.secondaryGrey,
-                                    ),
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.close),
-                        onPressed: () {
-                          setState(() {
-                            _selectedFile = null;
-                            _selectedFileName = null;
-                            _selectedFileSize = null;
-                          });
-                        },
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 16),
-              ],
-
-              OutlinedButton.icon(
-                onPressed: _pickFile,
-                icon: const Icon(Icons.upload_file),
-                label: Text(
-                    _selectedFileName != null ? 'Change File' : 'Select File'),
-                style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.all(16),
-                ),
-              ),
-              const SizedBox(height: 32),
+              // DEPRECATED: Old single-file attachment section
+              // Replaced by StepFileSelector widget above
+              // Keeping code commented for reference during migration
+              // if (false) ...[
+              //   Text('Attach File (Optional)', ...),
+              //   ...file picker UI...
+              // ],
 
               // Label configuration section
               Text(
@@ -451,6 +474,135 @@ class _ProductionStepFormScreenState
 
               const SizedBox(height: 32),
 
+              // Timer configuration section
+              Text(
+                'Timer Configuration',
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Add optional timers that can be started when completing this step (e.g., "Cure Time - 15 min", "Cool Down - 30 min")',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: SaturdayColors.secondaryGrey,
+                    ),
+              ),
+              const SizedBox(height: 16),
+
+              // Show loading indicator while loading timers
+              if (_isLoadingTimers)
+                const Center(
+                  child: Padding(
+                    padding: EdgeInsets.all(16),
+                    child: CircularProgressIndicator(),
+                  ),
+                )
+              else ...[
+                // Timer list
+                ..._timerControllers.asMap().entries.map((entry) {
+                  final index = entry.key;
+                  final nameController = entry.value['name']!;
+                  final durationController = entry.value['duration']!;
+
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: Row(
+                      children: [
+                        // Timer order badge
+                        Container(
+                          width: 32,
+                          height: 32,
+                          decoration: const BoxDecoration(
+                            color: SaturdayColors.info,
+                            shape: BoxShape.circle,
+                          ),
+                          child: Center(
+                            child: Text(
+                              '${index + 1}',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+
+                        // Timer name field
+                        Expanded(
+                          flex: 2,
+                          child: TextFormField(
+                            controller: nameController,
+                            decoration: InputDecoration(
+                              labelText: 'Timer ${index + 1} Name',
+                              hintText: 'e.g., Cure Time',
+                              border: const OutlineInputBorder(),
+                            ),
+                            validator: (value) {
+                              if (value == null || value.trim().isEmpty) {
+                                return 'Please enter timer name';
+                              }
+                              return null;
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+
+                        // Duration field
+                        Expanded(
+                          flex: 1,
+                          child: TextFormField(
+                            controller: durationController,
+                            decoration: const InputDecoration(
+                              labelText: 'Minutes',
+                              hintText: '15',
+                              border: OutlineInputBorder(),
+                              suffixText: 'min',
+                            ),
+                            keyboardType: TextInputType.number,
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly,
+                            ],
+                            validator: (value) {
+                              if (value == null || value.trim().isEmpty) {
+                                return 'Required';
+                              }
+                              final duration = int.tryParse(value);
+                              if (duration == null || duration <= 0) {
+                                return 'Invalid';
+                              }
+                              return null;
+                            },
+                          ),
+                        ),
+
+                        // Delete button
+                        IconButton(
+                          icon: const Icon(Icons.delete_outline),
+                          color: SaturdayColors.error,
+                          onPressed: () => _removeTimer(index),
+                          tooltip: 'Remove timer',
+                        ),
+                      ],
+                    ),
+                  );
+                }),
+
+                // Add timer button
+                OutlinedButton.icon(
+                  onPressed: _addTimer,
+                  icon: const Icon(Icons.timer),
+                  label: const Text('Add Timer'),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.all(16),
+                  ),
+                ),
+              ],
+
+              const SizedBox(height: 32),
+
               // Action buttons
               Row(
                 children: [
@@ -532,7 +684,8 @@ class _ProductionStepFormScreenState
     try {
       final management = ref.read(productionStepManagementProvider);
       final labelManagement = ref.read(stepLabelManagementProvider);
-      final gcodeManagement = ref.read(gcodeFileManagementProvider);
+      final timerManagement = ref.read(stepTimerManagementProvider);
+      final fileManagement = ref.read(fileManagementProvider);
 
       // Parse QR parameters if QR engraving is enabled
       double? qrXOffset;
@@ -594,17 +747,15 @@ class _ProductionStepFormScreenState
 
         await management.updateStep(
           updatedStep,
-          file: _selectedFile,
+          file: null, // DEPRECATED: Now using file library system
           oldStep: widget.step,
         );
 
-        // Update gCode file associations (for CNC/Laser steps)
-        if (_stepType == StepType.cncMilling || _stepType == StepType.laserCutting) {
-          await gcodeManagement.updateGCodeFilesForStep(
-            stepId: widget.step!.id,
-            gcodeFileIds: _selectedGCodeFileIds,
-          );
-        }
+        // Update file associations
+        await fileManagement.attachFilesToStep(
+          stepId: widget.step!.id,
+          fileIds: _selectedGCodeFileIds,
+        );
 
         // Update labels
         final labelTexts = _labelControllers
@@ -617,9 +768,26 @@ class _ProductionStepFormScreenState
           labelTexts,
         );
 
+        // Update timers
+        final timerConfigs = _timerControllers
+            .where((controllers) =>
+                controllers['name']!.text.trim().isNotEmpty &&
+                controllers['duration']!.text.trim().isNotEmpty)
+            .map((controllers) => {
+                  'name': controllers['name']!.text.trim(),
+                  'duration': int.parse(controllers['duration']!.text.trim()),
+                })
+            .toList();
+
+        await timerManagement.updateTimersForStep(
+          widget.step!.id,
+          timerConfigs,
+        );
+
         if (mounted) {
-          // Invalidate the labels provider to refresh
+          // Invalidate the providers to refresh
           ref.invalidate(stepLabelsProvider(widget.step!.id));
+          ref.invalidate(stepTimersProvider(widget.step!.id));
 
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -653,17 +821,17 @@ class _ProductionStepFormScreenState
           updatedAt: DateTime.now(),
         );
 
-        final createdStep =
-            await management.createStep(newStep, file: _selectedFile);
+        final createdStep = await management.createStep(
+          newStep,
+          file: null, // DEPRECATED: Now using file library system
+        );
 
-        // Save gCode file associations (for CNC/Laser steps)
-        if (_stepType == StepType.cncMilling || _stepType == StepType.laserCutting) {
-          if (_selectedGCodeFileIds.isNotEmpty) {
-            await gcodeManagement.updateGCodeFilesForStep(
-              stepId: createdStep.id,
-              gcodeFileIds: _selectedGCodeFileIds,
-            );
-          }
+        // Save file associations
+        if (_selectedGCodeFileIds.isNotEmpty) {
+          await fileManagement.attachFilesToStep(
+            stepId: createdStep.id,
+            fileIds: _selectedGCodeFileIds,
+          );
         }
 
         // Create labels
@@ -676,6 +844,24 @@ class _ProductionStepFormScreenState
           await labelManagement.batchCreateLabels(
             createdStep.id,
             labelTexts,
+          );
+        }
+
+        // Create timers
+        final timerConfigs = _timerControllers
+            .where((controllers) =>
+                controllers['name']!.text.trim().isNotEmpty &&
+                controllers['duration']!.text.trim().isNotEmpty)
+            .map((controllers) => {
+                  'name': controllers['name']!.text.trim(),
+                  'duration': int.parse(controllers['duration']!.text.trim()),
+                })
+            .toList();
+
+        if (timerConfigs.isNotEmpty) {
+          await timerManagement.batchCreateTimers(
+            createdStep.id,
+            timerConfigs,
           );
         }
 

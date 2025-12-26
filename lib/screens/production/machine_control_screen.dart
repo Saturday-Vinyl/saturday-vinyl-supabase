@@ -3,13 +3,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:saturday_app/config/theme.dart';
 import 'package:saturday_app/models/production_step.dart';
 import 'package:saturday_app/models/production_unit.dart';
-import 'package:saturday_app/models/gcode_file.dart';
+import 'package:saturday_app/models/app_file.dart';
 import 'package:saturday_app/models/machine_macro.dart';
 import 'package:saturday_app/services/machine_connection_service.dart';
 import 'package:saturday_app/services/gcode_streaming_service.dart';
 import 'package:saturday_app/services/grbl_error_codes.dart';
 import 'package:saturday_app/providers/machine_provider.dart';
-import 'package:saturday_app/providers/gcode_file_provider.dart';
+import 'package:saturday_app/providers/file_provider.dart';
 import 'package:saturday_app/providers/image_to_gcode_provider.dart';
 import 'package:saturday_app/providers/machine_macro_provider.dart';
 import 'package:saturday_app/providers/product_provider.dart';
@@ -610,6 +610,9 @@ class _MachineControlScreenState extends ConsumerState<MachineControlScreen> {
     final canControl = _machineState == MachineState.idle ||
         _machineState == MachineState.connected;
 
+    // Home and unlock buttons should work even in alarm/error state
+    final canHomeOrUnlock = _machineState != MachineState.disconnected;
+
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -627,11 +630,28 @@ class _MachineControlScreenState extends ConsumerState<MachineControlScreen> {
               spacing: 12,
               runSpacing: 12,
               children: [
-                // Home button
+                // Unlock button (for clearing alarms without homing)
+                if (_machineState == MachineState.alarm ||
+                    _machineState == MachineState.error)
+                  OutlinedButton.icon(
+                    onPressed: canHomeOrUnlock ? _unlockAlarm : null,
+                    icon: const Icon(Icons.lock_open),
+                    label: const Text('Unlock (\$X)'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.orange,
+                    ),
+                  ),
+                // Home button - works even in alarm state
                 OutlinedButton.icon(
-                  onPressed: canControl ? _home : null,
+                  onPressed: canHomeOrUnlock ? _home : null,
                   icon: const Icon(Icons.home),
                   label: const Text('Home (\$H)'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: (_machineState == MachineState.alarm ||
+                                      _machineState == MachineState.error)
+                        ? Colors.orange
+                        : null,
+                  ),
                 ),
                 // Set X zero
                 OutlinedButton.icon(
@@ -959,7 +979,7 @@ class _MachineControlScreenState extends ConsumerState<MachineControlScreen> {
   }
 
   Widget _buildGCodeFilesSection() {
-    final filesAsync = ref.watch(stepGCodeFilesProvider(widget.step.id));
+    final filesAsync = ref.watch(stepFilesProvider(widget.step.id));
 
     return Card(
       child: Padding(
@@ -983,13 +1003,18 @@ class _MachineControlScreenState extends ConsumerState<MachineControlScreen> {
                     );
                   }
 
+                  // Filter for gcode files only
+                  final gcodeFiles = files
+                      .where((stepFile) => stepFile.file?.isGCodeFile ?? false)
+                      .toList();
+
                   return ListView(
                     children: [
                       // gCode files
-                      ...files.asMap().entries.map((entry) {
+                      ...gcodeFiles.asMap().entries.map((entry) {
                         final index = entry.key;
-                        final stepGCodeFile = entry.value;
-                        final file = stepGCodeFile.gcodeFile!;
+                        final stepFile = entry.value;
+                        final file = stepFile.file!;
                         final completed = _gcodeFileCompleted[file.id] ?? false;
 
                         return Card(
@@ -1296,6 +1321,28 @@ class _MachineControlScreenState extends ConsumerState<MachineControlScreen> {
     }
   }
 
+  Future<void> _unlockAlarm() async {
+    final success = await _machine.sendCommand('\$X');
+
+    if (mounted) {
+      if (success) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Alarm unlocked'),
+            backgroundColor: SaturdayColors.success,
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to unlock alarm'),
+            backgroundColor: SaturdayColors.error,
+          ),
+        );
+      }
+    }
+  }
+
   Future<void> _setZero({bool x = false, bool y = false, bool z = false}) async {
     final success = await _machine.setZero(x: x, y: y, z: z);
 
@@ -1518,11 +1565,12 @@ class _MachineControlScreenState extends ConsumerState<MachineControlScreen> {
     }
   }
 
-  Future<void> _runGCodeFile(GCodeFile file) async {
+  Future<void> _runGCodeFile(AppFile file) async {
     try {
-      // Fetch gCode content from GitHub
-      final syncService = ref.read(gcodeSyncServiceProvider);
-      final gcodeContent = await syncService.fetchGCodeContent(file);
+      // Fetch gCode content from Supabase Storage
+      final fileManagement = ref.read(fileManagementProvider);
+      final fileBytes = await fileManagement.downloadFile(file);
+      final gcodeContent = String.fromCharCodes(fileBytes);
 
       // Show preview
       setState(() {

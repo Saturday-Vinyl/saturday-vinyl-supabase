@@ -78,6 +78,27 @@ class EnvConfig {
   static String get githubRepoOwner => _get(AppConstants.githubRepoOwnerKey);
   static String get githubRepoName => _get(AppConstants.githubRepoNameKey);
 
+  // RFID Configuration
+  /// Access password for locking/unlocking RFID tags (8 hex characters = 4 bytes)
+  /// Example: "AABBCCDD" -> [0xAA, 0xBB, 0xCC, 0xDD]
+  /// If not set, defaults to "00000000" (unlocked tags)
+  static String get rfidAccessPassword =>
+      _get(AppConstants.rfidAccessPasswordKey);
+
+  /// Get RFID access password as bytes (4 bytes)
+  static List<int> get rfidAccessPasswordBytes {
+    final hex = rfidAccessPassword;
+    if (hex.isEmpty || hex.length != 8) {
+      return [0x00, 0x00, 0x00, 0x00]; // Default for unlocked tags
+    }
+    return [
+      int.parse(hex.substring(0, 2), radix: 16),
+      int.parse(hex.substring(2, 4), radix: 16),
+      int.parse(hex.substring(4, 6), radix: 16),
+      int.parse(hex.substring(6, 8), radix: 16),
+    ];
+  }
+
   /// Check if environment is loaded
   static bool get isLoaded => dotenv.isInitialized;
 

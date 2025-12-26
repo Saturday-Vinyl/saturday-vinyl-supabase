@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
@@ -9,6 +10,7 @@ import 'package:saturday_app/models/production_unit.dart';
 import 'package:saturday_app/models/unit_step_completion.dart';
 import 'package:saturday_app/providers/production_unit_provider.dart';
 import 'package:saturday_app/providers/product_provider.dart';
+import 'package:saturday_app/providers/unit_timer_provider.dart';
 import 'package:saturday_app/screens/production/complete_step_screen.dart';
 import 'package:saturday_app/screens/production/firmware_flash_screen.dart';
 import 'package:saturday_app/services/qr_service.dart';
@@ -35,6 +37,24 @@ class UnitDetailScreen extends ConsumerStatefulWidget {
 
 class _UnitDetailScreenState extends ConsumerState<UnitDetailScreen> {
   bool _isRegeneratingQR = false;
+  Timer? _timerUpdateTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    // Start a timer to refresh active timers every second for countdown
+    _timerUpdateTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) {
+        ref.invalidate(activeUnitTimersWithDetailsProvider(widget.unitId));
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _timerUpdateTimer?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -161,6 +181,105 @@ class _UnitDetailScreenState extends ConsumerState<UnitDetailScreen> {
                 ),
 
                 const SizedBox(height: 24),
+
+                // Active Timers
+                Consumer(
+                  builder: (context, ref, child) {
+                    final activeTimersAsync =
+                        ref.watch(activeUnitTimersWithDetailsProvider(widget.unitId));
+
+                    return activeTimersAsync.when(
+                      data: (activeTimers) {
+                        if (activeTimers.isEmpty) {
+                          return const SizedBox.shrink();
+                        }
+
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Active Timers',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .titleLarge
+                                  ?.copyWith(
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                            ),
+                            const SizedBox(height: 12),
+                            ...activeTimers.map((timerWithDetails) {
+                              final unitTimer = timerWithDetails.unitTimer;
+                              return Card(
+                                margin: const EdgeInsets.only(bottom: 12),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(16),
+                                  child: Row(
+                                    children: [
+                                      Icon(
+                                        unitTimer.isExpired
+                                            ? Icons.alarm
+                                            : Icons.timer,
+                                        color: unitTimer.isExpired
+                                            ? SaturdayColors.error
+                                            : SaturdayColors.info,
+                                        size: 32,
+                                      ),
+                                      const SizedBox(width: 16),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              timerWithDetails.timerName,
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .titleSmall
+                                                  ?.copyWith(
+                                                    fontWeight: FontWeight.w600,
+                                                  ),
+                                            ),
+                                            const SizedBox(height: 4),
+                                            Text(
+                                              unitTimer.isExpired
+                                                  ? 'EXPIRED!'
+                                                  : 'Time remaining: ${unitTimer.remainingFormatted}',
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .bodySmall
+                                                  ?.copyWith(
+                                                    color: unitTimer.isExpired
+                                                        ? SaturdayColors.error
+                                                        : SaturdayColors
+                                                            .secondaryGrey,
+                                                    fontWeight:
+                                                        unitTimer.isExpired
+                                                            ? FontWeight.bold
+                                                            : FontWeight.normal,
+                                                  ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                      TextButton(
+                                        onPressed: () => _completeTimer(
+                                            unitTimer.id, widget.unitId),
+                                        child: const Text('Complete'),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                            }),
+                            const SizedBox(height: 24),
+                          ],
+                        );
+                      },
+                      loading: () => const SizedBox.shrink(),
+                      error: (_, __) => const SizedBox.shrink(),
+                    );
+                  },
+                ),
 
                 // Production Steps
                 Text(
@@ -434,6 +553,31 @@ class _UnitDetailScreenState extends ConsumerState<UnitDetailScreen> {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Error: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _completeTimer(String timerId, String unitId) async {
+    try {
+      final management = ref.read(unitTimerManagementProvider);
+      await management.completeTimer(timerId, unitId);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Timer completed'),
+            backgroundColor: SaturdayColors.success,
+          ),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to complete timer: $error'),
+            backgroundColor: SaturdayColors.error,
+          ),
         );
       }
     }

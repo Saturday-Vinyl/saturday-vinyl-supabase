@@ -4,6 +4,7 @@ import 'package:saturday_app/config/constants.dart';
 import 'package:saturday_app/config/env_config.dart';
 import 'package:saturday_app/config/theme.dart';
 import 'package:saturday_app/providers/auth_provider.dart';
+import 'package:saturday_app/providers/rfid_settings_provider.dart';
 import 'package:saturday_app/screens/auth/login_screen.dart';
 import 'package:saturday_app/screens/main_scaffold.dart';
 import 'package:saturday_app/services/auth_service.dart';
@@ -11,6 +12,7 @@ import 'package:saturday_app/services/shopify_service.dart';
 import 'package:saturday_app/services/supabase_service.dart';
 import 'package:saturday_app/utils/app_logger.dart';
 import 'package:saturday_app/widgets/common/loading_indicator.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() async {
   // Ensure Flutter is initialized
@@ -31,8 +33,18 @@ void main() async {
     // Initialize Shopify Service
     ShopifyService().initialize();
 
-    // Run the app
-    runApp(const ProviderScope(child: MyApp()));
+    // Initialize SharedPreferences for RFID settings
+    final sharedPreferences = await SharedPreferences.getInstance();
+
+    // Run the app with SharedPreferences override
+    runApp(
+      ProviderScope(
+        overrides: [
+          sharedPreferencesProvider.overrideWithValue(sharedPreferences),
+        ],
+        child: const MyApp(),
+      ),
+    );
   } catch (error, stackTrace) {
     // Log initialization error
     AppLogger.error(

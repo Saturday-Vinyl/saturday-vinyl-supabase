@@ -88,6 +88,18 @@ class SidebarNav extends ConsumerWidget {
                     route: '/firmware',
                     isSelected: currentRoute == '/firmware',
                   ),
+                  _buildNavItem(
+                    icon: Icons.folder,
+                    label: 'Files',
+                    route: '/files',
+                    isSelected: currentRoute == '/files',
+                  ),
+                  _buildNavItem(
+                    icon: Icons.label,
+                    label: 'Tags',
+                    route: '/tags',
+                    isSelected: currentRoute == '/tags',
+                  ),
                   if (isAdmin) ...[
                     const Divider(
                       color: SaturdayColors.secondaryGrey,

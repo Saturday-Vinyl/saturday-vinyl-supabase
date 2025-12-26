@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:saturday_app/config/theme.dart';
+import 'package:saturday_app/screens/debug/scanner_debug_screen.dart';
 import 'package:saturday_app/screens/production/qr_scan_screen.dart';
 import 'package:saturday_app/services/keyboard_listener_service.dart';
 
@@ -71,8 +72,9 @@ class ScannerConfigCard extends StatelessWidget {
                   Expanded(
                     child: Text(
                       'Configure your USB barcode scanner to work seamlessly with '
-                      'Saturday! Admin. Scan the QR codes below in sequence to '
-                      'program your scanner.',
+                      'Saturday! Admin. Scanning the EM barcode programs your scanner '
+                      'to send F4 before each scan, allowing automatic detection. '
+                      'Scan the QR codes below in sequence to program your scanner.',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                             color: SaturdayColors.info,
                           ),
@@ -101,10 +103,11 @@ class ScannerConfigCard extends StatelessWidget {
             _buildStep(
               context: context,
               stepNumber: 2,
-              title: 'Scan to Set Prefix Character',
+              title: 'Scan to Set Prefix Key (EM → F4)',
               qrData: KeyboardListenerService.prefixChar,
               helperText:
-                  'This configures the scanner to send "${KeyboardListenerService.prefixChar}" before each scan.',
+                  'Scan the EM barcode. Your scanner will translate this to the F4 key, '
+                  'which will be sent before each scan for automatic detection.',
             ),
 
             const SizedBox(height: 24),
@@ -120,21 +123,38 @@ class ScannerConfigCard extends StatelessWidget {
 
             const SizedBox(height: 24),
 
-            // Test Button
-            Center(
-              child: ElevatedButton.icon(
-                onPressed: () => _testScanner(context),
-                icon: const Icon(Icons.play_arrow),
-                label: const Text('Test Scanner'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: SaturdayColors.success,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 24,
-                    vertical: 12,
+            // Test Buttons
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: () => _openDebugScreen(context),
+                  icon: const Icon(Icons.bug_report, size: 20),
+                  label: const Text('Debug Scanner'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: SaturdayColors.info,
+                    side: BorderSide(color: SaturdayColors.info, width: 1.5),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 12,
+                    ),
                   ),
                 ),
-              ),
+                const SizedBox(width: 16),
+                ElevatedButton.icon(
+                  onPressed: () => _testScanner(context),
+                  icon: const Icon(Icons.play_arrow, size: 20),
+                  label: const Text('Test Scanner'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: SaturdayColors.success,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 12,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ],
         ),
@@ -257,6 +277,15 @@ class ScannerConfigCard extends StatelessWidget {
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (context) => const QRScanScreen(),
+      ),
+    );
+  }
+
+  /// Open debug screen to see raw scanner input
+  void _openDebugScreen(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => const ScannerDebugScreen(),
       ),
     );
   }

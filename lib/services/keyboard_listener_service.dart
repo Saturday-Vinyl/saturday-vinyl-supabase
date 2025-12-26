@@ -6,7 +6,9 @@ import 'package:saturday_app/utils/app_logger.dart';
 /// and manual keyboard shortcuts for QR code scanning
 class KeyboardListenerService {
   // Prefix options for scanner detection
-  static const prefixChar = '§'; // Section sign, ASCII 167
+  // Scanner sends F4 key when programmed with EM (ASCII 25) barcode
+  static final prefixChar = String.fromCharCode(25); // EM barcode (translates to F4 key)
+  static const prefixKey = LogicalKeyboardKey.f4; // F4 function key
   static const scanDetectionDelayMs = 100; // Time to detect scanner vs manual
   static const bufferTimeoutSeconds = 2; // Overall timeout to clear buffer
 
@@ -36,9 +38,9 @@ class KeyboardListenerService {
       return true; // Event handled
     }
 
-    // Detect § prefix character
-    if (event.character == prefixChar) {
-      AppLogger.info('Prefix character detected: $prefixChar');
+    // Detect F4 prefix key (sent by scanner when programmed with EM barcode)
+    if (event.logicalKey == prefixKey) {
+      AppLogger.info('Prefix key detected: F4 (from scanner EM barcode)');
       _onPrefixDetected();
       return true; // Don't pass to text fields
     }

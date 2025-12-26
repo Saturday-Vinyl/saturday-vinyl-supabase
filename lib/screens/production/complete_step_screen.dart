@@ -7,6 +7,8 @@ import 'package:saturday_app/providers/auth_provider.dart';
 import 'package:saturday_app/providers/product_provider.dart';
 import 'package:saturday_app/providers/production_unit_provider.dart';
 import 'package:saturday_app/providers/step_label_provider.dart';
+import 'package:saturday_app/providers/step_timer_provider.dart';
+import 'package:saturday_app/providers/unit_timer_provider.dart';
 import 'package:saturday_app/services/printer_service.dart';
 import 'package:saturday_app/services/qr_service.dart';
 import 'package:saturday_app/utils/app_logger.dart';
@@ -228,6 +230,29 @@ class _CompleteStepScreenState extends ConsumerState<CompleteStepScreen> {
     );
   }
 
+  Future<void> _startTimer(String stepTimerId, int durationMinutes) async {
+    try {
+      final management = ref.read(unitTimerManagementProvider);
+
+      await management.startTimer(
+        unitId: widget.unitId,
+        stepTimerId: stepTimerId,
+        durationMinutes: durationMinutes,
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Timer started for $durationMinutes minutes'),
+            backgroundColor: SaturdayColors.success,
+          ),
+        );
+      }
+    } catch (error) {
+      _showError('Failed to start timer: $error');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Dialog(
@@ -402,6 +427,59 @@ class _CompleteStepScreenState extends ConsumerState<CompleteStepScreen> {
                             ),
                           ),
                         ),
+                        const SizedBox(height: 16),
+                      ],
+                    );
+                  },
+                  loading: () => const SizedBox.shrink(),
+                  error: (_, __) => const SizedBox.shrink(),
+                );
+              },
+            ),
+
+            // Timer controls (only show if step has timers configured)
+            Consumer(
+              builder: (context, ref, child) {
+                final timersAsync = ref.watch(stepTimersProvider(widget.step.id));
+
+                return timersAsync.when(
+                  data: (timers) {
+                    if (timers.isEmpty) {
+                      return const SizedBox.shrink();
+                    }
+
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Text(
+                          'Timers',
+                          style:
+                              Theme.of(context).textTheme.titleSmall?.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                        ),
+                        const SizedBox(height: 12),
+                        ...timers.map((timer) {
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 8),
+                            child: OutlinedButton.icon(
+                              onPressed: _isSubmitting
+                                  ? null
+                                  : () => _startTimer(timer.id, timer.durationMinutes),
+                              icon: const Icon(Icons.timer),
+                              label: Text(
+                                '${timer.timerName} (${timer.durationFormatted})',
+                              ),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: SaturdayColors.info,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 20,
+                                  vertical: 12,
+                                ),
+                              ),
+                            ),
+                          );
+                        }),
                         const SizedBox(height: 16),
                       ],
                     );

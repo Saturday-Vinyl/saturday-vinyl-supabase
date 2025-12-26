@@ -2,9 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:saturday_app/config/theme.dart';
-import 'package:saturday_app/models/gcode_file.dart';
 import 'package:saturday_app/models/step_type.dart';
-import 'package:saturday_app/providers/gcode_file_provider.dart';
 
 /// Widget for configuring step type-specific parameters
 class StepTypeConfig extends ConsumerStatefulWidget {
@@ -83,11 +81,13 @@ class _StepTypeConfigState extends ConsumerState<StepTypeConfig> {
 
         const SizedBox(height: 24),
 
-        // Machine-specific configuration
-        if (widget.stepType.requiresMachine) ...[
-          _buildMachineConfigSection(),
-          const SizedBox(height: 24),
-        ],
+        // Machine-specific configuration - DEPRECATED
+        // File selection is now handled by StepFileSelector widget
+        // in production_step_form_screen.dart
+        // if (widget.stepType.requiresMachine) ...[
+        //   _buildMachineConfigSection(),
+        //   const SizedBox(height: 24),
+        // ],
 
         // QR engraving section (Laser only)
         if (widget.stepType == StepType.laserCutting) ...[
@@ -109,178 +109,9 @@ class _StepTypeConfigState extends ConsumerState<StepTypeConfig> {
     }
   }
 
-  Widget _buildMachineConfigSection() {
-    final machineType = widget.stepType.machineType!;
-    final gcodeFilesAsync = ref.watch(gcodeFilesByMachineTypeProvider(machineType));
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'gCode Files',
-          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.bold,
-              ),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          'Select gCode files to execute for this step. Drag to reorder.',
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: SaturdayColors.secondaryGrey,
-              ),
-        ),
-        const SizedBox(height: 16),
-
-        gcodeFilesAsync.when(
-          data: (files) => _buildGCodeFileSelector(files),
-          loading: () => const Center(
-            child: Padding(
-              padding: EdgeInsets.all(16),
-              child: CircularProgressIndicator(),
-            ),
-          ),
-          error: (error, stack) => Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.red[50],
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.red[200]!),
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.error, color: Colors.red[700]),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    'Error loading gCode files: $error',
-                    style: TextStyle(color: Colors.red[900]),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildGCodeFileSelector(List<GCodeFile> availableFiles) {
-    if (availableFiles.isEmpty) {
-      return Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Colors.orange[50],
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: Colors.orange[200]!),
-        ),
-        child: Row(
-          children: [
-            Icon(Icons.warning, color: Colors.orange[700]),
-            const SizedBox(width: 12),
-            const Expanded(
-              child: Text(
-                'No gCode files found. Sync your repository in Settings.',
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    // Get selected files in order
-    final selectedFiles = widget.selectedGCodeFileIds
-        .map((id) => availableFiles.firstWhere((f) => f.id == id, orElse: () => availableFiles.first))
-        .toList();
-
-    // Get unselected files
-    final unselectedFiles = availableFiles
-        .where((f) => !widget.selectedGCodeFileIds.contains(f.id))
-        .toList();
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Selected files (reorderable)
-        if (selectedFiles.isNotEmpty) ...[
-          Container(
-            decoration: BoxDecoration(
-              border: Border.all(color: SaturdayColors.info),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: ReorderableListView(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              onReorder: (oldIndex, newIndex) {
-                final ids = List<String>.from(widget.selectedGCodeFileIds);
-                if (oldIndex < newIndex) {
-                  newIndex -= 1;
-                }
-                final item = ids.removeAt(oldIndex);
-                ids.insert(newIndex, item);
-                widget.onGCodeFilesChanged(ids);
-              },
-              children: selectedFiles.asMap().entries.map((entry) {
-                final index = entry.key;
-                final file = entry.value;
-                return ListTile(
-                  key: ValueKey(file.id),
-                  leading: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        '${index + 1}.',
-                        style: const TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(width: 8),
-                      const Icon(Icons.drag_handle),
-                    ],
-                  ),
-                  title: Text(file.fileName),
-                  subtitle: file.description != null
-                      ? Text(file.description!)
-                      : null,
-                  trailing: IconButton(
-                    icon: const Icon(Icons.remove_circle_outline),
-                    color: Colors.red,
-                    onPressed: () {
-                      final ids = List<String>.from(widget.selectedGCodeFileIds);
-                      ids.remove(file.id);
-                      widget.onGCodeFilesChanged(ids);
-                    },
-                  ),
-                );
-              }).toList(),
-            ),
-          ),
-          const SizedBox(height: 16),
-        ],
-
-        // Available files to add
-        if (unselectedFiles.isNotEmpty) ...[
-          Text(
-            'Available Files',
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                ),
-          ),
-          const SizedBox(height: 8),
-          ...unselectedFiles.map((file) {
-            return ListTile(
-              leading: const Icon(Icons.add_circle_outline, color: SaturdayColors.info),
-              title: Text(file.fileName),
-              subtitle: file.description != null ? Text(file.description!) : null,
-              onTap: () {
-                final ids = List<String>.from(widget.selectedGCodeFileIds);
-                ids.add(file.id);
-                widget.onGCodeFilesChanged(ids);
-              },
-              dense: true,
-            );
-          }),
-        ],
-      ],
-    );
-  }
+  // DEPRECATED: Machine config methods removed - file selection now handled by StepFileSelector
+  // Widget _buildMachineConfigSection() { ... }
+  // Widget _buildGCodeFileSelector(List<GCodeFile> availableFiles) { ... }
 
   Widget _buildQrEngravingSection() {
     return Column(

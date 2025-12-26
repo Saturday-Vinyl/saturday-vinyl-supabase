@@ -29,8 +29,9 @@ void main() {
       );
 
       expect(gcode, contains('G21')); // Units
-      expect(gcode, contains('G90')); // Absolute positioning (for initial move)
+      expect(gcode, contains('G90')); // Absolute positioning
       expect(gcode, contains('G91')); // Relative positioning (for scanning)
+      expect(gcode, contains('G53')); // Machine coordinate system
       expect(gcode, contains('M4')); // Enable laser (dynamic mode)
       expect(gcode, contains('M5')); // Disable laser
       expect(gcode, contains('S1000')); // Max power for black pixel (0-1000 scale)
@@ -80,8 +81,11 @@ void main() {
         feedRate: 1000,
       );
 
-      // Should move to start position
-      expect(gcode, contains('X10.000 Y20.000'));
+      // Should move to start position using machine coordinates (G53)
+      expect(gcode, contains('G53'));
+      expect(gcode, contains('X10.000 Y'));
+      // Y should be startY + heightMM - stepSize = 20 + 5 - 1 = 24 (top-left, first pixel)
+      expect(gcode, contains('Y24.000'));
     });
 
     test('respects max power setting', () async {

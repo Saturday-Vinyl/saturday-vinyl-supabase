@@ -3,7 +3,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:saturday_app/services/machine_connection_service.dart';
 import 'package:saturday_app/services/gcode_streaming_service.dart';
 import 'package:saturday_app/services/machine_config_storage.dart';
-import 'package:saturday_app/services/gcode_sync_service.dart';
 import 'package:saturday_app/services/github_service.dart';
 
 /// Provider for SharedPreferences
@@ -39,15 +38,7 @@ final laserStreamingServiceProvider = Provider<GCodeStreamingService>((ref) {
   return GCodeStreamingService(machineService);
 });
 
-/// Provider for GitHub Service
+/// Provider for GitHub Service (kept for future use)
 final githubServiceProvider = Provider<GitHubService>((ref) {
   return GitHubService();
-});
-
-/// Provider for gCode Sync Service
-final gcodeSyncServiceProvider = Provider<GCodeSyncService>((ref) {
-  final githubService = ref.watch(githubServiceProvider);
-  return GCodeSyncService(
-    githubService: githubService,
-  );
 });

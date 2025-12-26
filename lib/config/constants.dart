@@ -17,6 +17,7 @@ class AppConstants {
   static const String githubTokenKey = 'GITHUB_TOKEN';
   static const String githubRepoOwnerKey = 'GITHUB_REPO_OWNER';
   static const String githubRepoNameKey = 'GITHUB_REPO_NAME';
+  static const String rfidAccessPasswordKey = 'RFID_ACCESS_PASSWORD';
 
   // API Timeouts (in milliseconds)
   static const int apiTimeoutShort = 10000; // 10 seconds

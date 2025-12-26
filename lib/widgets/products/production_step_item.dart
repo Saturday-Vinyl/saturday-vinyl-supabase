@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:saturday_app/config/theme.dart';
 import 'package:saturday_app/models/production_step.dart';
+import 'package:saturday_app/providers/file_provider.dart';
 
 /// Widget to display a single production step
-class ProductionStepItem extends StatelessWidget {
+class ProductionStepItem extends ConsumerWidget {
   final ProductionStep step;
   final VoidCallback? onEdit;
   final VoidCallback? onDelete;
@@ -22,7 +24,7 @@ class ProductionStepItem extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       elevation: 2,
@@ -88,28 +90,9 @@ class ProductionStepItem extends StatelessWidget {
                           ),
                     ),
                   ],
-                  if (step.fileName != null) ...[
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.attach_file,
-                          size: 16,
-                          color: SaturdayColors.info,
-                        ),
-                        const SizedBox(width: 4),
-                        Expanded(
-                          child: Text(
-                            step.fileName!,
-                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                  color: SaturdayColors.info,
-                                ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
+                  // Show attached files count
+                  const SizedBox(height: 8),
+                  _buildFileAttachments(ref),
                 ],
               ),
             ),
@@ -130,6 +113,38 @@ class ProductionStepItem extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildFileAttachments(WidgetRef ref) {
+    final filesAsync = ref.watch(stepFilesProvider(step.id));
+
+    return filesAsync.when(
+      data: (files) {
+        if (files.isEmpty) {
+          return const SizedBox.shrink();
+        }
+
+        return Row(
+          children: [
+            Icon(
+              Icons.attach_file,
+              size: 16,
+              color: SaturdayColors.info,
+            ),
+            const SizedBox(width: 4),
+            Text(
+              '${files.length} file${files.length == 1 ? '' : 's'} attached',
+              style: const TextStyle(
+                fontSize: 12,
+                color: SaturdayColors.info,
+              ),
+            ),
+          ],
+        );
+      },
+      loading: () => const SizedBox.shrink(),
+      error: (_, __) => const SizedBox.shrink(),
     );
   }
 }

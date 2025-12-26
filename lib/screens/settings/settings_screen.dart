@@ -15,7 +15,6 @@ import '../../services/qr_service.dart';
 import '../../repositories/settings_repository.dart';
 import '../../utils/app_logger.dart';
 import '../../widgets/settings/scanner_config_card.dart';
-import '../../widgets/settings/gcode_sync_card.dart';
 import '../../widgets/settings/machine_config_card.dart';
 import '../settings/machine_macros_settings_screen.dart';
 
@@ -440,13 +439,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               // Scanner Configuration Section (desktop only)
               if (Platform.isMacOS || Platform.isWindows || Platform.isLinux)
                 const ScannerConfigCard(),
-
-              if (Platform.isMacOS || Platform.isWindows || Platform.isLinux)
-                const SizedBox(height: 32),
-
-              // gCode Repository Sync Section (desktop only)
-              if (Platform.isMacOS || Platform.isWindows || Platform.isLinux)
-                const GCodeSyncCard(),
 
               if (Platform.isMacOS || Platform.isWindows || Platform.isLinux)
                 const SizedBox(height: 32),

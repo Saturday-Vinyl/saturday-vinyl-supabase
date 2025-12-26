@@ -3,14 +3,17 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:saturday_app/config/theme.dart';
+import 'package:saturday_app/repositories/production_unit_repository.dart';
 import 'package:saturday_app/screens/dashboard/dashboard_screen.dart';
 import 'package:saturday_app/screens/device_types/device_type_list_screen.dart';
+import 'package:saturday_app/screens/files/files_screen.dart';
 import 'package:saturday_app/screens/firmware/firmware_list_screen.dart';
 import 'package:saturday_app/screens/products/product_list_screen.dart';
 import 'package:saturday_app/screens/production/production_units_screen.dart';
 import 'package:saturday_app/screens/production/qr_scan_screen.dart';
 import 'package:saturday_app/screens/production/unit_detail_screen.dart';
 import 'package:saturday_app/screens/settings/settings_screen.dart';
+import 'package:saturday_app/screens/tags/tag_list_screen.dart';
 import 'package:saturday_app/screens/users/user_management_screen.dart';
 import 'package:saturday_app/services/keyboard_listener_service.dart';
 import 'package:saturday_app/services/qr_scanner_service.dart';
@@ -30,6 +33,7 @@ class _MainScaffoldState extends State<MainScaffold> {
   String _currentRoute = '/dashboard';
   KeyboardListenerService? _keyboardListener;
   final _qrScannerService = QRScannerService();
+  final _unitRepository = ProductionUnitRepository();
 
   bool get _isDesktop =>
       !kIsWeb && (Platform.isMacOS || Platform.isWindows || Platform.isLinux);
@@ -82,25 +86,48 @@ class _MainScaffoldState extends State<MainScaffold> {
 
       if (!mounted) return;
 
-      // Navigate directly to unit detail
+      // Verify unit exists before navigating
+      AppLogger.info('Verifying unit exists: $uuid');
+      final unit = await _unitRepository.getUnitByUuid(uuid);
+
+      if (!mounted) return;
+
+      // Navigate to unit detail (use primary key id, not QR uuid)
       Navigator.of(context).push(
         MaterialPageRoute(
-          builder: (context) => UnitDetailScreen(unitId: uuid),
+          builder: (context) => UnitDetailScreen(unitId: unit.id),
         ),
       );
 
-      AppLogger.info('Navigated to unit detail: $uuid');
+      AppLogger.info('Navigated to unit detail: ${unit.unitId}');
     } catch (e) {
       AppLogger.error('Failed to process scanned data', e, StackTrace.current);
 
       if (!mounted) return;
 
+      // Determine error type and show appropriate message
+      String errorMessage;
+      if (e.toString().contains('PGRST116') || e.toString().contains('0 rows')) {
+        errorMessage = 'Unit not found. This QR code may be invalid or the unit may have been deleted.';
+      } else if (e.toString().contains('Invalid QR') || e.toString().contains('FormatException')) {
+        errorMessage = 'Invalid QR code format. Please scan a valid production unit QR code.';
+      } else {
+        errorMessage = 'Error scanning QR code: ${e.toString()}';
+      }
+
       // Show error message
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Invalid QR code: $e'),
+          content: Text(errorMessage),
           backgroundColor: SaturdayColors.error,
-          duration: const Duration(seconds: 3),
+          duration: const Duration(seconds: 4),
+          action: SnackBarAction(
+            label: 'Dismiss',
+            textColor: Colors.white,
+            onPressed: () {
+              ScaffoldMessenger.of(context).hideCurrentSnackBar();
+            },
+          ),
         ),
       );
     }
@@ -131,6 +158,10 @@ class _MainScaffoldState extends State<MainScaffold> {
         return const ProductionUnitsScreen();
       case '/firmware':
         return const FirmwareListScreen();
+      case '/files':
+        return const FilesScreen();
+      case '/tags':
+        return const TagListScreen();
       case '/settings':
         return const SettingsScreen();
       default:

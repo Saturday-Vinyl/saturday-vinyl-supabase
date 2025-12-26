@@ -79,17 +79,17 @@ class ImageToGCodeService {
 
       // Initialize
       gcode.writeln('G21 ; Set units to millimeters');
-      gcode.writeln('G90 ; Absolute positioning for initial move');
+      gcode.writeln('G90 ; Absolute positioning');
       gcode.writeln('M4 ; Enable laser (dynamic power mode)');
       gcode.writeln('S0 ; Laser off initially');
       gcode.writeln('F$feedRate ; Set feed rate');
       gcode.writeln();
 
-      // Move to start position (absolute)
+      // Move to start position using machine coordinates (G53 ignores work coordinate offsets)
       // Start at top-left (highest Y position)
       final startYTop = startY + heightMM - stepSizeYMM;
       gcode.writeln(
-          'G0 X${startX.toStringAsFixed(3)} Y${startYTop.toStringAsFixed(3)} ; Move to start');
+          'G53 G0 X${startX.toStringAsFixed(3)} Y${startYTop.toStringAsFixed(3)} ; Move to start (machine coordinates)');
       gcode.writeln();
 
       // Switch to relative positioning for efficient scanning
@@ -130,10 +130,10 @@ class ImageToGCodeService {
       // Footer
       gcode.writeln();
       gcode.writeln('S0 ; Laser off');
-      gcode.writeln('G90 ; Return to absolute positioning');
       gcode.writeln('M5 ; Disable laser');
+      gcode.writeln('G90 ; Return to absolute positioning');
       gcode.writeln(
-          'G0 X${startX.toStringAsFixed(3)} Y${startY.toStringAsFixed(3)} ; Return to start');
+          'G53 G0 X${startX.toStringAsFixed(3)} Y${startY.toStringAsFixed(3)} ; Return to start (machine coordinates)');
       gcode.writeln('; End of gCode');
 
       final gcodeString = gcode.toString();
