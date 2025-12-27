@@ -60,11 +60,48 @@ class UhfFrame extends Equatable {
   /// Check if this is a command frame
   bool get isCommand => type == UhfFrameType.command;
 
+  /// Check if this is an error response frame (command = 0xFF)
+  bool get isErrorFrame => isResponse && command == 0xFF;
+
   /// Check if this frame indicates success (for response frames)
-  bool get isSuccess => isResponse && parameters.isNotEmpty && parameters.first == RfidConfig.respSuccess;
+  ///
+  /// Success detection depends on the command type:
+  /// - WriteEpc (0x49), LockTag (0x82): Success if response echoes the command code
+  ///   (not 0xFF error frame). These commands return tag data, not a status code.
+  /// - Other commands: Success if first param is 0x00 (respSuccess)
+  ///
+  /// Note: For error frames, command=0xFF and params contain error details
+  bool get isSuccess {
+    if (!isResponse || isErrorFrame) return false;
+
+    // Commands that return tag data on success (no status code in params)
+    // For these, receiving response with same command code = success
+    if (command == RfidConfig.cmdWriteEpc || command == RfidConfig.cmdLockTag) {
+      return true; // Not an error frame, so it's success
+    }
+
+    // For other commands, check the status code in first parameter
+    return parameters.isNotEmpty && parameters.first == RfidConfig.respSuccess;
+  }
 
   /// Get the response/error code (first parameter byte for response frames)
-  int? get responseCode => isResponse && parameters.isNotEmpty ? parameters.first : null;
+  ///
+  /// Note: For WriteEpc and LockTag commands, this returns null because their
+  /// success responses contain tag data, not a status code. Error responses
+  /// (command=0xFF) still have error codes in parameters.
+  int? get responseCode {
+    if (!isResponse || parameters.isEmpty) return null;
+
+    // For error frames, first param is the error code
+    if (isErrorFrame) return parameters.first;
+
+    // WriteEpc and LockTag return tag data on success, not a status code
+    if (command == RfidConfig.cmdWriteEpc || command == RfidConfig.cmdLockTag) {
+      return null; // No status code for these commands on success
+    }
+
+    return parameters.first;
+  }
 
   /// Get parameters excluding the response code (for response frames)
   List<int> get dataParameters => isResponse && parameters.length > 1 ? parameters.sublist(1) : parameters;
@@ -164,8 +201,14 @@ class TagPollData extends Equatable {
     return '${hex.substring(0, 4)}-${hex.substring(4, 8)}-${hex.substring(8, 12)}-${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20, 24)}';
   }
 
-  /// Check if this is a Saturday Vinyl tag (starts with 5356)
-  bool get isSaturdayTag => epcHex.toUpperCase().startsWith(RfidConfig.epcPrefixHex.toUpperCase());
+  /// Check if this is a Saturday Vinyl tag
+  ///
+  /// A valid Saturday tag must:
+  /// 1. Start with "SV" / 0x5356 prefix
+  /// 2. Be exactly 96-bit / 12 bytes / 24 hex chars
+  bool get isSaturdayTag =>
+      epcBytes.length == RfidConfig.epcLengthBytes &&
+      epcHex.toUpperCase().startsWith(RfidConfig.epcPrefixHex.toUpperCase());
 
   /// EPC length in bytes
   int get epcLength => epcBytes.length;

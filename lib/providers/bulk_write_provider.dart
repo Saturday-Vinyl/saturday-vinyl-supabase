@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:saturday_app/config/env_config.dart';
 import 'package:saturday_app/models/rfid_tag.dart';
 import 'package:saturday_app/models/tag_poll_result.dart';
 import 'package:saturday_app/providers/activity_log_provider.dart';
@@ -65,8 +64,14 @@ class BulkWriteNotifier extends StateNotifier<BulkWriteState> {
   StreamSubscription<TagPollResult>? _pollSubscription;
   Timer? _noTagTimer;
 
-  /// Timeout for no unwritten tags found
-  static const _noTagTimeout = Duration(seconds: 2);
+  /// Flag to prevent concurrent tag processing
+  bool _isProcessingTag = false;
+
+  /// Cache of EPCs we've already processed this session (avoids repeated DB lookups)
+  final Set<String> _processedEpcs = {};
+
+  /// Timeout for no new tags found
+  static const _noTagTimeout = Duration(seconds: 3);
 
   BulkWriteNotifier(this._ref) : super(const BulkWriteState());
 
@@ -91,10 +96,14 @@ class BulkWriteNotifier extends StateNotifier<BulkWriteState> {
     AppLogger.info('BulkWrite: Starting bulk write mode');
     activityLog.info('Starting bulk write mode...');
 
+    // Reset processing flag and cache
+    _isProcessingTag = false;
+    _processedEpcs.clear();
+
     // Reset state
-    state = BulkWriteState(
+    state = const BulkWriteState(
       isWriting: true,
-      currentOperation: 'Searching for unwritten tags...',
+      currentOperation: 'Searching for tags...',
     );
 
     // Start polling
@@ -128,21 +137,85 @@ class BulkWriteNotifier extends StateNotifier<BulkWriteState> {
     // Ignore if not writing or stop requested
     if (!state.isWriting || state.stopRequested) return;
 
-    // Only process unwritten tags (those without Saturday prefix)
-    if (result.isSaturdayTag) {
-      // This is already a Saturday tag, skip it
+    // Ignore if already processing a tag (prevent concurrent writes)
+    if (_isProcessingTag) {
       return;
     }
 
-    // Cancel no-tag timer since we found one
+    final epc = result.epcHex.toUpperCase();
+
+    // Skip if we've already processed this EPC this session
+    if (_processedEpcs.contains(epc)) {
+      return;
+    }
+
+    // Cancel no-tag timer since we found a NEW tag
     _noTagTimer?.cancel();
 
-    // Process this unwritten tag
-    await _processUnwrittenTag(result);
+    // Mark as processing to prevent concurrent calls
+    _isProcessingTag = true;
+
+    try {
+      if (result.isSaturdayTag) {
+        // This is already a Saturday tag - ensure it's in the database
+        await _ensureSaturdayTagInDatabase(result);
+      } else {
+        // This is an unwritten tag - write Saturday EPC and add to database
+        await _processUnwrittenTag(result);
+      }
+      // Mark this EPC as processed (whether it needed action or not)
+      _processedEpcs.add(epc);
+    } finally {
+      _isProcessingTag = false;
+    }
 
     // If still writing and not stopped, reset timer for next tag
     if (state.isWriting && !state.stopRequested) {
       _resetNoTagTimer();
+    }
+  }
+
+  /// Ensure a Saturday tag exists in the database (idempotent)
+  Future<void> _ensureSaturdayTagInDatabase(TagPollResult result) async {
+    final tagRepo = _ref.read(rfidTagRepositoryProvider);
+
+    final epc = result.epcHex.toUpperCase();
+
+    // Check if tag already exists in database
+    final existingTag = await tagRepo.getTagByEpc(epc);
+    if (existingTag != null) {
+      // Tag already in database, nothing to do
+      AppLogger.debug('BulkWrite: Saturday tag $epc already in database');
+      return;
+    }
+
+    // Tag not in database - add it
+    final activityLog = _ref.read(activityLogProvider.notifier);
+    AppLogger.info('BulkWrite: Found Saturday tag not in database: ${result.formattedEpc}');
+    activityLog.info('Found existing Saturday tag, adding to database...');
+
+    state = state.copyWith(currentOperation: 'Adding existing tag to database...');
+
+    final currentUser = await _ref.read(currentUserProvider.future);
+
+    try {
+      await tagRepo.createAndWriteTag(
+        epc: epc,
+        createdBy: currentUser?.id,
+      );
+
+      activityLog.success('Added existing tag: ${result.formattedEpc}', relatedEpc: epc);
+
+      state = state.copyWith(
+        tagsWritten: state.tagsWritten + 1,
+        currentOperation: 'Searching for tags...',
+      );
+
+      // Refresh the tags list
+      _ref.invalidate(filteredRfidTagsProvider);
+    } catch (e) {
+      // If insert fails (e.g., race condition duplicate), just log and continue
+      AppLogger.warning('BulkWrite: Failed to add existing tag (may already exist): $e');
     }
   }
 
@@ -165,44 +238,42 @@ class BulkWriteNotifier extends StateNotifier<BulkWriteState> {
 
     final writeSuccess = await _writeTag(newEpc);
     if (!writeSuccess) {
-      await _handleError('Write failed');
+      // Write failed - log the error but continue with other tags
+      // This can happen if the tag is locked or has an access password mismatch
+      AppLogger.warning('BulkWrite: Write failed for tag ${result.formattedEpc} (may be locked)');
+      activityLog.error('Write failed for tag (may be locked or password protected)');
+
+      // Resume polling and continue searching for other tags
+      final uhfService = _ref.read(uhfRfidServiceProvider);
+      if (state.isWriting && !state.stopRequested) {
+        await uhfService.startPolling();
+      }
       return;
     }
 
-    // Step 2: Verify write
-    state = state.copyWith(currentOperation: 'Verifying write...');
-    activityLog.info('Verifying write...', relatedEpc: newEpc);
+    // Note: Write command success response from M100 confirms the write worked.
+    // The module only returns success (command=0x49) if the EPC was actually written.
+    // Separate verification via polling is skipped to avoid timeout issues with
+    // multiple tags in the field.
+    activityLog.success('Write successful', relatedEpc: newEpc);
 
-    final verifySuccess = await _verifyWrite(newEpc);
-    if (!verifySuccess) {
-      await _handleError('Write verification failed');
-      return;
-    }
+    // Note: Lock step is skipped in bulk write mode.
+    // The M100 module cannot reliably target a specific tag for locking when
+    // multiple tags are in the field. The lock command operates on whichever
+    // tag responds first, which may not be the tag we just wrote.
+    // Tags are saved as 'written' status. Locking can be done separately
+    // with single-tag operations if needed.
 
-    activityLog.success('Write verified successfully', relatedEpc: newEpc);
-
-    // Step 3: Lock tag
-    state = state.copyWith(currentOperation: 'Locking tag...');
-    activityLog.info('Locking tag...', relatedEpc: newEpc);
-
-    final lockSuccess = await _lockTag();
-    if (!lockSuccess) {
-      // Lock failed, but write succeeded - save as 'written' status
-      await _saveToDatabase(newEpc, status: RfidTagStatus.written);
-      await _handleError('Lock failed (tag saved as written)');
-      return;
-    }
-
-    // Step 4: Save to database
+    // Step 3: Save to database (as written, not locked)
     state = state.copyWith(currentOperation: 'Saving to database...');
-    final saveSuccess = await _saveToDatabase(newEpc, status: RfidTagStatus.locked);
+    final saveSuccess = await _saveToDatabase(newEpc, status: RfidTagStatus.written);
     if (!saveSuccess) {
       await _handleError('Database save failed');
       return;
     }
 
     // Success!
-    activityLog.success('Tag locked and saved: $formattedEpc', relatedEpc: newEpc);
+    activityLog.success('Tag written and saved: $formattedEpc', relatedEpc: newEpc);
 
     state = state.copyWith(
       tagsWritten: state.tagsWritten + 1,
@@ -223,6 +294,10 @@ class BulkWriteNotifier extends StateNotifier<BulkWriteState> {
     // Stop polling during write
     await uhfService.stopPolling();
 
+    // Small delay to let the module settle after stopping polling
+    // This ensures any pending responses are cleared before the write
+    await Future.delayed(const Duration(milliseconds: 100));
+
     try {
       final result = await uhfService.writeEpc(epcBytes);
       return result.success;
@@ -234,64 +309,26 @@ class BulkWriteNotifier extends StateNotifier<BulkWriteState> {
     }
   }
 
-  /// Verify the EPC was written correctly
-  Future<bool> _verifyWrite(String epcHex) async {
-    final uhfService = _ref.read(uhfRfidServiceProvider);
-
-    // Convert hex string to bytes
-    final epcBytes = _hexToBytes(epcHex);
-
-    return await uhfService.verifyEpc(
-      epcBytes,
-      timeout: const Duration(seconds: 2),
-    );
-  }
-
-  /// Lock the tag with access password
-  Future<bool> _lockTag() async {
-    final uhfService = _ref.read(uhfRfidServiceProvider);
-
-    // Get access password from environment config (shared across all devices)
-    final passwordBytes = EnvConfig.rfidAccessPasswordBytes;
-
-    // Stop polling during lock
-    await uhfService.stopPolling();
-
-    try {
-      final result = await uhfService.lockTag(passwordBytes);
-      return result.success;
-    } finally {
-      // Resume polling
-      if (state.isWriting && !state.stopRequested) {
-        await uhfService.startPolling();
-      }
-    }
-  }
-
-  /// Save the tag to the database
+  /// Save the tag to the database (idempotent - checks if exists first)
   Future<bool> _saveToDatabase(String epcHex, {required RfidTagStatus status}) async {
     try {
       final tagRepo = _ref.read(rfidTagRepositoryProvider);
+      final normalizedEpc = epcHex.toUpperCase();
+
+      // Check if tag already exists (idempotent)
+      final existingTag = await tagRepo.getTagByEpc(normalizedEpc);
+      if (existingTag != null) {
+        AppLogger.info('BulkWrite: Tag $normalizedEpc already in database');
+        return true;
+      }
+
       final currentUser = await _ref.read(currentUserProvider.future);
 
-      if (status == RfidTagStatus.locked) {
-        // Create with locked status (includes written_at and locked_at)
-        await tagRepo.createAndWriteTag(
-          epc: epcHex,
-          createdBy: currentUser?.id,
-        );
-        // Then update to locked
-        final tag = await tagRepo.getTagByEpc(epcHex);
-        if (tag != null) {
-          await tagRepo.updateTagStatus(tag.id, RfidTagStatus.locked);
-        }
-      } else {
-        // Create with written status
-        await tagRepo.createAndWriteTag(
-          epc: epcHex,
-          createdBy: currentUser?.id,
-        );
-      }
+      // Create with written status
+      await tagRepo.createAndWriteTag(
+        epc: normalizedEpc,
+        createdBy: currentUser?.id,
+      );
 
       return true;
     } catch (e) {
@@ -331,7 +368,7 @@ class BulkWriteNotifier extends StateNotifier<BulkWriteState> {
       );
     }
 
-    if (reason.isNotEmpty && !reason.contains('No unwritten tags')) {
+    if (reason.isNotEmpty && !reason.contains('No new tags')) {
       activityLog.info('Stopping bulk write: $reason');
     }
 
@@ -348,8 +385,8 @@ class BulkWriteNotifier extends StateNotifier<BulkWriteState> {
     _noTagTimer?.cancel();
     _noTagTimer = Timer(_noTagTimeout, () {
       if (state.isWriting && !state.stopRequested) {
-        AppLogger.info('BulkWrite: No unwritten tags found for ${_noTagTimeout.inSeconds}s');
-        _stopWriting('No unwritten tags found');
+        AppLogger.info('BulkWrite: No new tags found for ${_noTagTimeout.inSeconds}s, processed ${_processedEpcs.length} total');
+        _stopWriting('No new tags found');
       }
     });
   }

@@ -121,7 +121,8 @@ class RfidConfig {
   /// Read tag data command
   static const int cmdReadData = 0x39;
 
-  /// Write EPC data command
+  /// Write tag data storage command
+  /// Per M100 docs: writes to any memory bank (EPC, TID, User, Reserved)
   static const int cmdWriteEpc = 0x49;
 
   /// Lock tag command
@@ -137,8 +138,8 @@ class RfidConfig {
   // UHF Module Response Codes
   // ============================================================================
 
-  /// Response: Success
-  static const int respSuccess = 0x10;
+  /// Response: Success (0x00 for normal responses, error frames use 0xFF command)
+  static const int respSuccess = 0x00;
 
   /// Response: Invalid command
   static const int respInvalidCommand = 0x11;
@@ -164,11 +165,21 @@ class RfidConfig {
   /// Response: Lock failed
   static const int respLockFailed = 0x18;
 
+  /// Response: Access error (tag is secured/locked, wrong password)
+  static const int respAccessError = 0x10;
+
+  /// Response: Other/general error
+  static const int respOtherError = 0x0F;
+
   /// Get human-readable error message for response code
   static String getErrorMessage(int code) {
     switch (code) {
       case respSuccess:
         return 'Success';
+      case respOtherError:
+        return 'Other/general error';
+      case respAccessError:
+        return 'Access error (tag may be locked or password mismatch)';
       case respInvalidCommand:
         return 'Invalid command';
       case respInvalidParameter:

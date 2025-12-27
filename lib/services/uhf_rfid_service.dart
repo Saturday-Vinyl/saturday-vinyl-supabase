@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:saturday_app/config/env_config.dart';
 import 'package:saturday_app/config/rfid_config.dart';
 import 'package:saturday_app/models/lock_result.dart';
 import 'package:saturday_app/models/serial_connection_state.dart';
@@ -37,7 +38,21 @@ class UhfRfidService {
   bool _isPolling = false;
 
   /// Access password for tag operations (4 bytes)
-  List<int> _accessPassword = List.from(RfidConfig.defaultAccessPassword);
+  /// Defaults to the password from .env (RFID_ACCESS_PASSWORD) if set,
+  /// otherwise uses all zeros for unlocked tags.
+  late List<int> _accessPassword = _loadDefaultPassword();
+
+  /// Load default password from environment or use zeros
+  static List<int> _loadDefaultPassword() {
+    try {
+      final envPassword = EnvConfig.rfidAccessPasswordBytes;
+      AppLogger.debug('UhfRfidService: Using access password from .env');
+      return envPassword;
+    } catch (e) {
+      AppLogger.debug('UhfRfidService: Using default (zero) access password');
+      return List.from(RfidConfig.defaultAccessPassword);
+    }
+  }
 
   /// Completer for pending command response
   Completer<UhfFrame>? _pendingResponse;
@@ -386,6 +401,10 @@ class UhfRfidService {
   /// Perform a single poll for tags
   ///
   /// Returns list of tags found, or empty list if none or error
+  ///
+  /// Note: SinglePoll sends notice frames (type 0x02) with tag data, not
+  /// response frames (type 0x01). So we listen to the pollStream instead
+  /// of waiting for a response frame.
   Future<List<TagPollResult>> singlePoll() async {
     if (!isConnected) {
       AppLogger.warning('UhfRfidService: Cannot poll - not connected');
@@ -394,37 +413,48 @@ class UhfRfidService {
 
     AppLogger.debug('UhfRfidService: Single poll');
 
-    final command = UhfFrameCodec.buildSinglePoll();
-    final response = await _sendCommandAndWaitForResponse(
-      command,
-      RfidConfig.cmdSinglePoll,
-      timeout: const Duration(milliseconds: 500),
-    );
+    // Set up a completer to receive the first tag from pollStream
+    final completer = Completer<TagPollResult?>();
+    StreamSubscription<TagPollResult>? subscription;
 
-    if (response == null) {
+    // Listen for the first tag result
+    subscription = _pollController.stream.listen((result) {
+      if (!completer.isCompleted) {
+        completer.complete(result);
+        subscription?.cancel();
+      }
+    });
+
+    // Send the single poll command
+    final command = UhfFrameCodec.buildSinglePoll();
+    final success = await _serialPortService.write(command);
+    if (!success) {
+      await subscription.cancel();
+      AppLogger.warning('UhfRfidService: Failed to send single poll command');
       return [];
     }
 
-    // Single poll response includes tag data directly
-    if (response.isSuccess && response.dataParameters.length >= 3) {
-      final tagData = UhfFrameCodec.parseTagPollData(UhfFrame(
-        type: UhfFrameType.notice,
-        command: RfidConfig.cmdMultiplePoll,
-        parameters: response.dataParameters,
-      ));
+    // Wait for tag result with timeout
+    try {
+      final result = await completer.future.timeout(
+        const Duration(milliseconds: 500),
+        onTimeout: () => null,
+      );
 
-      if (tagData != null) {
-        return [
-          TagPollResult(
-            epc: tagData.epcBytes,
-            rssi: tagData.rssi,
-            pc: tagData.pc,
-          )
-        ];
+      await subscription.cancel();
+
+      if (result != null) {
+        AppLogger.debug('UhfRfidService: Single poll found tag: ${result.formattedEpc}');
+        return [result];
       }
-    }
 
-    return [];
+      AppLogger.debug('UhfRfidService: Single poll - no tag found');
+      return [];
+    } catch (e) {
+      await subscription.cancel();
+      AppLogger.error('UhfRfidService: Single poll error', e);
+      return [];
+    }
   }
 
   // ==========================================================================
@@ -460,7 +490,14 @@ class UhfRfidService {
         'UhfRfidService: Writing EPC ${newEpc.map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase()).join()}');
 
     try {
+      // Small delay to let the module settle after stopping polling
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      // Send the write command directly - the M100 module will find and write
+      // to the first tag in the field without needing explicit selection
       final command = UhfFrameCodec.buildWriteEpc(_accessPassword, newEpc);
+      final commandHex = command.map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase()).join(' ');
+      AppLogger.debug('UhfRfidService: Sending write command: $commandHex');
       final response = await _sendCommandAndWaitForResponse(
         command,
         RfidConfig.cmdWriteEpc,
@@ -585,6 +622,16 @@ class UhfRfidService {
     AppLogger.info('UhfRfidService: Locking tag');
 
     try {
+      // First, do a single poll to select a tag before locking
+      // The lock command requires a tag to be selected/in the field
+      AppLogger.debug('UhfRfidService: Selecting tag with single poll before lock');
+      final pollResult = await singlePoll();
+      if (pollResult.isEmpty) {
+        AppLogger.warning('UhfRfidService: No tag found to lock');
+        return LockResult.error('No tag found in field', duration: stopwatch.elapsed);
+      }
+      AppLogger.debug('UhfRfidService: Tag selected: ${pollResult.first.formattedEpc}');
+
       // Lock payload configuration:
       // Byte 0: Lock action flags (which areas to lock)
       // Byte 1-2: Lock mask (which bits to modify)
@@ -725,8 +772,9 @@ class UhfRfidService {
 
   /// Handle notice frames (async notifications from module)
   void _handleNoticeFrame(UhfFrame frame) {
-    // Check for tag poll notice
-    if (frame.command == RfidConfig.cmdMultiplePoll) {
+    // Check for tag poll notice (can come from single poll or multiple poll commands)
+    if (frame.command == RfidConfig.cmdMultiplePoll ||
+        frame.command == RfidConfig.cmdSinglePoll) {
       final tagData = UhfFrameCodec.parseTagPollData(frame);
       if (tagData != null) {
         final result = TagPollResult(
@@ -742,14 +790,22 @@ class UhfRfidService {
 
   /// Handle response frames (replies to commands)
   void _handleResponseFrame(UhfFrame frame) {
-    // Check if this matches a pending command
-    if (_pendingResponse != null && frame.command == _pendingCommand) {
+    // Check if this matches a pending command or is an error response (0xFF)
+    // Error responses come with command=0xFF instead of the original command
+    final isMatchingCommand = frame.command == _pendingCommand;
+    final isErrorResponse = frame.command == 0xFF;
+
+    if (_pendingResponse != null && (isMatchingCommand || isErrorResponse)) {
       // Cancel any echo fallback timer - we got a proper response
       _echoFallbackTimer?.cancel();
       _echoFallbackTimer = null;
       _lastCommandEcho = null;
 
-      AppLogger.info('UhfRfidService: Proper response received (type=0x01)');
+      if (isErrorResponse) {
+        AppLogger.warning('UhfRfidService: Error response received (cmd=0xFF)');
+      } else {
+        AppLogger.info('UhfRfidService: Proper response received (type=0x01)');
+      }
       _pendingResponse!.complete(frame);
       _pendingResponse = null;
       _pendingCommand = null;

@@ -39,8 +39,13 @@ class TagPollResult extends Equatable {
     return '${hex.substring(0, 4)}-${hex.substring(4, 8)}-${hex.substring(8, 12)}-${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20, 24)}';
   }
 
-  /// Check if this is a Saturday Vinyl tag (starts with "SV" / 0x5356 prefix)
+  /// Check if this is a Saturday Vinyl tag
+  ///
+  /// A valid Saturday tag must:
+  /// 1. Start with "SV" / 0x5356 prefix
+  /// 2. Be exactly 96-bit / 12 bytes / 24 hex chars
   bool get isSaturdayTag =>
+      epc.length == RfidConfig.epcLengthBytes &&
       epcHex.toUpperCase().startsWith(RfidConfig.epcPrefixHex.toUpperCase());
 
   /// Check if this appears to be an unwritten/blank tag

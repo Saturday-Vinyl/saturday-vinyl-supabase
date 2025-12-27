@@ -9,7 +9,7 @@ import 'package:saturday_app/utils/app_logger.dart';
 ///
 /// This service handles:
 /// - Serial port discovery and connection
-/// - DTR pin control for module enable (EN pin)
+/// - RTS pin control for module enable (EN pin)
 /// - Data streaming and writing
 /// - Connection state management
 class SerialPortService {
@@ -35,7 +35,7 @@ class SerialPortService {
   /// Check if connected
   bool get isConnected => _state.isConnected;
 
-  /// Check if module is enabled (DTR asserted)
+  /// Check if module is enabled (RTS deasserted = HIGH)
   bool get isModuleEnabled => _isModuleEnabled;
 
   /// Get list of available serial ports
@@ -82,7 +82,7 @@ class SerialPortService {
   /// This method:
   /// 1. Opens the serial port
   /// 2. Configures it (8N1, no flow control)
-  /// 3. Asserts DTR to enable the RFID module (pulls EN pin LOW)
+  /// 3. Configures RTS to enable the RFID module (EN pin HIGH)
   /// 4. Waits for module initialization
   /// 5. Starts listening for incoming data
   Future<bool> connect(String portName, {int? baudRate}) async {
@@ -124,9 +124,10 @@ class SerialPortService {
 
       _port!.config = config;
 
-      // Assert DTR to enable the RFID module
-      // Note: EN pin is ACTIVE-LOW, DTR ON = EN pin LOW = module ON
-      _setDtr(true);
+      // Configure RTS to enable the RFID module
+      // Note: EN pin is ACTIVE-HIGH (>1.5V to enable)
+      // RTS OFF (deasserted) = RTS pin HIGH = EN HIGH = module ON
+      _setRts(true);
       _isModuleEnabled = true;
 
       // Wait for module to initialize
@@ -175,16 +176,16 @@ class SerialPortService {
   /// Disconnect from the serial port
   ///
   /// This method:
-  /// 1. Deasserts DTR to disable the RFID module
+  /// 1. Configures RTS to disable the RFID module
   /// 2. Closes the serial port
   /// 3. Cleans up resources
   Future<void> disconnect() async {
     AppLogger.info('Disconnecting from RFID module');
 
     try {
-      // Deassert DTR to disable module before closing
+      // Set RTS to disable module before closing
       if (_port != null && _isModuleEnabled) {
-        _setDtr(false);
+        _setRts(false);
         _isModuleEnabled = false;
         // Brief delay to allow module to power down cleanly
         await Future.delayed(const Duration(milliseconds: 50));
@@ -234,46 +235,46 @@ class SerialPortService {
     }
   }
 
-  /// Enable or disable the RFID module via DTR pin
+  /// Enable or disable the RFID module via RTS pin
   ///
-  /// [enabled] - true to enable module (assert DTR, EN pin HIGH)
-  ///           - false to disable module (deassert DTR, EN pin LOW)
+  /// [enabled] - true to enable module (RTS HIGH, EN pin HIGH)
+  ///           - false to disable module (RTS LOW, EN pin LOW)
   void setModuleEnabled(bool enabled) {
     if (_port == null) {
       AppLogger.warning('Cannot set module enabled: not connected');
       return;
     }
 
-    _setDtr(enabled);
+    _setRts(enabled);
     _isModuleEnabled = enabled;
     _updateState(_state.copyWith(isModuleEnabled: enabled));
-    AppLogger.info('RFID module ${enabled ? "enabled" : "disabled"} via DTR');
+    AppLogger.info('RFID module ${enabled ? "enabled" : "disabled"} via RTS');
   }
 
-  /// Set DTR pin state to control module enable
+  /// Set RTS pin state to control module enable
   ///
-  /// The UHF module uses ACTIVE-LOW enable logic:
-  /// - EN = LOW  → Module ON (enabled)
-  /// - EN = HIGH → Module OFF (disabled/power down)
+  /// The YRM1002 UHF module uses ACTIVE-HIGH enable logic:
+  /// - EN > 1.5V → Module ON (enabled)
+  /// - EN < 1.5V → Module OFF (disabled/power down)
   ///
-  /// DTR behavior on CP2102N:
-  /// - DTR ON  → Pin goes LOW
-  /// - DTR OFF → Pin goes HIGH
+  /// RTS behavior on CP2102N (3.3V logic):
+  /// - RTS OFF (deasserted) → Pin goes HIGH (3.3V)
+  /// - RTS ON  (asserted)   → Pin goes LOW  (0V)
   ///
-  /// So to enable the module, we set DTR ON (which pulls EN LOW)
-  void _setDtr(bool enableModule) {
+  /// So to enable the module, we set RTS OFF (which pulls EN HIGH)
+  void _setRts(bool enableModule) {
     if (_port == null) return;
 
     try {
-      // Active-low logic: DTR ON = EN LOW = Module enabled
+      // Active-high logic: RTS OFF = EN HIGH = Module enabled
       if (enableModule) {
-        _port!.config.dtr = SerialPortDtr.on;  // DTR ON → EN LOW → Module ON
+        _port!.config.rts = SerialPortRts.off;  // RTS OFF → EN HIGH → Module ON
       } else {
-        _port!.config.dtr = SerialPortDtr.off; // DTR OFF → EN HIGH → Module OFF
+        _port!.config.rts = SerialPortRts.on;   // RTS ON → EN LOW → Module OFF
       }
-      AppLogger.debug('DTR ${enableModule ? "ON (EN=LOW, module enabled)" : "OFF (EN=HIGH, module disabled)"}');
+      AppLogger.debug('RTS ${enableModule ? "OFF (EN=HIGH, module enabled)" : "ON (EN=LOW, module disabled)"}');
     } catch (error, stackTrace) {
-      AppLogger.error('Error setting DTR', error, stackTrace);
+      AppLogger.error('Error setting RTS', error, stackTrace);
     }
   }
 

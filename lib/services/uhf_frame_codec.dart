@@ -74,6 +74,13 @@ class UhfFrameCodec {
   ///
   /// [accessPassword] - 4-byte access password
   /// [epcBytes] - The EPC data to write (typically 12 bytes for 96-bit EPC)
+  ///
+  /// M100 protocol format for Write Tag Memory (0x49):
+  /// - Access Password: 4 bytes (AP)
+  /// - Memory Bank: 1 byte (0x01 = EPC, 0x02 = TID, 0x03 = User)
+  /// - Start Address: 2 bytes (SA MSB, SA LSB) - EPC data starts at word 0x0002
+  /// - Data Length: 2 bytes (DL MSB, DL LSB) - length in words
+  /// - Data: variable length (DT - the EPC bytes)
   static List<int> buildWriteEpc(List<int> accessPassword, List<int> epcBytes) {
     if (accessPassword.length != 4) {
       throw ArgumentError('Access password must be 4 bytes');
@@ -82,12 +89,16 @@ class UhfFrameCodec {
       throw ArgumentError('EPC must be ${RfidConfig.epcLengthBytes} bytes');
     }
 
-    final wordCount = epcBytes.length ~/ 2;
+    final wordCount = epcBytes.length ~/ 2; // 12 bytes = 6 words
     final parameters = <int>[
       ...accessPassword,
       RfidConfig.memBankEpc,
-      RfidConfig.epcWriteStartAddr,
-      wordCount,
+      // Start Address (SA) as 2 bytes (MSB, LSB) - EPC data starts at word 2
+      (RfidConfig.epcWriteStartAddr >> 8) & 0xFF, // SA MSB (0x00)
+      RfidConfig.epcWriteStartAddr & 0xFF,        // SA LSB (0x02)
+      // Data Length (DL) as 2 bytes (MSB, LSB) - length in words
+      (wordCount >> 8) & 0xFF,                    // DL MSB (0x00)
+      wordCount & 0xFF,                           // DL LSB (0x06)
       ...epcBytes,
     ];
 
@@ -349,9 +360,14 @@ class UhfFrameCodec {
   /// Notice frames for tag polls contain:
   /// - RSSI (1 byte)
   /// - PC (2 bytes)
-  /// - EPC (variable, typically 12 bytes for 96-bit)
+  /// - EPC (length determined by PC word, typically 12 bytes for 96-bit)
+  /// - CRC-16 (2 bytes, optional - M100 may include this)
+  ///
+  /// Note: Tag poll notices can come from either SinglePoll (0x22) or MultiplePoll (0x27)
   static TagPollData? parseTagPollData(UhfFrame frame) {
-    if (!frame.isNotice || frame.command != RfidConfig.cmdMultiplePoll) {
+    if (!frame.isNotice ||
+        (frame.command != RfidConfig.cmdMultiplePoll &&
+         frame.command != RfidConfig.cmdSinglePoll)) {
       return null;
     }
 
@@ -363,7 +379,18 @@ class UhfFrameCodec {
 
     final rssi = params[0];
     final pc = (params[1] << 8) | params[2];
-    final epcBytes = params.sublist(3);
+
+    // Extract EPC length from PC word (bits 15-11 encode length in 16-bit words)
+    final epcLengthWords = (pc >> 11) & 0x1F;
+    final epcLengthBytes = epcLengthWords * 2;
+
+    // Get EPC bytes using the length from PC (ignores trailing CRC-16 if present)
+    final availableEpcBytes = params.length - 3;
+    final actualEpcLength = epcLengthBytes > 0 && epcLengthBytes <= availableEpcBytes
+        ? epcLengthBytes
+        : availableEpcBytes;
+
+    final epcBytes = params.sublist(3, 3 + actualEpcLength);
 
     if (epcBytes.isEmpty) {
       AppLogger.warning('Empty EPC in tag poll data');

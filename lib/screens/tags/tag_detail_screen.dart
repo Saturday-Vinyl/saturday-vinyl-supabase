@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 import 'package:saturday_app/config/theme.dart';
 import 'package:saturday_app/models/rfid_tag.dart';
 import 'package:saturday_app/providers/rfid_tag_provider.dart';
+import 'package:saturday_app/services/qr_service.dart';
 import 'package:saturday_app/widgets/tags/tag_status_badge.dart';
 
 /// Detail screen/panel for viewing a single RFID tag
@@ -43,6 +44,11 @@ class TagDetailScreen extends ConsumerStatefulWidget {
 
 class _TagDetailScreenState extends ConsumerState<TagDetailScreen> {
   bool _isRetiring = false;
+  bool _isSavingQR = false;
+  bool _isGeneratingQR = false;
+  Uint8List? _qrCodeData;
+  String? _lastGeneratedEpc;
+  final _qrService = QRService();
 
   @override
   Widget build(BuildContext context) {
@@ -52,6 +58,10 @@ class _TagDetailScreenState extends ConsumerState<TagDetailScreen> {
       data: (tag) {
         if (tag == null) {
           return _buildErrorState('Tag not found');
+        }
+        // Auto-generate QR code when tag loads (only once per EPC)
+        if (_qrCodeData == null || _lastGeneratedEpc != tag.epcIdentifier) {
+          _generateQRCode(tag);
         }
         return _buildContent(context, tag);
       },
@@ -113,21 +123,46 @@ class _TagDetailScreenState extends ConsumerState<TagDetailScreen> {
             ),
           ),
 
-          // Header
+          // Header with QR Code
           Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                width: 56,
-                height: 56,
-                decoration: BoxDecoration(
-                  color: TagStatusBadge.getColorForStatus(tag.status)
-                      .withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(
-                  Icons.label,
-                  color: TagStatusBadge.getColorForStatus(tag.status),
-                  size: 28,
+              // QR Code
+              GestureDetector(
+                onTap: () => _saveQRCode(tag),
+                child: Container(
+                  width: 100,
+                  height: 100,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: SaturdayColors.secondaryGrey.withValues(alpha: 0.3),
+                    ),
+                  ),
+                  child: _qrCodeData != null
+                      ? ClipRRect(
+                          borderRadius: BorderRadius.circular(11),
+                          child: Image.memory(
+                            _qrCodeData!,
+                            width: 100,
+                            height: 100,
+                            fit: BoxFit.contain,
+                          ),
+                        )
+                      : Center(
+                          child: _isGeneratingQR
+                              ? const SizedBox(
+                                  width: 24,
+                                  height: 24,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : Icon(
+                                  Icons.qr_code,
+                                  size: 40,
+                                  color: SaturdayColors.secondaryGrey,
+                                ),
+                        ),
                 ),
               ),
               const SizedBox(width: 16),
@@ -135,18 +170,45 @@ class _TagDetailScreenState extends ConsumerState<TagDetailScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'Tag Details',
-                      style: Theme.of(context).textTheme.titleLarge,
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Tag Details',
+                            style: Theme.of(context).textTheme.titleLarge,
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.close),
+                          onPressed: () => Navigator.of(context).pop(),
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 4),
                     TagStatusBadge(status: tag.status),
+                    const SizedBox(height: 8),
+                    // Save QR button
+                    if (_qrCodeData != null)
+                      TextButton.icon(
+                        onPressed: _isSavingQR ? null : () => _saveQRCode(tag),
+                        icon: _isSavingQR
+                            ? const SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.save_alt, size: 16),
+                        label: Text(
+                          _isSavingQR ? 'Saving...' : 'Save QR Code',
+                          style: const TextStyle(fontSize: 13),
+                        ),
+                        style: TextButton.styleFrom(
+                          padding: EdgeInsets.zero,
+                          minimumSize: Size.zero,
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                      ),
                   ],
                 ),
-              ),
-              IconButton(
-                icon: const Icon(Icons.close),
-                onPressed: () => Navigator.of(context).pop(),
               ),
             ],
           ),
@@ -367,6 +429,76 @@ class _TagDetailScreenState extends ConsumerState<TagDetailScreen> {
 
   String _formatDateTime(DateTime dateTime) {
     return DateFormat('MMM d, y \'at\' h:mm a').format(dateTime);
+  }
+
+  Future<void> _generateQRCode(RfidTag tag) async {
+    // Prevent duplicate generation
+    if (_isGeneratingQR || _lastGeneratedEpc == tag.epcIdentifier) return;
+
+    setState(() {
+      _isGeneratingQR = true;
+      _lastGeneratedEpc = tag.epcIdentifier;
+    });
+
+    try {
+      final qrData = await _qrService.generateTagQRCode(
+        tag.epcIdentifier,
+        size: 512,
+      );
+
+      if (mounted) {
+        setState(() {
+          _qrCodeData = qrData;
+          _isGeneratingQR = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isGeneratingQR = false;
+          _lastGeneratedEpc = null; // Allow retry on error
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to generate QR code: $e'),
+            backgroundColor: SaturdayColors.error,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _saveQRCode(RfidTag tag) async {
+    if (_qrCodeData == null) return;
+
+    setState(() => _isSavingQR = true);
+
+    try {
+      final filename = QRService.formatTagFilename(tag.epcIdentifier);
+      final savedPath = await _qrService.saveQRCodeToFile(_qrCodeData!, filename);
+
+      if (mounted) {
+        setState(() => _isSavingQR = false);
+        if (savedPath != null) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('QR code saved to $savedPath'),
+              backgroundColor: SaturdayColors.success,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isSavingQR = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to save QR code: $e'),
+            backgroundColor: SaturdayColors.error,
+          ),
+        );
+      }
+    }
   }
 
   void _copyToClipboard(String text) {

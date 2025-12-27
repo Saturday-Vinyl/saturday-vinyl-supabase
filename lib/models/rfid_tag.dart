@@ -78,8 +78,13 @@ class RfidTag extends Equatable {
     this.createdBy,
   });
 
-  /// Check if this tag has the Saturday Vinyl EPC prefix (0x5356 = "SV")
+  /// Check if this tag has the Saturday Vinyl EPC format
+  ///
+  /// A valid Saturday tag must:
+  /// 1. Start with "SV" / 0x5356 prefix
+  /// 2. Be exactly 96-bit / 24 hex chars
   bool get isSaturdayTag =>
+      epcIdentifier.length == epcHexLength &&
       epcIdentifier.toUpperCase().startsWith(epcPrefix.toUpperCase());
 
   /// Get EPC formatted with dashes for readability

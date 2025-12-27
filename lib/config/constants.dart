@@ -44,6 +44,7 @@ class AppConstants {
   // QR Code Configuration
   static const String qrCodeUrlScheme = 'https';
   static const String qrCodePathPrefix = '/unit/';
+  static const String qrCodeTagPathPrefix = '/tags/';
 
   // Allowed Email Domain
   static const String allowedEmailDomain = '@saturdayvinyl.com';

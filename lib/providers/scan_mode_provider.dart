@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:saturday_app/models/tag_poll_result.dart';
 import 'package:saturday_app/providers/activity_log_provider.dart';
+import 'package:saturday_app/providers/rfid_settings_provider.dart';
 import 'package:saturday_app/providers/rfid_tag_provider.dart';
 import 'package:saturday_app/providers/uhf_rfid_provider.dart';
 import 'package:saturday_app/utils/app_logger.dart';
@@ -97,6 +98,15 @@ class ScanModeNotifier extends StateNotifier<ScanModeState> {
       nonSaturdayEpcs: {},
       clearError: true,
     );
+
+    // Apply saved RF power setting before scanning
+    final settings = _ref.read(currentRfidSettingsProvider);
+    final powerSet = await uhfService.setRfPower(settings.rfPower);
+    if (powerSet) {
+      AppLogger.info('ScanMode: RF power set to ${settings.rfPower} dBm');
+    } else {
+      AppLogger.warning('ScanMode: Failed to set RF power, using current module setting');
+    }
 
     // Start polling
     final success = await uhfService.startPolling();
