@@ -1,0 +1,62 @@
+name: saturday_consumer_app
+description: "Saturday Consumer App - Your vinyl companion for managing record collections and Saturday devices."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.9.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # UI & Icons
+  cupertino_icons: ^1.0.8
+  google_fonts: ^6.1.0
+
+  # State Management
+  flutter_riverpod: ^2.4.0
+
+  # Backend & Database
+  supabase_flutter: ^2.3.4
+
+  # Navigation
+  go_router: ^12.0.0
+
+  # Camera & Scanning
+  # mobile_scanner: ^3.5.0  # Requires real device - ML Kit doesn't support iOS simulator
+
+  # Bluetooth
+  flutter_blue_plus: ^1.29.0
+
+  # Image Loading & Caching
+  cached_network_image: ^3.3.0
+
+  # Environment Configuration
+  flutter_dotenv: ^5.1.0
+
+  # Data & Serialization
+  equatable: ^2.0.5
+  json_annotation: ^4.8.1
+
+  # Local Storage
+  shared_preferences: ^2.2.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  # Linting
+  flutter_lints: ^5.0.0
+
+  # Code Generation
+  build_runner: ^2.4.0
+  json_serializable: ^6.7.0
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/images/
+    - .env
