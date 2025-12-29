@@ -23,11 +23,16 @@ import 'package:saturday_consumer_app/widgets/library/view_toggle.dart';
 /// - Sort and filter options
 /// - Quick search within library
 /// - Add album via scanning or search
-class LibraryScreen extends ConsumerWidget {
+class LibraryScreen extends ConsumerStatefulWidget {
   const LibraryScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<LibraryScreen> createState() => _LibraryScreenState();
+}
+
+class _LibraryScreenState extends ConsumerState<LibraryScreen> {
+  @override
+  Widget build(BuildContext context) {
     // Watch the sync provider to keep album provider in sync with filter state
     ref.watch(filterSyncProvider);
 
@@ -74,11 +79,75 @@ class LibraryScreen extends ConsumerWidget {
         ),
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: () {
-          // TODO: Navigate to add album screen
-        },
+        onPressed: () => _showAddAlbumMenu(context),
         tooltip: 'Add Album',
         child: const Icon(Icons.add),
+      ),
+    );
+  }
+
+  /// Show the add album menu with camera and manual entry options.
+  void _showAddAlbumMenu(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(Spacing.lg),
+              child: Text(
+                'Add Album',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+            ),
+            ListTile(
+              leading: Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: SaturdayColors.primaryDark.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  Icons.camera_alt,
+                  color: SaturdayColors.primaryDark,
+                ),
+              ),
+              title: const Text('Use Camera'),
+              subtitle: const Text(
+                'Scan barcode or photograph album cover',
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                context.push('/library/add/scan');
+              },
+            ),
+            ListTile(
+              leading: Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: SaturdayColors.primaryDark.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(
+                  Icons.search,
+                  color: SaturdayColors.primaryDark,
+                ),
+              ),
+              title: const Text('Manual Entry'),
+              subtitle: const Text(
+                'Search by artist, album, or catalog number',
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                context.push('/library/add/search');
+              },
+            ),
+            const SizedBox(height: Spacing.lg),
+          ],
+        ),
       ),
     );
   }
@@ -300,28 +369,12 @@ class LibraryScreen extends ConsumerWidget {
             ),
             const SizedBox(height: Spacing.sm),
             Text(
-              'Add albums by scanning barcodes or\nsearching the Discogs catalog',
+              'Tap the + button to add your first album',
               textAlign: TextAlign.center,
               style: TextStyle(
                 color: SaturdayColors.secondary,
                 fontSize: 14,
               ),
-            ),
-            const SizedBox(height: Spacing.xxl),
-            ElevatedButton.icon(
-              onPressed: () {
-                // TODO: Open scanner
-              },
-              icon: const Icon(Icons.qr_code_scanner),
-              label: const Text('Scan Barcode'),
-            ),
-            const SizedBox(height: Spacing.md),
-            OutlinedButton.icon(
-              onPressed: () {
-                // TODO: Open search
-              },
-              icon: const Icon(Icons.search),
-              label: const Text('Search Discogs'),
             ),
           ],
         ),

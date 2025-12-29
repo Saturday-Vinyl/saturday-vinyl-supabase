@@ -9,7 +9,6 @@ import 'package:saturday_consumer_app/screens/now_playing/now_playing_screen.dar
 import 'package:saturday_consumer_app/screens/now_playing/set_now_playing_screen.dart';
 import 'package:saturday_consumer_app/screens/library/library_screen.dart';
 import 'package:saturday_consumer_app/screens/library/album_detail_screen.dart';
-import 'package:saturday_consumer_app/screens/library/add_album_screen.dart';
 import 'package:saturday_consumer_app/screens/library/discogs_search_screen.dart';
 import 'package:saturday_consumer_app/screens/library/barcode_scanner_screen.dart';
 import 'package:saturday_consumer_app/screens/library/confirm_album_screen.dart';
@@ -156,15 +155,11 @@ GoRouter createAppRouter(Ref ref) {
                   return AlbumDetailScreen(libraryAlbumId: albumId);
                 },
               ),
-              // Add album flow
-              GoRoute(
-                path: RoutePaths.addAlbum,
-                name: RouteNames.addAlbum,
-                builder: (context, state) => const AddAlbumScreen(),
-              ),
+              // Add album flow - camera scanner (uses root navigator for fullscreen)
               GoRoute(
                 path: RoutePaths.addAlbumScan,
                 name: RouteNames.addAlbumScan,
+                parentNavigatorKey: rootNavigatorKey,
                 builder: (context, state) => const BarcodeScannerScreen(),
               ),
               GoRoute(
