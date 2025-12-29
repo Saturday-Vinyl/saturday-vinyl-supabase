@@ -7,6 +7,13 @@ import 'package:saturday_consumer_app/screens/auth/login_screen.dart';
 import 'package:saturday_consumer_app/screens/auth/signup_screen.dart';
 import 'package:saturday_consumer_app/screens/now_playing/now_playing_screen.dart';
 import 'package:saturday_consumer_app/screens/library/library_screen.dart';
+import 'package:saturday_consumer_app/screens/library/album_detail_screen.dart';
+import 'package:saturday_consumer_app/screens/library/add_album_screen.dart';
+import 'package:saturday_consumer_app/screens/library/discogs_search_screen.dart';
+import 'package:saturday_consumer_app/screens/library/barcode_scanner_screen.dart';
+import 'package:saturday_consumer_app/screens/library/confirm_album_screen.dart';
+import 'package:saturday_consumer_app/screens/library/tag_association_screen.dart';
+import 'package:saturday_consumer_app/screens/library/create_library_screen.dart';
 import 'package:saturday_consumer_app/screens/account/account_screen.dart';
 import 'package:saturday_consumer_app/widgets/common/scaffold_with_nav.dart';
 
@@ -26,6 +33,12 @@ class RoutePaths {
 
   // Nested routes
   static const String albumDetails = 'album/:id';
+  static const String addAlbum = 'add';
+  static const String addAlbumScan = 'add/scan';
+  static const String addAlbumSearch = 'add/search';
+  static const String addAlbumConfirm = 'add/confirm';
+  static const String tagAssociation = 'album/:id/tag';
+  static const String createLibrary = 'create';
   static const String deviceSetup = 'device-setup';
   static const String settings = 'settings';
   static const String search = '/search';
@@ -42,6 +55,12 @@ class RouteNames {
   static const String library = 'library';
   static const String account = 'account';
   static const String albumDetails = 'album-details';
+  static const String addAlbum = 'add-album';
+  static const String addAlbumScan = 'add-album-scan';
+  static const String addAlbumSearch = 'add-album-search';
+  static const String addAlbumConfirm = 'add-album-confirm';
+  static const String tagAssociation = 'tag-association';
+  static const String createLibrary = 'create-library';
   static const String deviceSetup = 'device-setup';
   static const String settings = 'settings';
   static const String search = 'search';
@@ -114,6 +133,53 @@ GoRouter createAppRouter(Ref ref) {
             pageBuilder: (context, state) => const NoTransitionPage(
               child: LibraryScreen(),
             ),
+            routes: [
+              // Album detail (nested under library)
+              GoRoute(
+                path: RoutePaths.albumDetails,
+                name: RouteNames.albumDetails,
+                builder: (context, state) {
+                  final albumId = state.pathParameters['id']!;
+                  return AlbumDetailScreen(libraryAlbumId: albumId);
+                },
+              ),
+              // Add album flow
+              GoRoute(
+                path: RoutePaths.addAlbum,
+                name: RouteNames.addAlbum,
+                builder: (context, state) => const AddAlbumScreen(),
+              ),
+              GoRoute(
+                path: RoutePaths.addAlbumScan,
+                name: RouteNames.addAlbumScan,
+                builder: (context, state) => const BarcodeScannerScreen(),
+              ),
+              GoRoute(
+                path: RoutePaths.addAlbumSearch,
+                name: RouteNames.addAlbumSearch,
+                builder: (context, state) => const DiscogsSearchScreen(),
+              ),
+              GoRoute(
+                path: RoutePaths.addAlbumConfirm,
+                name: RouteNames.addAlbumConfirm,
+                builder: (context, state) => const ConfirmAlbumScreen(),
+              ),
+              // Tag association
+              GoRoute(
+                path: RoutePaths.tagAssociation,
+                name: RouteNames.tagAssociation,
+                builder: (context, state) {
+                  final albumId = state.pathParameters['id']!;
+                  return TagAssociationScreen(libraryAlbumId: albumId);
+                },
+              ),
+              // Create library
+              GoRoute(
+                path: RoutePaths.createLibrary,
+                name: RouteNames.createLibrary,
+                builder: (context, state) => const CreateLibraryScreen(),
+              ),
+            ],
           ),
 
           // Account tab

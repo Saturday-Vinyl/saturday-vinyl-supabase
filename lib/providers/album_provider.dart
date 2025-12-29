@@ -5,26 +5,46 @@ import 'package:saturday_consumer_app/providers/library_provider.dart';
 import 'package:saturday_consumer_app/providers/repository_providers.dart';
 import 'package:saturday_consumer_app/repositories/album_repository.dart';
 
-/// StateProvider for the current album sort option.
-final albumSortProvider = StateProvider<AlbumSortOption>((ref) {
-  return AlbumSortOption.artistAsc;
+// Re-export enums and classes for convenience
+export 'package:saturday_consumer_app/repositories/album_repository.dart'
+    show AlbumSortOption, AlbumFilters;
+
+/// FutureProvider for ALL albums in the current library (unfiltered).
+///
+/// Used for computing available genres, years, etc.
+/// For display, use [libraryAlbumsProvider] which respects filters.
+final allLibraryAlbumsProvider =
+    FutureProvider<List<LibraryAlbum>>((ref) async {
+  final libraryId = ref.watch(currentLibraryIdProvider);
+  if (libraryId == null) return [];
+
+  final albumRepo = ref.watch(albumRepositoryProvider);
+  return albumRepo.getLibraryAlbums(libraryId);
 });
 
-/// StateProvider for the current album filters.
-final albumFiltersProvider = StateProvider<AlbumFilters?>((ref) {
+/// Provider for current sort option.
+/// This is updated by libraryFilterProvider.
+final currentAlbumSortProvider = StateProvider<AlbumSortOption>((ref) {
+  return AlbumSortOption.dateAddedDesc;
+});
+
+/// Provider for current filters.
+/// This is updated by libraryFilterProvider.
+final currentAlbumFiltersProvider = StateProvider<AlbumFilters?>((ref) {
   return null;
 });
 
 /// FutureProvider for albums in the current library.
 ///
 /// Respects current sort and filter settings.
-final libraryAlbumsProvider = FutureProvider<List<LibraryAlbum>>((ref) async {
+final libraryAlbumsProvider =
+    FutureProvider<List<LibraryAlbum>>((ref) async {
   final libraryId = ref.watch(currentLibraryIdProvider);
   if (libraryId == null) return [];
 
   final albumRepo = ref.watch(albumRepositoryProvider);
-  final sort = ref.watch(albumSortProvider);
-  final filters = ref.watch(albumFiltersProvider);
+  final sort = ref.watch(currentAlbumSortProvider);
+  final filters = ref.watch(currentAlbumFiltersProvider);
 
   return albumRepo.getLibraryAlbums(
     libraryId,
@@ -66,7 +86,8 @@ final albumSearchProvider =
 });
 
 /// Provider for favorite albums in the current library.
-final favoriteAlbumsProvider = FutureProvider<List<LibraryAlbum>>((ref) async {
+final favoriteAlbumsProvider =
+    FutureProvider<List<LibraryAlbum>>((ref) async {
   final libraryId = ref.watch(currentLibraryIdProvider);
   if (libraryId == null) return [];
 
@@ -78,8 +99,9 @@ final favoriteAlbumsProvider = FutureProvider<List<LibraryAlbum>>((ref) async {
 });
 
 /// Provider for unique genres in the current library.
+/// Uses allLibraryAlbumsProvider to get genres from all albums, not just filtered.
 final libraryGenresProvider = Provider<List<String>>((ref) {
-  final albums = ref.watch(libraryAlbumsProvider);
+  final albums = ref.watch(allLibraryAlbumsProvider);
   return albums.whenOrNull(
         data: (albumList) {
           final genres = <String>{};
@@ -96,8 +118,9 @@ final libraryGenresProvider = Provider<List<String>>((ref) {
 });
 
 /// Provider for the year range in the current library.
+/// Uses allLibraryAlbumsProvider to get range from all albums, not just filtered.
 final libraryYearRangeProvider = Provider<({int? min, int? max})>((ref) {
-  final albums = ref.watch(libraryAlbumsProvider);
+  final albums = ref.watch(allLibraryAlbumsProvider);
   return albums.whenOrNull(
         data: (albumList) {
           int? minYear;
@@ -105,8 +128,10 @@ final libraryYearRangeProvider = Provider<({int? min, int? max})>((ref) {
           for (final la in albumList) {
             final year = la.album?.year;
             if (year != null) {
-              minYear = minYear == null ? year : (year < minYear ? year : minYear);
-              maxYear = maxYear == null ? year : (year > maxYear ? year : maxYear);
+              minYear =
+                  minYear == null ? year : (year < minYear ? year : minYear);
+              maxYear =
+                  maxYear == null ? year : (year > maxYear ? year : maxYear);
             }
           }
           return (min: minYear, max: maxYear);

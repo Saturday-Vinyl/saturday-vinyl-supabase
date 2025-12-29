@@ -14,6 +14,9 @@ class SaturdayColors {
   /// Error color - errors, destructive actions
   static const Color error = Color(0xFFF35345);
 
+  /// Warning color - caution states, warnings
+  static const Color warning = Color(0xFFF5A623);
+
   /// Info color - informational states
   static const Color info = Color(0xFF6AC5F4);
 
