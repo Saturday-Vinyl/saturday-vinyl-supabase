@@ -75,7 +75,7 @@ class _QrScannerState extends State<QrScanner> {
         MobileScanner(
           controller: _controller,
           onDetect: _onBarcodeDetected,
-          errorBuilder: (context, error, child) {
+          errorBuilder: (context, error) {
             return _buildErrorState(error.errorDetails?.message ?? 'Camera error');
           },
         ),

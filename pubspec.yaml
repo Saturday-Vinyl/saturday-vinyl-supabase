@@ -25,7 +25,7 @@ dependencies:
   go_router: ^12.0.0
 
   # Camera & Scanning
-  mobile_scanner: ^5.0.0  # Requires real device - ML Kit doesn't support iOS simulator
+  mobile_scanner: ^7.0.0  # Uses Apple Vision on iOS - supports simulators
 
   # Bluetooth
   flutter_blue_plus: ^1.29.0
