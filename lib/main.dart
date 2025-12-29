@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:saturday_consumer_app/app.dart';
 import 'package:saturday_consumer_app/config/env_config.dart';
+import 'package:saturday_consumer_app/services/auth_service.dart';
 import 'package:saturday_consumer_app/services/supabase_service.dart';
 
 void main() async {
@@ -23,6 +24,9 @@ void main() async {
     runApp(EnvErrorApp(error: 'Failed to initialize Supabase: $e'));
     return;
   }
+
+  // Initialize AuthService (depends on Supabase being initialized)
+  AuthService.initialize();
 
   // Run the app with Riverpod provider scope
   runApp(

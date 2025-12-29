@@ -45,5 +45,19 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<!-- URL Schemes for OAuth callbacks -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>com.saturdayvinyl.consumer</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.saturdayvinyl.consumer</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

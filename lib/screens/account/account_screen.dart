@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import 'package:saturday_consumer_app/config/routes.dart';
 import 'package:saturday_consumer_app/config/styles.dart';
 import 'package:saturday_consumer_app/config/theme.dart';
+import 'package:saturday_consumer_app/providers/auth_provider.dart';
 import 'package:saturday_consumer_app/widgets/common/saturday_app_bar.dart';
 
 /// Account screen - user profile and settings.
@@ -11,11 +15,12 @@ import 'package:saturday_consumer_app/widgets/common/saturday_app_bar.dart';
 /// - Shared libraries
 /// - App settings
 /// - Help & support
-class AccountScreen extends StatelessWidget {
+class AccountScreen extends ConsumerWidget {
   const AccountScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final user = ref.watch(currentSupabaseUserProvider);
     return Scaffold(
       appBar: const SaturdayAppBar(
         title: 'Account',
@@ -27,47 +32,7 @@ class AccountScreen extends StatelessWidget {
           padding: Spacing.pagePadding,
           children: [
             // Profile card
-            Container(
-              decoration: AppDecorations.card,
-              padding: Spacing.cardPadding,
-              child: Row(
-                children: [
-                  // Avatar
-                  Container(
-                    width: 64,
-                    height: 64,
-                    decoration: AppDecorations.avatar,
-                    child: const Icon(
-                      Icons.person,
-                      size: 32,
-                      color: SaturdayColors.white,
-                    ),
-                  ),
-                  Spacing.horizontalGapLg,
-                  // User info
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Sign In',
-                          style: Theme.of(context).textTheme.titleLarge,
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Sign in to sync your library across devices',
-                          style: TextStyle(
-                            color: SaturdayColors.secondary,
-                            fontSize: 14,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const Icon(Icons.chevron_right),
-                ],
-              ),
-            ),
+            _buildProfileCard(context, user),
 
             Spacing.sectionGap,
 
@@ -177,6 +142,67 @@ class AccountScreen extends StatelessWidget {
                 // TODO: Show about dialog
               },
             ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildProfileCard(BuildContext context, dynamic user) {
+    final isSignedIn = user != null;
+
+    return GestureDetector(
+      onTap: () {
+        if (isSignedIn) {
+          // TODO: Navigate to profile details
+        } else {
+          context.push(RoutePaths.login);
+        }
+      },
+      child: Container(
+        decoration: AppDecorations.card,
+        padding: Spacing.cardPadding,
+        child: Row(
+          children: [
+            // Avatar
+            Container(
+              width: 64,
+              height: 64,
+              decoration: AppDecorations.avatar,
+              child: Icon(
+                isSignedIn ? Icons.person : Icons.person_outline,
+                size: 32,
+                color: SaturdayColors.white,
+              ),
+            ),
+            Spacing.horizontalGapLg,
+            // User info
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    isSignedIn
+                        ? (user.userMetadata?['full_name'] as String? ??
+                            user.email ??
+                            'User')
+                        : 'Sign In',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    isSignedIn
+                        ? user.email ?? ''
+                        : 'Sign in to sync your library across devices',
+                    style: TextStyle(
+                      color: SaturdayColors.secondary,
+                      fontSize: 14,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right),
           ],
         ),
       ),
