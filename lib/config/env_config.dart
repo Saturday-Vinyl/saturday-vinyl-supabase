@@ -55,11 +55,10 @@ class EnvConfig {
   static String get appBaseUrl =>
       dotenv.env['APP_BASE_URL'] ?? 'https://saturdayvinyl.com';
 
-  /// Discogs API key.
-  static String? get discogsApiKey => dotenv.env['DISCOGS_API_KEY'];
-
-  /// Discogs API secret.
-  static String? get discogsApiSecret => dotenv.env['DISCOGS_API_SECRET'];
+  /// Discogs personal access token.
+  /// Get yours from https://www.discogs.com/settings/developers
+  static String? get discogsPersonalAccessToken =>
+      dotenv.env['DISCOGS_PERSONAL_ACCESS_TOKEN'];
 
   /// Whether the configuration has been loaded.
   static bool get isInitialized => _initialized;

@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:saturday_consumer_app/config/env_config.dart';
 import 'package:saturday_consumer_app/models/album.dart';
 import 'package:saturday_consumer_app/models/library_album.dart';
 import 'package:saturday_consumer_app/providers/auth_provider.dart';
@@ -8,8 +9,9 @@ import 'package:saturday_consumer_app/services/discogs_service.dart';
 
 /// Provider for the Discogs service.
 final discogsServiceProvider = Provider<DiscogsService>((ref) {
-  // TODO: Get token from environment or secure storage
-  return DiscogsService();
+  return DiscogsService(
+    personalAccessToken: EnvConfig.discogsPersonalAccessToken,
+  );
 });
 
 /// State for the add album flow.
