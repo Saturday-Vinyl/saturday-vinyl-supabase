@@ -7,12 +7,13 @@ import 'package:saturday_consumer_app/models/library_album.dart';
 /// A card widget displaying album information.
 ///
 /// Used in both grid and list views to show album art, title, and artist.
-/// Supports tapping to navigate to album detail.
+/// Supports tapping to navigate to album detail and long-press for quick actions.
 class AlbumCard extends StatelessWidget {
   const AlbumCard({
     super.key,
     required this.libraryAlbum,
     this.onTap,
+    this.onLongPress,
     this.showYear = false,
   });
 
@@ -21,6 +22,9 @@ class AlbumCard extends StatelessWidget {
 
   /// Callback when the card is tapped.
   final VoidCallback? onTap;
+
+  /// Callback when the card is long-pressed.
+  final VoidCallback? onLongPress;
 
   /// Whether to show the year below the artist.
   final bool showYear;
@@ -35,6 +39,7 @@ class AlbumCard extends StatelessWidget {
 
     return GestureDetector(
       onTap: onTap,
+      onLongPress: onLongPress,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -127,11 +132,13 @@ class AlbumCard extends StatelessWidget {
 /// A list tile variant of the album card for list view display.
 ///
 /// Shows album art as a thumbnail with title, artist, and year on the right.
+/// Supports long-press for quick actions.
 class AlbumListTile extends StatelessWidget {
   const AlbumListTile({
     super.key,
     required this.libraryAlbum,
     this.onTap,
+    this.onLongPress,
     this.trailing,
   });
 
@@ -140,6 +147,9 @@ class AlbumListTile extends StatelessWidget {
 
   /// Callback when the tile is tapped.
   final VoidCallback? onTap;
+
+  /// Callback when the tile is long-pressed.
+  final VoidCallback? onLongPress;
 
   /// Optional trailing widget (e.g., favorite indicator, menu).
   final Widget? trailing;
@@ -154,6 +164,7 @@ class AlbumListTile extends StatelessWidget {
 
     return InkWell(
       onTap: onTap,
+      onLongPress: onLongPress,
       borderRadius: AppRadius.mediumRadius,
       child: Padding(
         padding: const EdgeInsets.symmetric(

@@ -7,11 +7,13 @@ import 'package:saturday_consumer_app/widgets/library/album_card.dart';
 ///
 /// Displays albums in a grid with 2 columns on phones and 3-4 on tablets.
 /// Album art is displayed prominently with title and artist below.
+/// Supports long-press for quick actions.
 class AlbumGrid extends StatelessWidget {
   const AlbumGrid({
     super.key,
     required this.albums,
     this.onAlbumTap,
+    this.onAlbumLongPress,
     this.padding,
   });
 
@@ -20,6 +22,9 @@ class AlbumGrid extends StatelessWidget {
 
   /// Callback when an album is tapped.
   final void Function(LibraryAlbum album)? onAlbumTap;
+
+  /// Callback when an album is long-pressed.
+  final void Function(LibraryAlbum album)? onAlbumLongPress;
 
   /// Optional padding around the grid.
   final EdgeInsets? padding;
@@ -47,6 +52,7 @@ class AlbumGrid extends StatelessWidget {
             return AlbumCard(
               libraryAlbum: album,
               onTap: () => onAlbumTap?.call(album),
+              onLongPress: () => onAlbumLongPress?.call(album),
             );
           },
         );
@@ -88,6 +94,7 @@ class SliverAlbumGrid extends StatelessWidget {
     super.key,
     required this.albums,
     this.onAlbumTap,
+    this.onAlbumLongPress,
     this.padding,
   });
 
@@ -96,6 +103,9 @@ class SliverAlbumGrid extends StatelessWidget {
 
   /// Callback when an album is tapped.
   final void Function(LibraryAlbum album)? onAlbumTap;
+
+  /// Callback when an album is long-pressed.
+  final void Function(LibraryAlbum album)? onAlbumLongPress;
 
   /// Optional padding around the grid.
   final EdgeInsets? padding;
@@ -124,6 +134,7 @@ class SliverAlbumGrid extends StatelessWidget {
                 return AlbumCard(
                   libraryAlbum: album,
                   onTap: () => onAlbumTap?.call(album),
+                  onLongPress: () => onAlbumLongPress?.call(album),
                 );
               },
               childCount: albums.length,

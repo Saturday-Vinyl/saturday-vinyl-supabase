@@ -12,6 +12,7 @@ class AlbumList extends StatelessWidget {
     super.key,
     required this.albums,
     this.onAlbumTap,
+    this.onAlbumLongPress,
     this.padding,
   });
 
@@ -20,6 +21,9 @@ class AlbumList extends StatelessWidget {
 
   /// Callback when an album is tapped.
   final void Function(LibraryAlbum album)? onAlbumTap;
+
+  /// Callback when an album is long-pressed.
+  final void Function(LibraryAlbum album)? onAlbumLongPress;
 
   /// Optional padding around the list.
   final EdgeInsets? padding;
@@ -35,6 +39,9 @@ class AlbumList extends StatelessWidget {
         return AlbumListTile(
           libraryAlbum: album,
           onTap: () => onAlbumTap?.call(album),
+          onLongPress: onAlbumLongPress != null
+              ? () => onAlbumLongPress!(album)
+              : null,
         );
       },
     );
@@ -47,6 +54,7 @@ class SliverAlbumList extends StatelessWidget {
     super.key,
     required this.albums,
     this.onAlbumTap,
+    this.onAlbumLongPress,
     this.padding,
   });
 
@@ -55,6 +63,9 @@ class SliverAlbumList extends StatelessWidget {
 
   /// Callback when an album is tapped.
   final void Function(LibraryAlbum album)? onAlbumTap;
+
+  /// Callback when an album is long-pressed.
+  final void Function(LibraryAlbum album)? onAlbumLongPress;
 
   /// Optional padding around the list.
   final EdgeInsets? padding;
@@ -71,6 +82,9 @@ class SliverAlbumList extends StatelessWidget {
           return AlbumListTile(
             libraryAlbum: album,
             onTap: () => onAlbumTap?.call(album),
+            onLongPress: onAlbumLongPress != null
+                ? () => onAlbumLongPress!(album)
+                : null,
           );
         },
       ),

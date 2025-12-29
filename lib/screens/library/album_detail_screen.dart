@@ -2,11 +2,13 @@ import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:saturday_consumer_app/config/routes.dart';
 import 'package:saturday_consumer_app/config/styles.dart';
 import 'package:saturday_consumer_app/config/theme.dart';
 import 'package:saturday_consumer_app/models/library_album.dart';
 import 'package:saturday_consumer_app/providers/album_provider.dart';
 import 'package:saturday_consumer_app/providers/library_provider.dart';
+import 'package:saturday_consumer_app/providers/now_playing_provider.dart';
 import 'package:saturday_consumer_app/providers/tag_provider.dart';
 import 'package:saturday_consumer_app/utils/epc_validator.dart';
 import 'package:saturday_consumer_app/widgets/library/album_location_badge.dart';
@@ -544,10 +546,14 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
   }
 
   void _setAsNowPlaying(LibraryAlbum libraryAlbum) {
-    // TODO: Implement now playing state update
+    ref.read(nowPlayingProvider.notifier).setNowPlaying(libraryAlbum);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Set "${libraryAlbum.album?.title}" as Now Playing'),
+        content: Text('Now playing: "${libraryAlbum.album?.title}"'),
+        action: SnackBarAction(
+          label: 'View',
+          onPressed: () => context.go(RoutePaths.nowPlaying),
+        ),
       ),
     );
   }

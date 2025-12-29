@@ -1,3 +1,4 @@
+import 'package:saturday_consumer_app/models/library_album.dart';
 import 'package:saturday_consumer_app/models/listening_history.dart';
 import 'package:saturday_consumer_app/repositories/base_repository.dart';
 
@@ -6,11 +7,11 @@ class ListeningHistoryRepository extends BaseRepository {
   static const _tableName = 'listening_history';
 
   /// Records a new play session.
-  Future<ListeningHistory> recordPlay(
-    String userId,
-    String libraryAlbumId,
+  Future<ListeningHistory> recordPlay({
+    required String userId,
+    required String libraryAlbumId,
     String? deviceId,
-  ) async {
+  }) async {
     final response = await client
         .from(_tableName)
         .insert({
@@ -73,8 +74,8 @@ class ListeningHistoryRepository extends BaseRepository {
     return response.count;
   }
 
-  /// Gets the most recently played albums for a user.
-  Future<List<ListeningHistory>> getRecentlyPlayed(
+  /// Gets the most recently played history entries for a user.
+  Future<List<ListeningHistory>> getRecentlyPlayedHistory(
     String userId, {
     int limit = 10,
   }) async {
@@ -95,6 +96,43 @@ class ListeningHistoryRepository extends BaseRepository {
       if (!seen.contains(history.libraryAlbumId)) {
         seen.add(history.libraryAlbumId);
         unique.add(history);
+        if (unique.length >= limit) break;
+      }
+    }
+
+    return unique;
+  }
+
+  /// Gets recently played albums with full album data for a user.
+  Future<List<LibraryAlbum>> getRecentlyPlayed(
+    String userId, {
+    int limit = 10,
+  }) async {
+    // Fetch listening history with joined library_albums and albums data
+    final response = await client
+        .from(_tableName)
+        .select('''
+          *,
+          library_albums!inner (
+            *,
+            album:albums (*)
+          )
+        ''')
+        .eq('user_id', userId)
+        .order('played_at', ascending: false)
+        .limit(limit * 2); // Fetch extra to account for duplicates
+
+    // Deduplicate by library_album_id, keeping most recent
+    final seen = <String>{};
+    final unique = <LibraryAlbum>[];
+
+    for (final row in response as List) {
+      final libraryAlbumData = row['library_albums'] as Map<String, dynamic>;
+      final libraryAlbum = LibraryAlbum.fromJson(libraryAlbumData);
+
+      if (!seen.contains(libraryAlbum.id)) {
+        seen.add(libraryAlbum.id);
+        unique.add(libraryAlbum);
         if (unique.length >= limit) break;
       }
     }

@@ -10,6 +10,7 @@ import 'package:saturday_consumer_app/providers/library_view_provider.dart';
 import 'package:saturday_consumer_app/widgets/common/saturday_app_bar.dart';
 import 'package:saturday_consumer_app/widgets/library/album_grid.dart';
 import 'package:saturday_consumer_app/widgets/library/album_list.dart';
+import 'package:saturday_consumer_app/widgets/library/album_quick_actions.dart';
 import 'package:saturday_consumer_app/widgets/library/filter_bar.dart';
 import 'package:saturday_consumer_app/widgets/library/filter_bottom_sheet.dart';
 import 'package:saturday_consumer_app/widgets/library/sort_dropdown.dart';
@@ -198,10 +199,14 @@ class LibraryScreen extends ConsumerWidget {
           ? AlbumGrid(
               albums: albums,
               onAlbumTap: (album) => _onAlbumTap(context, album),
+              onAlbumLongPress: (album) =>
+                  _onAlbumLongPress(context, ref, album),
             )
           : AlbumList(
               albums: albums,
               onAlbumTap: (album) => _onAlbumTap(context, album),
+              onAlbumLongPress: (album) =>
+                  _onAlbumLongPress(context, ref, album),
             ),
     );
   }
@@ -209,6 +214,15 @@ class LibraryScreen extends ConsumerWidget {
   /// Handle album tap - navigate to album detail.
   void _onAlbumTap(BuildContext context, LibraryAlbum album) {
     context.push('/library/album/${album.id}');
+  }
+
+  /// Handle album long-press - show quick actions menu.
+  void _onAlbumLongPress(
+    BuildContext context,
+    WidgetRef ref,
+    LibraryAlbum album,
+  ) {
+    showAlbumQuickActions(context, ref, album);
   }
 
   /// Build the loading state.

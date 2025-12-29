@@ -6,6 +6,7 @@ import 'package:saturday_consumer_app/screens/auth/forgot_password_screen.dart';
 import 'package:saturday_consumer_app/screens/auth/login_screen.dart';
 import 'package:saturday_consumer_app/screens/auth/signup_screen.dart';
 import 'package:saturday_consumer_app/screens/now_playing/now_playing_screen.dart';
+import 'package:saturday_consumer_app/screens/now_playing/set_now_playing_screen.dart';
 import 'package:saturday_consumer_app/screens/library/library_screen.dart';
 import 'package:saturday_consumer_app/screens/library/album_detail_screen.dart';
 import 'package:saturday_consumer_app/screens/library/add_album_screen.dart';
@@ -42,6 +43,9 @@ class RoutePaths {
   static const String deviceSetup = 'device-setup';
   static const String settings = 'settings';
   static const String search = '/search';
+
+  // Now Playing nested routes
+  static const String setNowPlaying = 'set';
 }
 
 /// Route names for named navigation.
@@ -64,6 +68,7 @@ class RouteNames {
   static const String deviceSetup = 'device-setup';
   static const String settings = 'settings';
   static const String search = 'search';
+  static const String setNowPlaying = 'set-now-playing';
 }
 
 /// Auth routes that don't require authentication.
@@ -124,6 +129,14 @@ GoRouter createAppRouter(Ref ref) {
             pageBuilder: (context, state) => const NoTransitionPage(
               child: NowPlayingScreen(),
             ),
+            routes: [
+              // Set now playing screen
+              GoRoute(
+                path: RoutePaths.setNowPlaying,
+                name: RouteNames.setNowPlaying,
+                builder: (context, state) => const SetNowPlayingScreen(),
+              ),
+            ],
           ),
 
           // Library tab
