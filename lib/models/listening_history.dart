@@ -1,20 +1,23 @@
 import 'package:equatable/equatable.dart';
 
 /// Which side of the record was completed.
+/// Supports multi-disc albums: A, B, C, D, E, F, G, H (up to 4 discs).
 enum RecordSide {
   a,
-  b;
+  b,
+  c,
+  d,
+  e,
+  f,
+  g,
+  h;
 
   static RecordSide? fromString(String? value) {
     if (value == null) return null;
-    switch (value.toUpperCase()) {
-      case 'A':
-        return RecordSide.a;
-      case 'B':
-        return RecordSide.b;
-      default:
-        return null;
-    }
+    return RecordSide.values.cast<RecordSide?>().firstWhere(
+          (side) => side?.name.toUpperCase() == value.toUpperCase(),
+          orElse: () => null,
+        );
   }
 
   String toJsonString() => name.toUpperCase();
