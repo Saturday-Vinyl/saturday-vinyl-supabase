@@ -22,17 +22,52 @@ class UserRepository extends BaseRepository {
   ///
   /// Called on first login to ensure user exists in database.
   Future<models.User> getOrCreateUser(supabase.User authUser) async {
-    // First try to get existing user
-    final existing = await getUser(authUser.id);
-    if (existing != null) {
-      // Update last login
-      await updateLastLogin(authUser.id);
-      return existing;
+    // First try to find existing user by auth_user_id
+    var response = await client
+        .from(_tableName)
+        .select()
+        .eq('auth_user_id', authUser.id)
+        .maybeSingle();
+
+    // If not found, try by email (for users created before auth_user_id was added)
+    if (response == null && authUser.email != null) {
+      response = await client
+          .from(_tableName)
+          .select()
+          .eq('email', authUser.email!)
+          .maybeSingle();
+
+      // If found by email, update auth_user_id for future lookups
+      if (response != null) {
+        await client
+            .from(_tableName)
+            .update({
+              'auth_user_id': authUser.id,
+              'last_login': DateTime.now().toIso8601String(),
+            })
+            .eq('id', response['id']);
+
+        // Refresh the response with updated data
+        response = await client
+            .from(_tableName)
+            .select()
+            .eq('id', response['id'])
+            .single();
+      }
+    }
+
+    if (response != null) {
+      // Update last login for existing user
+      await client.from(_tableName).update({
+        'last_login': DateTime.now().toIso8601String(),
+      }).eq('id', response['id']);
+
+      return models.User.fromJson(response);
     }
 
     // Create new user record
     final newUser = {
-      'id': authUser.id,
+      'auth_user_id': authUser.id,
       'email': authUser.email ?? '',
       'full_name': authUser.userMetadata?['full_name'] as String?,
       'avatar_url': authUser.userMetadata?['avatar_url'] as String?,
@@ -40,13 +75,13 @@ class UserRepository extends BaseRepository {
       'last_login': DateTime.now().toIso8601String(),
     };
 
-    final response = await client
+    final insertResponse = await client
         .from(_tableName)
         .insert(newUser)
         .select()
         .single();
 
-    return models.User.fromJson(response);
+    return models.User.fromJson(insertResponse);
   }
 
   /// Updates an existing user.
@@ -69,6 +104,16 @@ class UserRepository extends BaseRepository {
   Future<void> updateLastLogin(String userId) async {
     await client.from(_tableName).update({
       'last_login': DateTime.now().toIso8601String(),
+    }).eq('id', userId);
+  }
+
+  /// Updates last login and ensures auth_user_id is set.
+  ///
+  /// This handles migration of existing users who don't have auth_user_id set.
+  Future<void> updateLastLoginAndAuthId(String userId) async {
+    await client.from(_tableName).update({
+      'last_login': DateTime.now().toIso8601String(),
+      'auth_user_id': userId,
     }).eq('id', userId);
   }
 }

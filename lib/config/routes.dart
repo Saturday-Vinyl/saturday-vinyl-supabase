@@ -15,6 +15,8 @@ import 'package:saturday_consumer_app/screens/library/confirm_album_screen.dart'
 import 'package:saturday_consumer_app/screens/library/tag_association_screen.dart';
 import 'package:saturday_consumer_app/screens/library/create_library_screen.dart';
 import 'package:saturday_consumer_app/screens/account/account_screen.dart';
+import 'package:saturday_consumer_app/screens/onboarding/quick_start_screen.dart';
+import 'package:saturday_consumer_app/screens/onboarding/add_album_intro_screen.dart';
 import 'package:saturday_consumer_app/widgets/common/scaffold_with_nav.dart';
 
 /// Route paths for the app.
@@ -45,6 +47,10 @@ class RoutePaths {
 
   // Now Playing nested routes
   static const String setNowPlaying = 'set';
+
+  // Onboarding routes
+  static const String onboardingQuickStart = '/onboarding/quick-start';
+  static const String onboardingAddAlbumIntro = '/onboarding/add-album-intro';
 }
 
 /// Route names for named navigation.
@@ -68,6 +74,8 @@ class RouteNames {
   static const String settings = 'settings';
   static const String search = 'search';
   static const String setNowPlaying = 'set-now-playing';
+  static const String onboardingQuickStart = 'onboarding-quick-start';
+  static const String onboardingAddAlbumIntro = 'onboarding-add-album-intro';
 }
 
 /// Auth routes that don't require authentication.
@@ -114,6 +122,18 @@ GoRouter createAppRouter(Ref ref) {
         path: RoutePaths.forgotPassword,
         name: RouteNames.forgotPassword,
         builder: (context, state) => const ForgotPasswordScreen(),
+      ),
+
+      // Onboarding routes (outside shell)
+      GoRoute(
+        path: RoutePaths.onboardingQuickStart,
+        name: RouteNames.onboardingQuickStart,
+        builder: (context, state) => const QuickStartScreen(),
+      ),
+      GoRoute(
+        path: RoutePaths.onboardingAddAlbumIntro,
+        name: RouteNames.onboardingAddAlbumIntro,
+        builder: (context, state) => const AddAlbumIntroScreen(),
       ),
 
       // Main app shell with bottom navigation

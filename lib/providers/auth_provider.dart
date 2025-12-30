@@ -48,9 +48,13 @@ final isSignedInProvider = Provider<bool>((ref) {
       false;
 });
 
-/// Provider for the current user's ID, or null if not signed in.
+/// Provider for the current user's database ID, or null if not signed in.
+///
+/// Note: This returns the `users.id` from the database, not the Supabase auth UID.
+/// Use this for database operations that reference user_id foreign keys.
 final currentUserIdProvider = Provider<String?>((ref) {
-  return ref.watch(currentSupabaseUserProvider)?.id;
+  final user = ref.watch(currentUserProvider);
+  return user.whenOrNull(data: (u) => u?.id);
 });
 
 /// Provider for signing in with email and password.

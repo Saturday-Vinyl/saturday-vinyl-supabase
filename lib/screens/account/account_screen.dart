@@ -142,8 +142,50 @@ class AccountScreen extends ConsumerWidget {
                 // TODO: Show about dialog
               },
             ),
+
+            Spacing.sectionGap,
+
+            // Sign out button
+            if (ref.watch(currentSupabaseUserProvider) != null)
+              _buildSignOutButton(context, ref),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildSignOutButton(BuildContext context, WidgetRef ref) {
+    return TextButton.icon(
+      onPressed: () async {
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Sign Out'),
+            content: const Text('Are you sure you want to sign out?'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Sign Out'),
+              ),
+            ],
+          ),
+        );
+
+        if (confirmed == true) {
+          await ref.read(signOutProvider.future);
+          if (context.mounted) {
+            context.go(RoutePaths.login);
+          }
+        }
+      },
+      icon: Icon(Icons.logout, color: SaturdayColors.error),
+      label: Text(
+        'Sign Out',
+        style: TextStyle(color: SaturdayColors.error),
       ),
     );
   }

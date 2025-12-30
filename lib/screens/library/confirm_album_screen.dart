@@ -6,6 +6,7 @@ import 'package:saturday_consumer_app/config/styles.dart';
 import 'package:saturday_consumer_app/config/theme.dart';
 import 'package:saturday_consumer_app/models/album.dart';
 import 'package:saturday_consumer_app/providers/add_album_provider.dart';
+import 'package:saturday_consumer_app/providers/album_provider.dart';
 import 'package:saturday_consumer_app/widgets/library/track_list.dart';
 
 /// Screen for confirming and adding an album to the library.
@@ -280,6 +281,10 @@ class ConfirmAlbumScreen extends ConsumerWidget {
           ),
         ),
       );
+
+      // Invalidate library albums to refresh the list
+      ref.invalidate(libraryAlbumsProvider);
+      ref.invalidate(allLibraryAlbumsProvider);
 
       // Reset state and go back to library
       ref.read(addAlbumProvider.notifier).reset();

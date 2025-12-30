@@ -40,12 +40,14 @@ class LibraryRepository extends BaseRepository {
 
   /// Creates a new library.
   ///
-  /// The creating user is automatically added as owner.
+  /// The creating user is automatically added as owner via database trigger.
   Future<Library> createLibrary(String name, String userId,
       {String? description}) async {
     final now = DateTime.now().toIso8601String();
 
     // Create the library
+    // Note: The database trigger `on_library_created` automatically adds
+    // the creator as an owner in library_members
     final libraryResponse = await client
         .from(_librariesTable)
         .insert({
@@ -58,17 +60,7 @@ class LibraryRepository extends BaseRepository {
         .select()
         .single();
 
-    final library = Library.fromJson(libraryResponse);
-
-    // Add creating user as owner
-    await client.from(_membersTable).insert({
-      'library_id': library.id,
-      'user_id': userId,
-      'role': LibraryRole.owner.name,
-      'joined_at': now,
-    });
-
-    return library;
+    return Library.fromJson(libraryResponse);
   }
 
   /// Updates a library.

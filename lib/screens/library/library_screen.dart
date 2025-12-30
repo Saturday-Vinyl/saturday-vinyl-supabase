@@ -6,7 +6,9 @@ import 'package:saturday_consumer_app/config/theme.dart';
 import 'package:saturday_consumer_app/models/library_album.dart';
 import 'package:saturday_consumer_app/providers/album_provider.dart';
 import 'package:saturday_consumer_app/providers/library_filter_provider.dart';
+import 'package:saturday_consumer_app/providers/library_provider.dart';
 import 'package:saturday_consumer_app/providers/library_view_provider.dart';
+import 'package:saturday_consumer_app/screens/onboarding/quick_start_screen.dart';
 import 'package:saturday_consumer_app/widgets/common/saturday_app_bar.dart';
 import 'package:saturday_consumer_app/widgets/library/album_grid.dart';
 import 'package:saturday_consumer_app/widgets/library/album_list.dart';
@@ -33,6 +35,38 @@ class LibraryScreen extends ConsumerStatefulWidget {
 class _LibraryScreenState extends ConsumerState<LibraryScreen> {
   @override
   Widget build(BuildContext context) {
+    // Check if user has any libraries
+    final librariesAsync = ref.watch(userLibrariesProvider);
+
+    return librariesAsync.when(
+      data: (libraries) {
+        if (libraries.isEmpty) {
+          // Show empty state prompting user to create a library
+          return _buildNoLibrariesState(context);
+        }
+        return _buildLibraryContent(context, ref);
+      },
+      loading: () => Scaffold(
+        appBar: const SaturdayAppBar(
+          showLibrarySwitcher: true,
+          showSearch: true,
+        ),
+        body: const Center(
+          child: CircularProgressIndicator(),
+        ),
+      ),
+      error: (error, stack) => Scaffold(
+        appBar: const SaturdayAppBar(
+          showLibrarySwitcher: true,
+          showSearch: true,
+        ),
+        body: _buildErrorState(context, ref, error.toString()),
+      ),
+    );
+  }
+
+  /// Build the main library content when user has libraries.
+  Widget _buildLibraryContent(BuildContext context, WidgetRef ref) {
     // Watch the sync provider to keep album provider in sync with filter state
     ref.watch(filterSyncProvider);
 
@@ -347,6 +381,13 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
         ),
       ),
     );
+  }
+
+  /// Build the state when user has no libraries.
+  ///
+  /// Shows the QuickStartScreen inline instead of navigating to it.
+  Widget _buildNoLibrariesState(BuildContext context) {
+    return const QuickStartScreen();
   }
 
   /// Build the empty state when no albums in library.

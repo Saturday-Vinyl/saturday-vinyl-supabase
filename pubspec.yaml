@@ -34,6 +34,9 @@ dependencies:
   # Image Loading & Caching
   cached_network_image: ^3.3.0
 
+  # Animations
+  lottie: ^3.1.0
+
   # Environment Configuration
   flutter_dotenv: ^5.1.0
 
@@ -63,4 +66,5 @@ flutter:
 
   assets:
     - assets/images/
+    - assets/animations/
     - .env
