@@ -170,6 +170,7 @@ GoRouter createAppRouter(Ref ref) {
               GoRoute(
                 path: RoutePaths.addAlbumConfirm,
                 name: RouteNames.addAlbumConfirm,
+                parentNavigatorKey: rootNavigatorKey,
                 builder: (context, state) => const ConfirmAlbumScreen(),
               ),
               // Tag association

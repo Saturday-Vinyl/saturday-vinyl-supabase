@@ -26,6 +26,7 @@ dependencies:
 
   # Camera & Scanning
   mobile_scanner: ^7.0.0  # Uses Apple Vision on iOS - supports simulators
+  camera: ^0.11.0         # For silent photo capture of album covers
 
   # Bluetooth
   flutter_blue_plus: ^1.29.0

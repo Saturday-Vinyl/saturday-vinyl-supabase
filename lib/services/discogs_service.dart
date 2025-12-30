@@ -11,6 +11,9 @@ class DiscogsSearchResult {
   final String? coverImageUrl;
   final String? year;
   final List<String> formats;
+  final List<String> labels;
+  final String? country;
+  final String? catno;
 
   DiscogsSearchResult({
     required this.id,
@@ -18,6 +21,9 @@ class DiscogsSearchResult {
     this.coverImageUrl,
     this.year,
     this.formats = const [],
+    this.labels = const [],
+    this.country,
+    this.catno,
   });
 
   factory DiscogsSearchResult.fromJson(Map<String, dynamic> json) {
@@ -30,6 +36,12 @@ class DiscogsSearchResult {
               ?.map((e) => e as String)
               .toList() ??
           [],
+      labels: (json['label'] as List<dynamic>?)
+              ?.map((e) => e as String)
+              .toList() ??
+          [],
+      country: json['country'] as String?,
+      catno: json['catno'] as String?,
     );
   }
 

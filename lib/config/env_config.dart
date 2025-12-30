@@ -60,6 +60,10 @@ class EnvConfig {
   static String? get discogsPersonalAccessToken =>
       dotenv.env['DISCOGS_PERSONAL_ACCESS_TOKEN'];
 
+  /// Anthropic API key for Claude vision (album cover recognition).
+  /// Get yours from https://console.anthropic.com/
+  static String? get anthropicApiKey => dotenv.env['ANTHROPIC_API_KEY'];
+
   /// Whether the configuration has been loaded.
   static bool get isInitialized => _initialized;
 }

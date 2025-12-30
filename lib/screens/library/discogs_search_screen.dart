@@ -244,6 +244,19 @@ class _SearchResultTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Build the metadata line with year, country, format
+    final metadataParts = <String>[
+      if (result.year != null) result.year!,
+      if (result.country != null) result.country!,
+      if (result.formats.isNotEmpty) result.formats.first,
+    ];
+
+    // Build the label/catalog line
+    final labelParts = <String>[
+      if (result.labels.isNotEmpty) result.labels.first,
+      if (result.catno != null && result.catno!.isNotEmpty) result.catno!,
+    ];
+
     return ListTile(
       contentPadding: const EdgeInsets.symmetric(
         horizontal: Spacing.lg,
@@ -278,16 +291,23 @@ class _SearchResultTile extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
             style: TextStyle(color: SaturdayColors.secondary),
           ),
-          if (result.year != null || result.formats.isNotEmpty)
+          if (metadataParts.isNotEmpty)
             Text(
-              [
-                if (result.year != null) result.year,
-                if (result.formats.isNotEmpty) result.formats.first,
-              ].join(' • '),
+              metadataParts.join(' • '),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: SaturdayColors.secondary,
+                  ),
+            ),
+          if (labelParts.isNotEmpty)
+            Text(
+              labelParts.join(' • '),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: SaturdayColors.secondary,
+                    fontStyle: FontStyle.italic,
                   ),
             ),
         ],

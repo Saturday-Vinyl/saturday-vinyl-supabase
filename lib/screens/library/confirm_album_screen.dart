@@ -18,9 +18,13 @@ class ConfirmAlbumScreen extends ConsumerWidget {
     final album = state.selectedAlbum;
 
     if (album == null) {
-      // No album selected, go back
+      // No album selected, go back to library
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        context.pop();
+        if (context.canPop()) {
+          context.pop();
+        } else {
+          context.go('/library');
+        }
       });
       return const SizedBox.shrink();
     }
@@ -32,7 +36,11 @@ class ConfirmAlbumScreen extends ConsumerWidget {
           icon: const Icon(Icons.arrow_back),
           onPressed: () {
             ref.read(addAlbumProvider.notifier).clearSelection();
-            context.pop();
+            if (context.canPop()) {
+              context.pop();
+            } else {
+              context.go('/library');
+            }
           },
         ),
       ),

@@ -1,10 +1,16 @@
+import 'dart:io';
+
+import 'package:cached_network_image/cached_network_image.dart';
+import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import 'package:saturday_consumer_app/config/styles.dart';
+import 'package:saturday_consumer_app/config/theme.dart';
 import 'package:saturday_consumer_app/providers/add_album_provider.dart';
+import 'package:saturday_consumer_app/services/claude_vision_service.dart';
 
 /// Unified camera screen for adding albums.
 ///
@@ -25,11 +31,7 @@ class BarcodeScannerScreen extends ConsumerStatefulWidget {
 }
 
 class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
-  final MobileScannerController _scannerController = MobileScannerController(
-    detectionSpeed: DetectionSpeed.normal,
-    facing: CameraFacing.back,
-    torchEnabled: false,
-  );
+  late final MobileScannerController _scannerController;
 
   // Detected barcode state - shown as floating overlay
   String? _detectedBarcode;
@@ -40,6 +42,14 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
   @override
   void initState() {
     super.initState();
+
+    // Initialize scanner for barcode detection
+    _scannerController = MobileScannerController(
+      detectionSpeed: DetectionSpeed.normal,
+      facing: CameraFacing.back,
+      torchEnabled: false,
+    );
+
     // Hide status bar for immersive camera experience
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   }
@@ -93,10 +103,10 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
       double maxX = xs.reduce((a, b) => a > b ? a : b);
       double maxY = ys.reduce((a, b) => a > b ? a : b);
 
-      // Get the actual image size from the capture if available
+      // Get the actual image size from the capture
       final imageSize = capture.size;
-      final double imageWidth = imageSize?.width ?? 1080.0;
-      final double imageHeight = imageSize?.height ?? 1920.0;
+      final double imageWidth = imageSize.width;
+      final double imageHeight = imageSize.height;
 
       // The mobile_scanner returns corners in the image coordinate space.
       // For iOS portrait mode, the image is delivered already rotated to match screen orientation.
@@ -123,14 +133,235 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
     context.pop();
   }
 
-  void _onCapturePhoto() {
-    // TODO: Implement photo capture for album cover recognition
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Album cover recognition coming soon!'),
-        duration: Duration(seconds: 2),
+  Future<void> _onCapturePhoto() async {
+    // Check if vision service is available
+    final visionService = ref.read(claudeVisionServiceProvider);
+    if (visionService == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Album cover recognition requires an Anthropic API key. '
+            'Please add ANTHROPIC_API_KEY to your .env file.',
+          ),
+          duration: Duration(seconds: 4),
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _isSearching = true;
+    });
+
+    CameraController? cameraController;
+
+    try {
+      // Stop the barcode scanner to release the camera
+      await _scannerController.stop();
+
+      // Get available cameras and find back camera
+      final cameras = await availableCameras();
+      final backCamera = cameras.firstWhere(
+        (camera) => camera.lensDirection == CameraLensDirection.back,
+        orElse: () => cameras.first,
+      );
+
+      // Initialize camera controller for photo capture
+      cameraController = CameraController(
+        backCamera,
+        ResolutionPreset.high,
+        enableAudio: false,
+        imageFormatGroup: ImageFormatGroup.jpeg,
+      );
+
+      await cameraController.initialize();
+
+      // Take the photo immediately (camera is already focused from previous view)
+      final XFile photo = await cameraController.takePicture();
+
+      // Dispose camera controller to release resources
+      await cameraController.dispose();
+      cameraController = null;
+
+      if (!mounted) return;
+
+      // Read the image bytes
+      final imageBytes = await File(photo.path).readAsBytes();
+
+      // Clean up temp file
+      try {
+        await File(photo.path).delete();
+      } catch (_) {}
+
+      // Search by album cover using Claude Vision
+      final identification = await ref
+          .read(addAlbumProvider.notifier)
+          .searchByAlbumCover(imageBytes);
+
+      if (!mounted) return;
+
+      final state = ref.read(addAlbumProvider);
+
+      if (state.error != null) {
+        // Show error
+        _showErrorSnackbar(state.error!);
+        await _scannerController.start();
+        setState(() {
+          _isSearching = false;
+        });
+      } else if (state.selectedAlbum != null) {
+        // Auto-selected (single result), go to confirm
+        context.push('/library/add/confirm');
+      } else if (state.searchResults.isNotEmpty) {
+        // Show what Claude identified and the results
+        if (identification != null && identification.isSuccessful) {
+          _showVisionResultsSheet(
+            identification.artist ?? '',
+            identification.albumTitle ?? '',
+            state.searchResults,
+          );
+        } else {
+          _showResultsSheet(state.searchResults);
+        }
+      } else {
+        // No results found
+        await _scannerController.start();
+        _showNoVisionResultsDialog(identification);
+      }
+    } catch (e) {
+      if (!mounted) return;
+
+      // Dispose camera if still active
+      if (cameraController != null) {
+        try {
+          await cameraController.dispose();
+        } catch (_) {}
+      }
+
+      // Restart scanner on error
+      try {
+        await _scannerController.start();
+      } catch (_) {}
+
+      setState(() {
+        _isSearching = false;
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to capture photo: $e'),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    }
+  }
+
+  void _showNoVisionResultsDialog(AlbumIdentificationResult? identification) {
+    final identified = identification?.isSuccessful == true;
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(identified ? 'No Albums Found' : 'Could Not Identify Album'),
+        content: Text(
+          identified
+              ? 'Found "${identification!.artist} - ${identification.albumTitle}" '
+                  'but no matching vinyl records in Discogs.\n\n'
+                  'Would you like to search manually?'
+              : 'Could not identify the album from the photo.\n\n'
+                  'Try taking a clearer photo or search manually.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              setState(() {
+                _isSearching = false;
+              });
+            },
+            child: const Text('Try Again'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              context.pushReplacement('/library/add/search');
+            },
+            child: const Text('Search Manually'),
+          ),
+        ],
       ),
     );
+  }
+
+  void _showVisionResultsSheet(
+      String artist, String album, List results) {
+    setState(() {
+      _isSearching = false;
+    });
+
+    // Capture parent context's router before entering the sheet
+    final parentRouter = GoRouter.of(context);
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) => DraggableScrollableSheet(
+        initialChildSize: 0.6,
+        minChildSize: 0.4,
+        maxChildSize: 0.9,
+        expand: false,
+        builder: (sheetContext, scrollController) => Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(Spacing.lg),
+              child: Column(
+                children: [
+                  const Icon(Icons.auto_awesome, size: 28),
+                  const SizedBox(height: Spacing.sm),
+                  Text(
+                    'Identified: $artist',
+                    style: Theme.of(sheetContext).textTheme.titleLarge,
+                    textAlign: TextAlign.center,
+                  ),
+                  Text(
+                    album,
+                    style: Theme.of(sheetContext).textTheme.titleMedium?.copyWith(
+                          color: Colors.grey,
+                        ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: Spacing.xs),
+                  Text(
+                    '${results.length} versions found',
+                    style: Theme.of(sheetContext).textTheme.bodySmall?.copyWith(
+                          color: Colors.grey,
+                        ),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: ListView.builder(
+                controller: scrollController,
+                itemCount: results.length,
+                itemBuilder: (itemContext, index) {
+                  final result = results[index];
+                  return _buildResultTile(result, sheetContext, parentRouter);
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    ).then((_) {
+      // If sheet is dismissed without selection, reset state
+      if (mounted && ref.read(selectedAlbumProvider) == null) {
+        setState(() {
+          _isSearching = false;
+          _detectedBarcode = null;
+          _barcodeRect = null;
+        });
+      }
+    });
   }
 
   Future<void> _searchWithBarcode(String barcode) async {
@@ -155,7 +386,7 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
       });
     } else if (state.selectedAlbum != null) {
       // Auto-selected (single result), go to confirm
-      context.pushReplacement('/library/add/confirm');
+      context.push('/library/add/confirm');
     } else if (state.searchResults.isNotEmpty) {
       // Multiple results, show selection
       _showResultsSheet(state.searchResults);
@@ -215,45 +446,44 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
   }
 
   void _showResultsSheet(List results) {
+    // Capture parent context's router before entering the sheet
+    final parentRouter = GoRouter.of(context);
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
-      builder: (context) => DraggableScrollableSheet(
-        initialChildSize: 0.5,
-        minChildSize: 0.3,
+      builder: (sheetContext) => DraggableScrollableSheet(
+        initialChildSize: 0.6,
+        minChildSize: 0.4,
         maxChildSize: 0.9,
         expand: false,
-        builder: (context, scrollController) => Column(
+        builder: (sheetContext, scrollController) => Column(
           children: [
             Padding(
               padding: const EdgeInsets.all(Spacing.lg),
-              child: Text(
-                'Multiple results found',
-                style: Theme.of(context).textTheme.titleLarge,
+              child: Column(
+                children: [
+                  Text(
+                    'Select Your Pressing',
+                    style: Theme.of(sheetContext).textTheme.titleLarge,
+                  ),
+                  const SizedBox(height: Spacing.xs),
+                  Text(
+                    '${results.length} versions found',
+                    style: Theme.of(sheetContext).textTheme.bodySmall?.copyWith(
+                          color: Colors.grey,
+                        ),
+                  ),
+                ],
               ),
             ),
             Expanded(
               child: ListView.builder(
                 controller: scrollController,
                 itemCount: results.length,
-                itemBuilder: (context, index) {
+                itemBuilder: (itemContext, index) {
                   final result = results[index];
-                  return ListTile(
-                    title: Text(result.albumTitle),
-                    subtitle: Text(result.artist),
-                    trailing: result.year != null ? Text(result.year!) : null,
-                    onTap: () async {
-                      final navigator = Navigator.of(context);
-                      final router = GoRouter.of(context);
-                      navigator.pop();
-                      await ref
-                          .read(addAlbumProvider.notifier)
-                          .selectFromSearchResult(result);
-                      if (mounted) {
-                        router.pushReplacement('/library/add/confirm');
-                      }
-                    },
-                  );
+                  return _buildResultTile(result, sheetContext, parentRouter);
                 },
               ),
             ),
@@ -270,6 +500,105 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
         });
       }
     });
+  }
+
+  Widget _buildResultTile(
+    dynamic result,
+    BuildContext sheetContext,
+    GoRouter parentRouter,
+  ) {
+    // Build the metadata line with year, country, format
+    final metadataParts = <String>[
+      if (result.year != null) result.year!,
+      if (result.country != null) result.country!,
+      if (result.formats.isNotEmpty) result.formats.first,
+    ];
+
+    // Build the label/catalog line
+    final labelParts = <String>[
+      if (result.labels.isNotEmpty) result.labels.first,
+      if (result.catno != null && result.catno!.isNotEmpty) result.catno!,
+    ];
+
+    return ListTile(
+      contentPadding: const EdgeInsets.symmetric(
+        horizontal: Spacing.lg,
+        vertical: Spacing.sm,
+      ),
+      leading: ClipRRect(
+        borderRadius: AppRadius.smallRadius,
+        child: SizedBox(
+          width: 56,
+          height: 56,
+          child: result.coverImageUrl != null
+              ? CachedNetworkImage(
+                  imageUrl: result.coverImageUrl!,
+                  fit: BoxFit.cover,
+                  placeholder: (context, url) => _buildCoverPlaceholder(),
+                  errorWidget: (context, url, error) => _buildCoverPlaceholder(),
+                )
+              : _buildCoverPlaceholder(),
+        ),
+      ),
+      title: Text(
+        result.albumTitle,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      subtitle: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            result.artist,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(color: Colors.grey.shade600),
+          ),
+          if (metadataParts.isNotEmpty)
+            Text(
+              metadataParts.join(' • '),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(sheetContext).textTheme.bodySmall?.copyWith(
+                    color: Colors.grey.shade600,
+                  ),
+            ),
+          if (labelParts.isNotEmpty)
+            Text(
+              labelParts.join(' • '),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(sheetContext).textTheme.bodySmall?.copyWith(
+                    color: Colors.grey.shade600,
+                    fontStyle: FontStyle.italic,
+                  ),
+            ),
+        ],
+      ),
+      trailing: const Icon(Icons.chevron_right),
+      onTap: () async {
+        // Close the bottom sheet first
+        Navigator.of(sheetContext).pop();
+        // Select the album
+        await ref
+            .read(addAlbumProvider.notifier)
+            .selectFromSearchResult(result);
+        // Navigate using the parent context's router
+        if (mounted) {
+          parentRouter.push('/library/add/confirm');
+        }
+      },
+    );
+  }
+
+  Widget _buildCoverPlaceholder() {
+    return Container(
+      color: SaturdayColors.secondary.withValues(alpha: 0.2),
+      child: Icon(
+        Icons.album,
+        color: SaturdayColors.secondary,
+      ),
+    );
   }
 
   @override
