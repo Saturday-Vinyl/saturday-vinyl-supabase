@@ -3,7 +3,7 @@ import 'package:equatable/equatable.dart';
 /// User model representing an employee user in the system
 class User extends Equatable {
   final String id; // UUID
-  final String googleId;
+  final String authUserId; // Supabase Auth UID
   final String email;
   final String? fullName;
   final bool isAdmin;
@@ -13,7 +13,7 @@ class User extends Equatable {
 
   const User({
     required this.id,
-    required this.googleId,
+    required this.authUserId,
     required this.email,
     this.fullName,
     required this.isAdmin,
@@ -26,7 +26,7 @@ class User extends Equatable {
   factory User.fromJson(Map<String, dynamic> json) {
     return User(
       id: json['id'] as String,
-      googleId: json['google_id'] as String,
+      authUserId: json['auth_user_id'] as String,
       email: json['email'] as String,
       fullName: json['full_name'] as String?,
       isAdmin: json['is_admin'] as bool? ?? false,
@@ -42,7 +42,7 @@ class User extends Equatable {
   Map<String, dynamic> toJson() {
     return {
       'id': id,
-      'google_id': googleId,
+      'auth_user_id': authUserId,
       'email': email,
       'full_name': fullName,
       'is_admin': isAdmin,
@@ -55,7 +55,7 @@ class User extends Equatable {
   /// Create a copy of User with updated fields
   User copyWith({
     String? id,
-    String? googleId,
+    String? authUserId,
     String? email,
     String? fullName,
     bool? isAdmin,
@@ -65,7 +65,7 @@ class User extends Equatable {
   }) {
     return User(
       id: id ?? this.id,
-      googleId: googleId ?? this.googleId,
+      authUserId: authUserId ?? this.authUserId,
       email: email ?? this.email,
       fullName: fullName ?? this.fullName,
       isAdmin: isAdmin ?? this.isAdmin,
@@ -78,7 +78,7 @@ class User extends Equatable {
   @override
   List<Object?> get props => [
         id,
-        googleId,
+        authUserId,
         email,
         fullName,
         isAdmin,

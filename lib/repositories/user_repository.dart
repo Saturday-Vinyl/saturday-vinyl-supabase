@@ -20,7 +20,7 @@ class UserRepository {
     try {
       final client = _supabaseService.client;
       final email = supabaseUser.email;
-      final googleId = supabaseUser.id;
+      final authUserId = supabaseUser.id;
 
       if (email == null) {
         throw Exception('User email is required');
@@ -28,11 +28,11 @@ class UserRepository {
 
       AppLogger.info('Getting or creating user for email: $email');
 
-      // Check if user exists
+      // Check if user exists by auth_user_id
       final response = await client
           .from('users')
           .select()
-          .eq('google_id', googleId)
+          .eq('auth_user_id', authUserId)
           .maybeSingle();
 
       if (response != null) {
@@ -44,7 +44,7 @@ class UserRepository {
             .update({
               'last_login': DateTime.now().toIso8601String(),
             })
-            .eq('google_id', googleId)
+            .eq('auth_user_id', authUserId)
             .select()
             .single();
 
@@ -54,7 +54,7 @@ class UserRepository {
         AppLogger.info('User not found, creating new user');
 
         final newUser = {
-          'google_id': googleId,
+          'auth_user_id': authUserId,
           'email': email,
           'full_name': supabaseUser.userMetadata?['full_name'] as String?,
           'is_admin': false, // Default to non-admin
@@ -144,15 +144,15 @@ class UserRepository {
     }
   }
 
-  /// Get user by Google ID
-  Future<User?> getUserByGoogleId(String googleId) async {
+  /// Get user by Auth User ID (Supabase Auth UID)
+  Future<User?> getUserByAuthUserId(String authUserId) async {
     try {
       final client = _supabaseService.client;
 
       final response = await client
           .from('users')
           .select()
-          .eq('google_id', googleId)
+          .eq('auth_user_id', authUserId)
           .maybeSingle();
 
       if (response == null) {
@@ -161,7 +161,7 @@ class UserRepository {
 
       return User.fromJson(response);
     } catch (error, stackTrace) {
-      AppLogger.error('Failed to get user by Google ID', error, stackTrace);
+      AppLogger.error('Failed to get user by Auth User ID', error, stackTrace);
       rethrow;
     }
   }

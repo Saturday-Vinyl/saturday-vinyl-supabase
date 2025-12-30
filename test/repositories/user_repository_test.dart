@@ -11,9 +11,9 @@ void main() {
     group('getOrCreateUser', () {
       test('creates new user on first login', () async {
         // This test documents the expected behavior:
-        // 1. Check if user exists by google_id
+        // 1. Check if user exists by auth_user_id
         // 2. If not found, create new user with:
-        //    - google_id from Supabase user
+        //    - auth_user_id from Supabase user
         //    - email from Supabase user
         //    - full_name from user metadata
         //    - is_admin = false (default)
@@ -31,7 +31,7 @@ void main() {
 
       test('updates last login for existing user', () async {
         // This test documents that:
-        // - If user exists (found by google_id), update last_login
+        // - If user exists (found by auth_user_id), update last_login
         // - Do not change other user properties
         // - Return updated User model
       });
@@ -94,10 +94,10 @@ void main() {
       });
     });
 
-    group('getUserByGoogleId', () {
-      test('retrieves user by Google ID', () async {
+    group('getUserByAuthUserId', () {
+      test('retrieves user by Auth User ID', () async {
         // This test documents that:
-        // - Queries users table by google_id
+        // - Queries users table by auth_user_id
         // - Returns User model if found
         // - Returns null if not found (unlike getUser which throws)
       });

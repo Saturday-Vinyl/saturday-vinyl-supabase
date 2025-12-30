@@ -6,7 +6,7 @@ void main() {
     final now = DateTime.now();
     final testUser = User(
       id: 'test-uuid-123',
-      googleId: 'google-id-456',
+      authUserId: 'auth-user-id-456',
       email: 'test@saturdayvinyl.com',
       fullName: 'Test User',
       isAdmin: false,
@@ -19,7 +19,7 @@ void main() {
       test('creates User from valid JSON', () {
         final json = {
           'id': 'test-uuid-123',
-          'google_id': 'google-id-456',
+          'auth_user_id': 'auth-user-id-456',
           'email': 'test@saturdayvinyl.com',
           'full_name': 'Test User',
           'is_admin': false,
@@ -31,7 +31,7 @@ void main() {
         final user = User.fromJson(json);
 
         expect(user.id, 'test-uuid-123');
-        expect(user.googleId, 'google-id-456');
+        expect(user.authUserId, 'auth-user-id-456');
         expect(user.email, 'test@saturdayvinyl.com');
         expect(user.fullName, 'Test User');
         expect(user.isAdmin, false);
@@ -43,7 +43,7 @@ void main() {
       test('handles null fullName', () {
         final json = {
           'id': 'test-uuid-123',
-          'google_id': 'google-id-456',
+          'auth_user_id': 'auth-user-id-456',
           'email': 'test@saturdayvinyl.com',
           'full_name': null,
           'is_admin': false,
@@ -61,7 +61,7 @@ void main() {
       test('defaults isAdmin to false if not provided', () {
         final json = {
           'id': 'test-uuid-123',
-          'google_id': 'google-id-456',
+          'auth_user_id': 'auth-user-id-456',
           'email': 'test@saturdayvinyl.com',
           'created_at': now.toIso8601String(),
         };
@@ -78,7 +78,7 @@ void main() {
         final json = testUser.toJson();
 
         expect(json['id'], 'test-uuid-123');
-        expect(json['google_id'], 'google-id-456');
+        expect(json['auth_user_id'], 'auth-user-id-456');
         expect(json['email'], 'test@saturdayvinyl.com');
         expect(json['full_name'], 'Test User');
         expect(json['is_admin'], false);
@@ -90,7 +90,7 @@ void main() {
       test('handles null values correctly', () {
         final user = User(
           id: 'test-uuid-123',
-          googleId: 'google-id-456',
+          authUserId: 'auth-user-id-456',
           email: 'test@saturdayvinyl.com',
           fullName: null,
           isAdmin: false,
@@ -114,7 +114,7 @@ void main() {
         );
 
         expect(updated.id, testUser.id);
-        expect(updated.googleId, testUser.googleId);
+        expect(updated.authUserId, testUser.authUserId);
         expect(updated.email, testUser.email);
         expect(updated.fullName, 'Updated Name');
         expect(updated.isAdmin, true);
@@ -127,7 +127,7 @@ void main() {
         final copy = testUser.copyWith();
 
         expect(copy.id, testUser.id);
-        expect(copy.googleId, testUser.googleId);
+        expect(copy.authUserId, testUser.authUserId);
         expect(copy.email, testUser.email);
         expect(copy.fullName, testUser.fullName);
         expect(copy.isAdmin, testUser.isAdmin);
@@ -139,7 +139,7 @@ void main() {
       test('two Users with same values are equal', () {
         final user1 = User(
           id: 'test-uuid-123',
-          googleId: 'google-id-456',
+          authUserId: 'auth-user-id-456',
           email: 'test@saturdayvinyl.com',
           fullName: 'Test User',
           isAdmin: false,
@@ -150,7 +150,7 @@ void main() {
 
         final user2 = User(
           id: 'test-uuid-123',
-          googleId: 'google-id-456',
+          authUserId: 'auth-user-id-456',
           email: 'test@saturdayvinyl.com',
           fullName: 'Test User',
           isAdmin: false,
