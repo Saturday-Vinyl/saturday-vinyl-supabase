@@ -14,10 +14,9 @@ void main() {
     RfidTag(
       id: 'tag-1',
       epcIdentifier: '5356A1B2C3D4E5F67890ABCD',
-      status: RfidTagStatus.locked,
+      status: RfidTagStatus.active,
       createdAt: DateTime(2025, 1, 15, 10, 30),
       updatedAt: DateTime(2025, 1, 15, 10, 30),
-      lockedAt: DateTime(2025, 1, 15, 10, 35),
     ),
     RfidTag(
       id: 'tag-2',
@@ -248,8 +247,7 @@ void main() {
       // Should show status options (may appear twice due to dropdown overlay)
       expect(find.text('Generated'), findsAtLeast(1));
       expect(find.text('Written'), findsAtLeast(1));
-      expect(find.text('Locked'), findsAtLeast(1));
-      expect(find.text('Failed'), findsAtLeast(1));
+      expect(find.text('Active'), findsAtLeast(1));
       expect(find.text('Retired'), findsAtLeast(1));
     });
   });

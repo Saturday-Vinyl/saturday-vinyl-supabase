@@ -288,14 +288,15 @@ class _TagDetailScreenState extends ConsumerState<TagDetailScreen> {
                     subtitle: _formatDateTime(tag.writtenAt!),
                     isCompleted: true,
                   ),
-                if (tag.lockedAt != null)
+                if (tag.status == RfidTagStatus.active)
                   _buildTimelineItem(
                     context,
-                    icon: Icons.lock,
-                    title: 'Locked',
-                    subtitle: _formatDateTime(tag.lockedAt!),
+                    icon: Icons.album,
+                    title: 'Active',
+                    subtitle: 'Associated with album',
                     isCompleted: true,
-                    isLast: true,
+                    isLast: tag.status != RfidTagStatus.retired,
+                    color: SaturdayColors.success,
                   ),
                 if (tag.status == RfidTagStatus.retired)
                   _buildTimelineItem(

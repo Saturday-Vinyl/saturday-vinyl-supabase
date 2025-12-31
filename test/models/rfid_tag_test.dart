@@ -7,8 +7,7 @@ void main() {
     test('value returns correct string for each status', () {
       expect(RfidTagStatus.generated.value, 'generated');
       expect(RfidTagStatus.written.value, 'written');
-      expect(RfidTagStatus.locked.value, 'locked');
-      expect(RfidTagStatus.failed.value, 'failed');
+      expect(RfidTagStatus.active.value, 'active');
       expect(RfidTagStatus.retired.value, 'retired');
     });
 
@@ -16,8 +15,7 @@ void main() {
       expect(
           RfidTagStatusExtension.fromString('generated'), RfidTagStatus.generated);
       expect(RfidTagStatusExtension.fromString('written'), RfidTagStatus.written);
-      expect(RfidTagStatusExtension.fromString('locked'), RfidTagStatus.locked);
-      expect(RfidTagStatusExtension.fromString('failed'), RfidTagStatus.failed);
+      expect(RfidTagStatusExtension.fromString('active'), RfidTagStatus.active);
       expect(RfidTagStatusExtension.fromString('retired'), RfidTagStatus.retired);
     });
 
@@ -35,11 +33,10 @@ void main() {
       id: 'tag-123',
       epcIdentifier: '5356A1B2C3D4E5F67890ABCD',
       tid: 'E2003412B802011234567890',
-      status: RfidTagStatus.locked,
+      status: RfidTagStatus.active,
       createdAt: now,
       updatedAt: now,
       writtenAt: now.subtract(const Duration(minutes: 2)),
-      lockedAt: now.subtract(const Duration(minutes: 1)),
       createdBy: 'user-456',
     );
 
@@ -47,7 +44,7 @@ void main() {
       expect(tag.id, 'tag-123');
       expect(tag.epcIdentifier, '5356A1B2C3D4E5F67890ABCD');
       expect(tag.tid, 'E2003412B802011234567890');
-      expect(tag.status, RfidTagStatus.locked);
+      expect(tag.status, RfidTagStatus.active);
       expect(tag.createdBy, 'user-456');
     });
 
@@ -62,7 +59,6 @@ void main() {
 
       expect(minimalTag.tid, null);
       expect(minimalTag.writtenAt, null);
-      expect(minimalTag.lockedAt, null);
       expect(minimalTag.createdBy, null);
     });
 
@@ -206,11 +202,10 @@ void main() {
           'id': 'tag-123',
           'epc_identifier': '5356A1B2C3D4E5F67890ABCD',
           'tid': 'E2003412B802011234567890',
-          'status': 'locked',
+          'status': 'active',
           'created_at': now.toIso8601String(),
           'updated_at': now.toIso8601String(),
           'written_at': now.toIso8601String(),
-          'locked_at': now.toIso8601String(),
           'created_by': 'user-456',
         };
 
@@ -218,7 +213,7 @@ void main() {
         expect(fromJson.id, 'tag-123');
         expect(fromJson.epcIdentifier, '5356A1B2C3D4E5F67890ABCD');
         expect(fromJson.tid, 'E2003412B802011234567890');
-        expect(fromJson.status, RfidTagStatus.locked);
+        expect(fromJson.status, RfidTagStatus.active);
         expect(fromJson.createdBy, 'user-456');
       });
 
@@ -231,14 +226,12 @@ void main() {
           'created_at': now.toIso8601String(),
           'updated_at': now.toIso8601String(),
           'written_at': null,
-          'locked_at': null,
           'created_by': null,
         };
 
         final fromJson = RfidTag.fromJson(json);
         expect(fromJson.tid, null);
         expect(fromJson.writtenAt, null);
-        expect(fromJson.lockedAt, null);
         expect(fromJson.createdBy, null);
       });
 
@@ -263,7 +256,7 @@ void main() {
         expect(json['id'], 'tag-123');
         expect(json['epc_identifier'], '5356A1B2C3D4E5F67890ABCD');
         expect(json['tid'], 'E2003412B802011234567890');
-        expect(json['status'], 'locked');
+        expect(json['status'], 'active');
         expect(json['created_by'], 'user-456');
       });
 
@@ -279,7 +272,6 @@ void main() {
         final json = minimalTag.toJson();
         expect(json['tid'], null);
         expect(json['written_at'], null);
-        expect(json['locked_at'], null);
         expect(json['created_by'], null);
       });
     });
@@ -295,7 +287,7 @@ void main() {
       test('includes required insert fields', () {
         final insertJson = tag.toInsertJson();
         expect(insertJson['epc_identifier'], '5356A1B2C3D4E5F67890ABCD');
-        expect(insertJson['status'], 'locked');
+        expect(insertJson['status'], 'active');
       });
     });
 
@@ -324,7 +316,7 @@ void main() {
         final tag1 = RfidTag(
           id: 'tag-123',
           epcIdentifier: '5356A1B2C3D4E5F67890ABCD',
-          status: RfidTagStatus.locked,
+          status: RfidTagStatus.active,
           createdAt: now,
           updatedAt: now,
         );
@@ -332,7 +324,7 @@ void main() {
         final tag2 = RfidTag(
           id: 'tag-123',
           epcIdentifier: '5356A1B2C3D4E5F67890ABCD',
-          status: RfidTagStatus.locked,
+          status: RfidTagStatus.active,
           createdAt: now,
           updatedAt: now,
         );
@@ -381,7 +373,7 @@ void main() {
         final str = tag.toString();
         expect(str, contains('tag-123'));
         expect(str, contains('5356-A1B2-C3D4-E5F6-7890-ABCD'));
-        expect(str, contains('locked'));
+        expect(str, contains('active'));
       });
     });
 

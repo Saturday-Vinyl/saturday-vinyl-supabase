@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS public.rfid_tags (
     locked_at TIMESTAMPTZ, -- When tag was locked
     created_by UUID REFERENCES public.users(id),
 
-    CONSTRAINT valid_status CHECK (status IN ('generated', 'written', 'locked', 'failed', 'retired'))
+    CONSTRAINT valid_status CHECK (status IN ('generated', 'written', 'active', 'retired'))
 );
 
 -- Primary lookup index (most queries will be by EPC)

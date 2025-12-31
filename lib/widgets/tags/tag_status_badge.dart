@@ -45,10 +45,8 @@ class TagStatusBadge extends StatelessWidget {
         return SaturdayColors.secondaryGrey;
       case RfidTagStatus.written:
         return SaturdayColors.info;
-      case RfidTagStatus.locked:
+      case RfidTagStatus.active:
         return SaturdayColors.success;
-      case RfidTagStatus.failed:
-        return SaturdayColors.error;
       case RfidTagStatus.retired:
         return const Color(0xFF5C5C5C); // Darker gray
     }
@@ -60,10 +58,8 @@ class TagStatusBadge extends StatelessWidget {
         return 'Generated';
       case RfidTagStatus.written:
         return 'Written';
-      case RfidTagStatus.locked:
-        return 'Locked';
-      case RfidTagStatus.failed:
-        return 'Failed';
+      case RfidTagStatus.active:
+        return 'Active';
       case RfidTagStatus.retired:
         return 'Retired';
     }
@@ -76,10 +72,8 @@ class TagStatusBadge extends StatelessWidget {
         return SaturdayColors.secondaryGrey;
       case RfidTagStatus.written:
         return SaturdayColors.info;
-      case RfidTagStatus.locked:
+      case RfidTagStatus.active:
         return SaturdayColors.success;
-      case RfidTagStatus.failed:
-        return SaturdayColors.error;
       case RfidTagStatus.retired:
         return const Color(0xFF5C5C5C);
     }
@@ -92,10 +86,8 @@ class TagStatusBadge extends StatelessWidget {
         return Icons.auto_awesome;
       case RfidTagStatus.written:
         return Icons.edit_note;
-      case RfidTagStatus.locked:
-        return Icons.lock;
-      case RfidTagStatus.failed:
-        return Icons.error_outline;
+      case RfidTagStatus.active:
+        return Icons.album;
       case RfidTagStatus.retired:
         return Icons.cancel_outlined;
     }

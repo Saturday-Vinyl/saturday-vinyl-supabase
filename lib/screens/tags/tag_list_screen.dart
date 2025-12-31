@@ -286,10 +286,8 @@ class _TagListScreenState extends ConsumerState<TagListScreen> {
         return 'Generated';
       case RfidTagStatus.written:
         return 'Written';
-      case RfidTagStatus.locked:
-        return 'Locked';
-      case RfidTagStatus.failed:
-        return 'Failed';
+      case RfidTagStatus.active:
+        return 'Active';
       case RfidTagStatus.retired:
         return 'Retired';
     }

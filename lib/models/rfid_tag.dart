@@ -4,9 +4,8 @@ import 'package:equatable/equatable.dart';
 /// Status values for RFID tag lifecycle
 enum RfidTagStatus {
   generated, // EPC created in database, not yet written to physical tag
-  written, // Successfully written to tag, not yet locked
-  locked, // Written and password-locked (ready for deployment)
-  failed, // Write or lock operation failed
+  written, // Successfully written to physical tag (ready for use)
+  active, // Tag associated with an album in consumer app (in use)
   retired, // Tag decommissioned/removed from circulation
 }
 
@@ -18,10 +17,8 @@ extension RfidTagStatusExtension on RfidTagStatus {
         return 'generated';
       case RfidTagStatus.written:
         return 'written';
-      case RfidTagStatus.locked:
-        return 'locked';
-      case RfidTagStatus.failed:
-        return 'failed';
+      case RfidTagStatus.active:
+        return 'active';
       case RfidTagStatus.retired:
         return 'retired';
     }
@@ -33,10 +30,8 @@ extension RfidTagStatusExtension on RfidTagStatus {
         return RfidTagStatus.generated;
       case 'written':
         return RfidTagStatus.written;
-      case 'locked':
-        return RfidTagStatus.locked;
-      case 'failed':
-        return RfidTagStatus.failed;
+      case 'active':
+        return RfidTagStatus.active;
       case 'retired':
         return RfidTagStatus.retired;
       default:
@@ -63,7 +58,6 @@ class RfidTag extends Equatable {
   final DateTime createdAt;
   final DateTime updatedAt;
   final DateTime? writtenAt; // When EPC was written to physical tag
-  final DateTime? lockedAt; // When tag was locked
   final String? createdBy; // User ID who created the tag
 
   const RfidTag({
@@ -74,7 +68,6 @@ class RfidTag extends Equatable {
     required this.createdAt,
     required this.updatedAt,
     this.writtenAt,
-    this.lockedAt,
     this.createdBy,
   });
 
@@ -128,9 +121,6 @@ class RfidTag extends Equatable {
       writtenAt: json['written_at'] != null
           ? DateTime.parse(json['written_at'] as String)
           : null,
-      lockedAt: json['locked_at'] != null
-          ? DateTime.parse(json['locked_at'] as String)
-          : null,
       createdBy: json['created_by'] as String?,
     );
   }
@@ -145,7 +135,6 @@ class RfidTag extends Equatable {
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt.toIso8601String(),
       'written_at': writtenAt?.toIso8601String(),
-      'locked_at': lockedAt?.toIso8601String(),
       'created_by': createdBy,
     };
   }
@@ -169,7 +158,6 @@ class RfidTag extends Equatable {
     DateTime? createdAt,
     DateTime? updatedAt,
     DateTime? writtenAt,
-    DateTime? lockedAt,
     String? createdBy,
   }) {
     return RfidTag(
@@ -180,7 +168,6 @@ class RfidTag extends Equatable {
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       writtenAt: writtenAt ?? this.writtenAt,
-      lockedAt: lockedAt ?? this.lockedAt,
       createdBy: createdBy ?? this.createdBy,
     );
   }
@@ -194,7 +181,6 @@ class RfidTag extends Equatable {
         createdAt,
         updatedAt,
         writtenAt,
-        lockedAt,
         createdBy,
       ];
 

@@ -15,8 +15,8 @@ void main() {
       });
 
       test('status filter value is correct', () {
-        const filter = TagFilter(status: RfidTagStatus.locked);
-        expect(filter.status!.value, 'locked');
+        const filter = TagFilter(status: RfidTagStatus.active);
+        expect(filter.status!.value, 'active');
       });
 
       test('search filter preserves case for query', () {
@@ -79,20 +79,6 @@ void main() {
 
         expect(data['written_at'], isNotNull);
         expect(data['written_at'], isA<String>());
-      });
-
-      test('update data sets locked_at for locked status', () {
-        final data = <String, dynamic>{
-          'status': RfidTagStatus.locked.value,
-        };
-
-        // Simulate what repository does
-        if (data['status'] == 'locked') {
-          data['locked_at'] = DateTime.now().toIso8601String();
-        }
-
-        expect(data['locked_at'], isNotNull);
-        expect(data['locked_at'], isA<String>());
       });
 
       test('update data includes TID when provided', () {
@@ -162,26 +148,22 @@ void main() {
       test('valid status values', () {
         expect(RfidTagStatus.generated.value, 'generated');
         expect(RfidTagStatus.written.value, 'written');
-        expect(RfidTagStatus.locked.value, 'locked');
-        expect(RfidTagStatus.failed.value, 'failed');
+        expect(RfidTagStatus.active.value, 'active');
         expect(RfidTagStatus.retired.value, 'retired');
       });
 
       test('status transitions set correct timestamps', () {
         // generated -> written: sets written_at
-        // written -> locked: sets locked_at
-        // any -> failed: no special timestamp
+        // written -> active: set by consumer app (no timestamp in admin)
         // any -> retired: no special timestamp
 
         final statusTimestamps = {
           RfidTagStatus.written: 'written_at',
-          RfidTagStatus.locked: 'locked_at',
         };
 
         expect(statusTimestamps[RfidTagStatus.written], 'written_at');
-        expect(statusTimestamps[RfidTagStatus.locked], 'locked_at');
         expect(statusTimestamps[RfidTagStatus.generated], null);
-        expect(statusTimestamps[RfidTagStatus.failed], null);
+        expect(statusTimestamps[RfidTagStatus.active], null);
         expect(statusTimestamps[RfidTagStatus.retired], null);
       });
     });
@@ -218,7 +200,7 @@ void main() {
 
     group('Filter combinations', () {
       test('identifies when only status filter is set', () {
-        const filter = TagFilter(status: RfidTagStatus.locked);
+        const filter = TagFilter(status: RfidTagStatus.active);
         final hasStatus = filter.status != null;
         final hasSearch =
             filter.searchQuery != null && filter.searchQuery!.isNotEmpty;
@@ -239,7 +221,7 @@ void main() {
 
       test('identifies when both filters are set', () {
         const filter = TagFilter(
-          status: RfidTagStatus.locked,
+          status: RfidTagStatus.active,
           searchQuery: '5356',
         );
         final hasStatus = filter.status != null;

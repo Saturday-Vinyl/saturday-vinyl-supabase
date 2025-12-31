@@ -30,13 +30,13 @@ void main() {
 
     test('creates with custom values', () {
       const filter = TagFilter(
-        status: RfidTagStatus.locked,
+        status: RfidTagStatus.active,
         searchQuery: '5356',
         sortBy: TagSortBy.epcIdentifier,
         sortAscending: true,
       );
 
-      expect(filter.status, RfidTagStatus.locked);
+      expect(filter.status, RfidTagStatus.active);
       expect(filter.searchQuery, '5356');
       expect(filter.sortBy, TagSortBy.epcIdentifier);
       expect(filter.sortAscending, true);
@@ -48,7 +48,7 @@ void main() {
       });
 
       test('returns true when status is set', () {
-        const filter = TagFilter(status: RfidTagStatus.locked);
+        const filter = TagFilter(status: RfidTagStatus.active);
         expect(filter.hasActiveFilters, true);
       });
 
@@ -64,7 +64,7 @@ void main() {
 
       test('returns true when both are set', () {
         const filter = TagFilter(
-          status: RfidTagStatus.locked,
+          status: RfidTagStatus.active,
           searchQuery: '5356',
         );
         expect(filter.hasActiveFilters, true);
@@ -91,9 +91,9 @@ void main() {
     group('copyWith', () {
       test('creates new instance with updated status', () {
         const original = TagFilter();
-        final updated = original.copyWith(status: RfidTagStatus.locked);
+        final updated = original.copyWith(status: RfidTagStatus.active);
 
-        expect(updated.status, RfidTagStatus.locked);
+        expect(updated.status, RfidTagStatus.active);
         expect(updated.searchQuery, null);
         expect(updated.sortBy, TagSortBy.createdAt);
       });
@@ -121,7 +121,7 @@ void main() {
       });
 
       test('clearStatus sets status to null', () {
-        const original = TagFilter(status: RfidTagStatus.locked);
+        const original = TagFilter(status: RfidTagStatus.active);
         final updated = original.copyWith(clearStatus: true);
 
         expect(updated.status, null);
@@ -135,7 +135,7 @@ void main() {
       });
 
       test('clearStatus overrides new status value', () {
-        const original = TagFilter(status: RfidTagStatus.locked);
+        const original = TagFilter(status: RfidTagStatus.active);
         final updated = original.copyWith(
           status: RfidTagStatus.written,
           clearStatus: true,
@@ -146,7 +146,7 @@ void main() {
 
       test('preserves all values when no args', () {
         const original = TagFilter(
-          status: RfidTagStatus.locked,
+          status: RfidTagStatus.active,
           searchQuery: '5356',
           sortBy: TagSortBy.epcIdentifier,
           sortAscending: true,
@@ -160,11 +160,11 @@ void main() {
     group('equality', () {
       test('equal filters are equal', () {
         const filter1 = TagFilter(
-          status: RfidTagStatus.locked,
+          status: RfidTagStatus.active,
           searchQuery: '5356',
         );
         const filter2 = TagFilter(
-          status: RfidTagStatus.locked,
+          status: RfidTagStatus.active,
           searchQuery: '5356',
         );
 
@@ -173,7 +173,7 @@ void main() {
       });
 
       test('different status makes filters unequal', () {
-        const filter1 = TagFilter(status: RfidTagStatus.locked);
+        const filter1 = TagFilter(status: RfidTagStatus.active);
         const filter2 = TagFilter(status: RfidTagStatus.written);
 
         expect(filter1, isNot(equals(filter2)));
@@ -204,14 +204,14 @@ void main() {
     group('toString', () {
       test('includes key information', () {
         const filter = TagFilter(
-          status: RfidTagStatus.locked,
+          status: RfidTagStatus.active,
           searchQuery: '5356',
           sortBy: TagSortBy.createdAt,
           sortAscending: false,
         );
 
         final str = filter.toString();
-        expect(str, contains('locked'));
+        expect(str, contains('active'));
         expect(str, contains('5356'));
         expect(str, contains('createdAt'));
       });

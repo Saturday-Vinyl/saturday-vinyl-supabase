@@ -16,12 +16,12 @@ void main() {
     });
 
     test('setStatus updates status', () {
-      notifier.setStatus(RfidTagStatus.locked);
-      expect(notifier.state.status, RfidTagStatus.locked);
+      notifier.setStatus(RfidTagStatus.active);
+      expect(notifier.state.status, RfidTagStatus.active);
     });
 
     test('setStatus with null clears status', () {
-      notifier.setStatus(RfidTagStatus.locked);
+      notifier.setStatus(RfidTagStatus.active);
       notifier.setStatus(null);
       expect(notifier.state.status, null);
     });
@@ -54,7 +54,7 @@ void main() {
     });
 
     test('reset returns to default filter', () {
-      notifier.setStatus(RfidTagStatus.locked);
+      notifier.setStatus(RfidTagStatus.active);
       notifier.setSearchQuery('5356');
       notifier.setSortBy(TagSortBy.epcIdentifier);
       notifier.setSortAscending(true);
@@ -65,24 +65,24 @@ void main() {
     });
 
     test('multiple updates preserve other values', () {
-      notifier.setStatus(RfidTagStatus.locked);
+      notifier.setStatus(RfidTagStatus.active);
       notifier.setSearchQuery('5356');
 
-      expect(notifier.state.status, RfidTagStatus.locked);
+      expect(notifier.state.status, RfidTagStatus.active);
       expect(notifier.state.searchQuery, '5356');
     });
 
     test('state changes are independent', () {
-      notifier.setStatus(RfidTagStatus.locked);
+      notifier.setStatus(RfidTagStatus.active);
       final stateAfterStatus = notifier.state;
 
       notifier.setSearchQuery('5356');
       final stateAfterSearch = notifier.state;
 
-      expect(stateAfterStatus.status, RfidTagStatus.locked);
+      expect(stateAfterStatus.status, RfidTagStatus.active);
       expect(stateAfterStatus.searchQuery, null);
 
-      expect(stateAfterSearch.status, RfidTagStatus.locked);
+      expect(stateAfterSearch.status, RfidTagStatus.active);
       expect(stateAfterSearch.searchQuery, '5356');
     });
   });

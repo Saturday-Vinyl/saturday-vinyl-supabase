@@ -34,18 +34,11 @@ void main() {
       expect(find.text('Written'), findsOneWidget);
     });
 
-    testWidgets('displays locked status correctly', (tester) async {
-      await tester.pumpWidget(createTestWidget(status: RfidTagStatus.locked));
+    testWidgets('displays active status correctly', (tester) async {
+      await tester.pumpWidget(createTestWidget(status: RfidTagStatus.active));
       await tester.pumpAndSettle();
 
-      expect(find.text('Locked'), findsOneWidget);
-    });
-
-    testWidgets('displays failed status correctly', (tester) async {
-      await tester.pumpWidget(createTestWidget(status: RfidTagStatus.failed));
-      await tester.pumpAndSettle();
-
-      expect(find.text('Failed'), findsOneWidget);
+      expect(find.text('Active'), findsOneWidget);
     });
 
     testWidgets('displays retired status correctly', (tester) async {
@@ -57,18 +50,18 @@ void main() {
 
     testWidgets('compact mode uses smaller padding and font', (tester) async {
       await tester.pumpWidget(createTestWidget(
-        status: RfidTagStatus.locked,
+        status: RfidTagStatus.active,
         compact: true,
       ));
       await tester.pumpAndSettle();
 
       // Text should still be visible in compact mode
-      expect(find.text('Locked'), findsOneWidget);
+      expect(find.text('Active'), findsOneWidget);
     });
 
     testWidgets('uses Container with border decoration', (tester) async {
       await tester.pumpWidget(createTestWidget(
-        status: RfidTagStatus.locked,
+        status: RfidTagStatus.active,
       ));
       await tester.pumpAndSettle();
 
@@ -87,14 +80,9 @@ void main() {
       expect(color, SaturdayColors.info);
     });
 
-    test('returns correct color for locked', () {
-      final color = TagStatusBadge.getColorForStatus(RfidTagStatus.locked);
+    test('returns correct color for active', () {
+      final color = TagStatusBadge.getColorForStatus(RfidTagStatus.active);
       expect(color, SaturdayColors.success);
-    });
-
-    test('returns correct color for failed', () {
-      final color = TagStatusBadge.getColorForStatus(RfidTagStatus.failed);
-      expect(color, SaturdayColors.error);
     });
 
     test('returns correct color for retired', () {
@@ -115,14 +103,9 @@ void main() {
       expect(icon, Icons.edit_note);
     });
 
-    test('returns correct icon for locked', () {
-      final icon = TagStatusBadge.getIconForStatus(RfidTagStatus.locked);
-      expect(icon, Icons.lock);
-    });
-
-    test('returns correct icon for failed', () {
-      final icon = TagStatusBadge.getIconForStatus(RfidTagStatus.failed);
-      expect(icon, Icons.error_outline);
+    test('returns correct icon for active', () {
+      final icon = TagStatusBadge.getIconForStatus(RfidTagStatus.active);
+      expect(icon, Icons.album);
     });
 
     test('returns correct icon for retired', () {

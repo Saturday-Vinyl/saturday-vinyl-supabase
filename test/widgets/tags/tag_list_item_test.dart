@@ -11,10 +11,9 @@ void main() {
     testTag = RfidTag(
       id: 'tag-1',
       epcIdentifier: '5356A1B2C3D4E5F67890ABCD',
-      status: RfidTagStatus.locked,
+      status: RfidTagStatus.active,
       createdAt: DateTime.now().subtract(const Duration(hours: 2)),
       updatedAt: DateTime.now().subtract(const Duration(hours: 1)),
-      lockedAt: DateTime.now().subtract(const Duration(hours: 1)),
     );
 
     tagWithTid = RfidTag(
@@ -57,8 +56,8 @@ void main() {
       await tester.pumpWidget(createTestWidget(tag: testTag));
       await tester.pumpAndSettle();
 
-      // Should show the locked status
-      expect(find.text('Locked'), findsOneWidget);
+      // Should show the active status
+      expect(find.text('Active'), findsOneWidget);
     });
 
     testWidgets('displays time ago for recent dates', (tester) async {
@@ -216,12 +215,12 @@ void main() {
       expect(find.text('Written'), findsOneWidget);
     });
 
-    testWidgets('displays failed status', (tester) async {
-      final tag = testTag.copyWith(status: RfidTagStatus.failed);
+    testWidgets('displays active status', (tester) async {
+      final tag = testTag.copyWith(status: RfidTagStatus.active);
       await tester.pumpWidget(createTestWidget(tag: tag));
       await tester.pumpAndSettle();
 
-      expect(find.text('Failed'), findsOneWidget);
+      expect(find.text('Active'), findsOneWidget);
     });
 
     testWidgets('displays retired status', (tester) async {

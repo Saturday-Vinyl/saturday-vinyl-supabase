@@ -205,8 +205,6 @@ class RfidTagRepository {
       // Set timestamps for specific status transitions
       if (status == RfidTagStatus.written) {
         data['written_at'] = DateTime.now().toIso8601String();
-      } else if (status == RfidTagStatus.locked) {
-        data['locked_at'] = DateTime.now().toIso8601String();
       }
 
       // Optionally set TID
