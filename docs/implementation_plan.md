@@ -45,15 +45,15 @@ This document breaks down the hub firmware development into iterative phases. Ea
 ### Tasks
 
 #### 0.1 Development Environment Setup
-- [ ] Install ESP-IDF v5.2+ following official documentation
-- [ ] Verify toolchain with `idf.py --version`
-- [ ] Install VS Code with ESP-IDF extension (optional but recommended)
-- [ ] Set up git repository with `.gitignore` for ESP-IDF projects
+- [x] Install ESP-IDF v5.2+ following official documentation
+- [x] Verify toolchain with `idf.py --version`
+- [x] Install VS Code with ESP-IDF extension (optional but recommended)
+- [x] Set up git repository with `.gitignore` for ESP-IDF projects
 
 #### 0.2 Create Project Structure
-- [ ] Initialize project with `idf.py create-project sv-hub-firmware`
-- [ ] Set target to ESP32-C6: `idf.py set-target esp32c6`
-- [ ] Create directory structure:
+- [x] Initialize project with `idf.py create-project sv-hub-firmware`
+- [x] Set target to ESP32-C6: `idf.py set-target esp32c6`
+- [x] Create directory structure:
   ```
   sv-hub-firmware/
   ├── CMakeLists.txt
@@ -65,18 +65,18 @@ This document breaks down the hub firmware development into iterative phases. Ea
   ├── components/
   └── docs/
   ```
-- [ ] Configure partition table for OTA support (`partitions.csv`)
-- [ ] Create `sdkconfig.defaults` with baseline configuration
+- [x] Configure partition table for OTA support (`partitions.csv`)
+- [x] Create `sdkconfig.defaults` with baseline configuration
 
 #### 0.3 Hello World Build
-- [ ] Write minimal `main.c` that logs "Saturday Hub starting..."
+- [x] Write minimal `main.c` that logs "Saturday Hub starting..."
 - [ ] Build: `idf.py build`
 - [ ] Flash to device: `idf.py -p <PORT> flash`
 - [ ] Verify output: `idf.py -p <PORT> monitor`
 
 #### 0.4 LED Blink Test
-- [ ] Configure GPIO for one LED channel (e.g., GPIO8 for red)
-- [ ] Implement simple blink loop (500ms on/off)
+- [x] Configure GPIO for one LED channel (e.g., GPIO8 for red)
+- [x] Implement simple blink loop (500ms on/off)
 - [ ] Verify LED toggles on physical hardware
 
 ### Deliverables

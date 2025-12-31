@@ -1,0 +1,67 @@
+# Saturday Vinyl Hub - SDK Configuration Defaults
+# These settings are applied when the project is first configured
+# or when sdkconfig is deleted.
+
+# Target: ESP32-C6
+CONFIG_IDF_TARGET="esp32c6"
+
+# Project name
+CONFIG_ESPTOOLPY_MONITOR_BAUD=115200
+
+# Partition table
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# Flash configuration (4MB flash typical)
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_ESPTOOLPY_FLASHMODE_DIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+
+# FreeRTOS configuration
+CONFIG_FREERTOS_HZ=1000
+CONFIG_FREERTOS_TIMER_TASK_STACK_DEPTH=3072
+
+# Logging
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
+
+# Enable heap tracing for debugging (can disable in production)
+CONFIG_HEAP_TRACING_OFF=y
+
+# Wi-Fi configuration
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=10
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=32
+CONFIG_ESP_WIFI_TX_BUFFER_TYPE=1
+CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=32
+
+# Networking
+CONFIG_LWIP_LOCAL_HOSTNAME="saturday-hub"
+
+# Bluetooth (for BLE provisioning)
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+CONFIG_BT_NIMBLE_MAX_CONNECTIONS=1
+
+# OpenThread (for Thread Border Router)
+CONFIG_OPENTHREAD_ENABLED=y
+CONFIG_OPENTHREAD_BORDER_ROUTER=y
+CONFIG_OPENTHREAD_RADIO_NATIVE=y
+
+# NVS encryption (optional, enable for production)
+# CONFIG_NVS_ENCRYPTION=y
+
+# Watchdog
+CONFIG_ESP_TASK_WDT_EN=y
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=30
+
+# UART for RFID module
+CONFIG_UART_ISR_IN_IRAM=y
+
+# Enable app rollback for OTA safety
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# Power management (disable for now, enable if battery operation needed)
+CONFIG_PM_ENABLE=n
+
+# Serial console
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
