@@ -12,6 +12,9 @@ import 'package:saturday_consumer_app/repositories/album_repository.dart';
 /// Keys for storing filter/sort preferences.
 const String _sortOptionKey = 'library_sort_option';
 
+/// The default sort option for the library.
+const AlbumSortOption defaultSortOption = AlbumSortOption.dateAddedDesc;
+
 /// State class for library filters.
 class LibraryFilterState {
   final AlbumSortOption sortOption;
@@ -28,20 +31,33 @@ class LibraryFilterState {
     this.favoritesOnly = false,
   });
 
-  /// Returns true if any filters are active.
+  /// Returns true if the sort option differs from the default.
+  bool get isSortNonDefault => sortOption != defaultSortOption;
+
+  /// Returns true if any filters (not including sort) are active.
   bool get hasActiveFilters =>
       selectedGenres.isNotEmpty ||
       selectedDecades.isNotEmpty ||
       selectedLocationId != null ||
       favoritesOnly;
 
-  /// Returns the count of active filters.
+  /// Returns true if any filters or non-default sort is active.
+  bool get hasAnyActive => hasActiveFilters || isSortNonDefault;
+
+  /// Returns the count of active filters (not including sort).
   int get activeFilterCount {
     int count = 0;
     if (selectedGenres.isNotEmpty) count++;
     if (selectedDecades.isNotEmpty) count++;
     if (selectedLocationId != null) count++;
     if (favoritesOnly) count++;
+    return count;
+  }
+
+  /// Returns the total count of active settings (filters + sort if non-default).
+  int get totalActiveCount {
+    int count = activeFilterCount;
+    if (isSortNonDefault) count++;
     return count;
   }
 
@@ -105,6 +121,11 @@ class LibraryFilterNotifier extends StateNotifier<LibraryFilterState> {
   Future<void> setSortOption(AlbumSortOption option) async {
     state = state.copyWith(sortOption: option);
     await _prefs.setInt(_sortOptionKey, option.index);
+  }
+
+  /// Reset sort to the default option.
+  Future<void> resetSortToDefault() async {
+    await setSortOption(defaultSortOption);
   }
 
   /// Toggle a genre filter.
@@ -182,14 +203,29 @@ final hasActiveFiltersProvider = Provider<bool>((ref) {
   return ref.watch(libraryFilterProvider).hasActiveFilters;
 });
 
+/// Provider that returns true if any filters or non-default sort is active.
+final hasAnyActiveProvider = Provider<bool>((ref) {
+  return ref.watch(libraryFilterProvider).hasAnyActive;
+});
+
 /// Provider that returns the count of active filters.
 final activeFilterCountProvider = Provider<int>((ref) {
   return ref.watch(libraryFilterProvider).activeFilterCount;
 });
 
+/// Provider that returns the total count (filters + sort if non-default).
+final totalActiveCountProvider = Provider<int>((ref) {
+  return ref.watch(libraryFilterProvider).totalActiveCount;
+});
+
 /// Provider for the current sort option.
 final currentSortOptionProvider = Provider<AlbumSortOption>((ref) {
   return ref.watch(libraryFilterProvider).sortOption;
+});
+
+/// Provider that returns true if sort differs from default.
+final isSortNonDefaultProvider = Provider<bool>((ref) {
+  return ref.watch(libraryFilterProvider).isSortNonDefault;
 });
 
 /// Provider for available decades based on library content.
@@ -217,11 +253,12 @@ final availableGenresProvider = Provider<List<String>>((ref) {
 ///
 /// This provider watches the filter state and updates the album provider's
 /// sort and filter settings. It should be watched by the library screen.
+///
+/// Note: We use ref.listen() to properly handle state updates after the
+/// provider is built, avoiding mutations during the build phase.
 final filterSyncProvider = Provider<void>((ref) {
-  final filterState = ref.watch(libraryFilterProvider);
-
-  // Update the album provider's sort and filter settings
-  ref.read(currentAlbumSortProvider.notifier).state = filterState.sortOption;
-  ref.read(currentAlbumFiltersProvider.notifier).state =
-      filterState.toAlbumFilters();
+  ref.listen<LibraryFilterState>(libraryFilterProvider, (previous, next) {
+    ref.read(currentAlbumSortProvider.notifier).state = next.sortOption;
+    ref.read(currentAlbumFiltersProvider.notifier).state = next.toAlbumFilters();
+  }, fireImmediately: true);
 });

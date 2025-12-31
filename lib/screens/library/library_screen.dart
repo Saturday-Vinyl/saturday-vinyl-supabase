@@ -15,7 +15,6 @@ import 'package:saturday_consumer_app/widgets/library/album_list.dart';
 import 'package:saturday_consumer_app/widgets/library/album_quick_actions.dart';
 import 'package:saturday_consumer_app/widgets/library/filter_bar.dart';
 import 'package:saturday_consumer_app/widgets/library/filter_bottom_sheet.dart';
-import 'package:saturday_consumer_app/widgets/library/sort_dropdown.dart';
 import 'package:saturday_consumer_app/widgets/library/view_toggle.dart';
 
 /// Library screen - shows the user's vinyl collection.
@@ -83,11 +82,8 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            // Sort/view toolbar
-            _buildToolbar(context, ref, filterState, viewMode),
-
-            // Filter bar (shows when filters are active or always visible)
-            _buildFilterBar(context, ref, filterState),
+            // Unified filter bar with sort, filters, and view toggle
+            _buildFilterBar(context, ref, filterState, viewMode),
 
             const Divider(height: 1),
 
@@ -186,64 +182,53 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     );
   }
 
-  /// Build the toolbar with sort options and view toggle.
-  Widget _buildToolbar(
+  /// Build the unified filter bar with sort, filters, and view toggle.
+  Widget _buildFilterBar(
     BuildContext context,
     WidgetRef ref,
     LibraryFilterState filterState,
     LibraryViewMode viewMode,
   ) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(
-        horizontal: Spacing.sm,
-        vertical: Spacing.xs,
-      ),
-      child: Row(
-        children: [
-          // Sort dropdown
-          SortDropdown(
+    return Row(
+      children: [
+        // Filter bar (takes remaining space)
+        Expanded(
+          child: FilterBar(
+            selectedGenres: filterState.selectedGenres,
+            selectedDecades: filterState.selectedDecades,
+            favoritesOnly: filterState.favoritesOnly,
             currentSort: filterState.sortOption,
-            onSortChanged: (sort) {
-              ref.read(libraryFilterProvider.notifier).setSortOption(sort);
+            isSortNonDefault: filterState.isSortNonDefault,
+            totalActiveCount: filterState.totalActiveCount,
+            onGenreRemoved: (genre) {
+              ref.read(libraryFilterProvider.notifier).toggleGenre(genre);
             },
+            onDecadeRemoved: (decade) {
+              ref.read(libraryFilterProvider.notifier).toggleDecade(decade);
+            },
+            onFavoritesToggled: () {
+              ref.read(libraryFilterProvider.notifier).toggleFavoritesOnly();
+            },
+            onSortReset: () {
+              ref.read(libraryFilterProvider.notifier).resetSortToDefault();
+            },
+            onClearAll: () {
+              ref.read(libraryFilterProvider.notifier).resetAll();
+            },
+            onFilterTap: () => _showFilterSheet(context, ref),
           ),
-          const Spacer(),
-          // View toggle
-          ViewToggleIconButton(
+        ),
+        // View toggle on the right
+        Padding(
+          padding: const EdgeInsets.only(right: Spacing.sm),
+          child: ViewToggleIconButton(
             currentMode: viewMode,
             onModeChanged: (mode) {
               ref.read(libraryViewModeProvider.notifier).setViewMode(mode);
             },
           ),
-        ],
-      ),
-    );
-  }
-
-  /// Build the filter bar with active filter chips.
-  Widget _buildFilterBar(
-    BuildContext context,
-    WidgetRef ref,
-    LibraryFilterState filterState,
-  ) {
-    return FilterBar(
-      selectedGenres: filterState.selectedGenres,
-      selectedDecades: filterState.selectedDecades,
-      favoritesOnly: filterState.favoritesOnly,
-      activeFilterCount: filterState.activeFilterCount,
-      onGenreRemoved: (genre) {
-        ref.read(libraryFilterProvider.notifier).toggleGenre(genre);
-      },
-      onDecadeRemoved: (decade) {
-        ref.read(libraryFilterProvider.notifier).toggleDecade(decade);
-      },
-      onFavoritesToggled: () {
-        ref.read(libraryFilterProvider.notifier).toggleFavoritesOnly();
-      },
-      onClearAll: () {
-        ref.read(libraryFilterProvider.notifier).clearFilters();
-      },
-      onFilterTap: () => _showFilterSheet(context, ref),
+        ),
+      ],
     );
   }
 
