@@ -180,18 +180,17 @@ The project uses `sdkconfig.defaults` to set sensible defaults. Key settings:
 
 ## Current Status
 
-**Phase 0: Project Setup** - Complete
+**Phase 1: Hardware Bring-Up** - Complete
 
-The project structure is in place with:
-- ESP-IDF project skeleton
-- Component placeholders
-- LED blink test in main.c
-- OTA-capable partition table
+All hardware peripherals have been validated and are functional:
+- RGB LED with PWM control and pattern generation
+- Button with debounced input and press duration detection
+- RFID module UART communication
 
 ### Phase Checklist
 
 - [x] Phase 0: Project Setup
-- [ ] Phase 1: Hardware Bring-Up
+- [x] Phase 1: Hardware Bring-Up
 - [ ] Phase 2: RFID Detection
 - [ ] Phase 3: Now Playing Logic
 - [ ] Phase 4: Wi-Fi Connectivity
@@ -204,6 +203,136 @@ The project structure is in place with:
 - [ ] Phase 11: OTA Updates
 - [ ] Phase 12: Hardening
 - [ ] Phase 13: Production Ready
+
+## Component API Reference
+
+### LED Manager (`components/ui/led_manager.c`)
+
+PWM-based RGB LED control with pattern support.
+
+**Features:**
+- 8-bit PWM resolution at 5kHz (smooth, flicker-free)
+- Color presets: OFF, RED, GREEN, BLUE, YELLOW, CYAN, MAGENTA, WHITE, ORANGE
+- Patterns: SOLID, BLINK_SLOW (1Hz), BLINK_FAST (2Hz), PULSE, FLASH
+- Brightness control (0-255)
+- Thread-safe with mutex protection
+- Background task for pattern generation
+
+**Usage:**
+```c
+#include "led_manager.h"
+
+led_init();
+led_set_state(LED_COLOR_GREEN, LED_PATTERN_SOLID, 0);
+led_set_brightness(128);  // 50% brightness
+led_flash(LED_COLOR_BLUE, 200);  // Brief 200ms flash
+```
+
+**Hardware Notes:**
+- Assumes common-anode RGB LED (active low)
+- GPIOs 8 (R), 9 (G), 10 (B)
+
+### Button Handler (`components/ui/button_handler.c`)
+
+Debounced button input with press duration classification.
+
+**Features:**
+- 50ms software debounce
+- Press duration detection:
+  - SHORT: < 500ms
+  - LONG: 3-5 seconds (for entering provisioning mode)
+  - FACTORY: > 10 seconds (for factory reset)
+- GPIO interrupt-driven with event queue
+- Callback registration for press events
+
+**Usage:**
+```c
+#include "button_handler.h"
+
+void my_callback(button_press_t press_type) {
+    if (press_type == BUTTON_PRESS_LONG) {
+        // Enter provisioning mode
+    }
+}
+
+button_init();
+button_register_callback(my_callback);
+```
+
+**Hardware Notes:**
+- GPIO18 with internal pull-up enabled
+- Active low (pressed = 0)
+
+### YRM100 RFID Driver (`components/rfid/yrm100_driver.c`)
+
+UART communication with the YRM100 UHF RFID module.
+
+**Features:**
+- Binary frame protocol with checksum validation
+- Module enable/disable control
+- Commands implemented:
+  - Get firmware version
+  - Get/Set RF power (0-30 dBm)
+  - Single poll for tags
+  - Start/Stop continuous polling
+- Thread-safe UART access
+- Raw send/receive for debugging
+
+**Usage:**
+```c
+#include "yrm100_driver.h"
+
+yrm100_init();
+yrm100_enable(true);
+
+char version[32];
+yrm100_get_firmware_version(version, sizeof(version));
+
+yrm100_set_rf_power(10);  // 10 dBm
+
+esp_err_t ret = yrm100_single_poll();
+if (ret == ESP_OK) {
+    // Tag detected
+}
+```
+
+**Hardware Notes:**
+- UART1: GPIO4 (TX), GPIO5 (RX), 115200 baud 8N1
+- GPIO6: Enable pin (active high)
+- Allow 100ms after enabling before sending commands
+
+**Frame Format:**
+```
+[0xBB] [Type] [Cmd] [PL_MSB] [PL_LSB] [Params...] [Checksum] [0x7E]
+```
+
+## Testing Phase 1 Components
+
+When the firmware boots, it:
+1. Displays a white pulsing LED during initialization
+2. Switches to solid green when ready
+3. Starts RFID polling every 2 seconds
+
+**Button Test:**
+- Short press: Cycles through LED colors
+- Long press (3-5s): Blue slow blink (provisioning demo)
+- Very long press (>10s): Red fast blink (factory reset demo)
+
+**RFID Test:**
+- Firmware version is queried on startup
+- Green flash when tag is detected
+- Orange flash if module doesn't respond (check wiring)
+
+**Expected Console Output:**
+```
+I (xxx) SV_HUB: Saturday Vinyl Hub Firmware v0.1.0
+I (xxx) SV_HUB: Phase 1: Hardware Bring-Up
+I (xxx) LED_MGR: LED manager initialized successfully
+I (xxx) BUTTON: Button handler initialized successfully
+I (xxx) YRM100: YRM100 driver initialized successfully
+I (xxx) YRM100: YRM100 module enabled
+I (xxx) YRM100: Firmware version: ...
+```
 
 ## Troubleshooting
 

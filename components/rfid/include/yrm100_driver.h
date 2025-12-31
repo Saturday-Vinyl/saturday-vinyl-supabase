@@ -79,6 +79,25 @@ esp_err_t yrm100_stop_polling(void);
  */
 esp_err_t yrm100_single_poll(void);
 
+/**
+ * @brief Send raw bytes to RFID module (for testing/debugging)
+ *
+ * @param data Data to send
+ * @param len Length of data
+ * @return ESP_OK on success
+ */
+esp_err_t yrm100_send_raw(const uint8_t *data, size_t len);
+
+/**
+ * @brief Receive raw bytes from RFID module (for testing/debugging)
+ *
+ * @param buf Buffer to store received data
+ * @param max_len Maximum buffer size
+ * @param timeout_ms Timeout in milliseconds
+ * @return Number of bytes received, or -1 on error
+ */
+int yrm100_receive_raw(uint8_t *buf, size_t max_len, uint32_t timeout_ms);
+
 #ifdef __cplusplus
 }
 #endif

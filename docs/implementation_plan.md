@@ -94,24 +94,32 @@ This document breaks down the hub firmware development into iterative phases. Ea
 
 **Goal:** Validate all hardware peripherals work independently.
 
+**Status:** Complete
+
 ### Tasks
 
 #### 1.1 RGB LED Driver
-- [ ] Create `components/ui/led_manager.c`
-- [ ] Configure LEDC PWM for RGB channels (GPIO8, GPIO9, GPIO10)
-- [ ] Implement basic functions:
+- [x] Create `components/ui/led_manager.c`
+- [x] Configure LEDC PWM for RGB channels (GPIO8, GPIO9, GPIO10)
+- [x] Implement basic functions:
   ```c
   void led_init(void);
   void led_set_color(uint8_t r, uint8_t g, uint8_t b);
   void led_set_brightness(uint8_t brightness);
   ```
-- [ ] Test: Cycle through colors (red → green → blue → white)
+- [x] Test: Cycle through colors (red → green → blue → white)
+
+**Implementation Notes:**
+- PWM at 5kHz with 8-bit resolution for smooth dimming
+- Pattern support: SOLID, BLINK_SLOW, BLINK_FAST, PULSE, FLASH
+- Background FreeRTOS task handles pattern generation
+- Thread-safe with mutex protection
 
 #### 1.2 Button Input
-- [ ] Create `components/ui/button_handler.c`
-- [ ] Configure GPIO18 as input with internal pull-up
-- [ ] Implement debounced button reading (50ms debounce)
-- [ ] Implement press duration detection:
+- [x] Create `components/ui/button_handler.c`
+- [x] Configure GPIO18 as input with internal pull-up
+- [x] Implement debounced button reading (50ms debounce)
+- [x] Implement press duration detection:
   ```c
   typedef enum {
       BUTTON_PRESS_SHORT,    // < 500ms
@@ -119,23 +127,34 @@ This document breaks down the hub firmware development into iterative phases. Ea
       BUTTON_PRESS_FACTORY,  // > 10 seconds
   } button_press_t;
   ```
-- [ ] Test: Press button, log detected press type, change LED color
+- [x] Test: Press button, log detected press type, change LED color
+
+**Implementation Notes:**
+- GPIO interrupt-driven (ANYEDGE) with event queue to task
+- Duration thresholds logged when crossed (for user feedback)
+- Callback registration for application handling
 
 #### 1.3 UART for RFID Module
-- [ ] Configure UART1 (GPIO4 TX, GPIO5 RX) at 115200 baud
-- [ ] Configure GPIO6 as RFID enable pin
-- [ ] Implement basic send/receive functions:
+- [x] Configure UART1 (GPIO4 TX, GPIO5 RX) at 115200 baud
+- [x] Configure GPIO6 as RFID enable pin
+- [x] Implement basic send/receive functions:
   ```c
   void rfid_uart_init(void);
   void rfid_enable(bool enable);
   int rfid_send(const uint8_t *data, size_t len);
   int rfid_receive(uint8_t *buf, size_t max_len, uint32_t timeout_ms);
   ```
-- [ ] Test: Send `GetRfPower` command, verify response received
+- [x] Test: Send `GetRfPower` command, verify response received
+
+**Implementation Notes:**
+- Full frame protocol implemented (build, parse, checksum)
+- Commands: GetFirmwareVersion, Get/SetRfPower, Single/MultiplePoll
+- Raw send/receive functions available for debugging
+- Thread-safe UART access with mutex
 
 #### 1.4 USB Serial Console
-- [ ] Verify UART0 works for debug output (should work by default)
-- [ ] Test printf/ESP_LOG output at various log levels
+- [x] Verify UART0 works for debug output (should work by default)
+- [x] Test printf/ESP_LOG output at various log levels
 
 ### Deliverables
 - LED shows any color via function call
