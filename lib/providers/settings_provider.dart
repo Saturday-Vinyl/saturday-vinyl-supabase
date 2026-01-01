@@ -105,6 +105,64 @@ class PrinterSettingsNotifier
     await updateSettings(updatedSettings);
   }
 
+  /// Update tag label printer
+  Future<void> updateTagLabelPrinter(
+      String? printerId, String? printerName) async {
+    final currentSettings = state.value;
+    if (currentSettings == null) return;
+
+    final updatedSettings = currentSettings.copyWith(
+      tagLabelPrinterId: printerId,
+      tagLabelPrinterName: printerName,
+      clearTagLabelPrinter: printerId == null,
+    );
+
+    await updateSettings(updatedSettings);
+  }
+
+  /// Update tag label size
+  Future<void> updateTagLabelSize(double width, double height) async {
+    final currentSettings = state.value;
+    if (currentSettings == null) return;
+
+    final updatedSettings = currentSettings.copyWith(
+      tagLabelWidth: width,
+      tagLabelHeight: height,
+    );
+
+    await updateSettings(updatedSettings);
+  }
+
+  /// Update tag printer type
+  Future<void> updateTagPrinterType(TagPrinterType type) async {
+    final currentSettings = state.value;
+    if (currentSettings == null) return;
+
+    final updatedSettings = currentSettings.copyWith(
+      tagPrinterType: type,
+    );
+
+    await updateSettings(updatedSettings);
+  }
+
+  /// Update Niimbot printer settings
+  Future<void> updateNiimbotSettings({
+    String? port,
+    int? density,
+    bool clearPort = false,
+  }) async {
+    final currentSettings = state.value;
+    if (currentSettings == null) return;
+
+    final updatedSettings = currentSettings.copyWith(
+      niimbotPort: port,
+      niimbotDensity: density,
+      clearNiimbotPort: clearPort,
+    );
+
+    await updateSettings(updatedSettings);
+  }
+
   /// Reset settings to defaults
   Future<void> resetToDefaults() async {
     try {

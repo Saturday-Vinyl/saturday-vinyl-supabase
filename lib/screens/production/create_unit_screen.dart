@@ -326,7 +326,7 @@ class _CreateUnitScreenState extends ConsumerState<CreateUnitScreen> {
 
       // Generate and print label
       final printerService = PrinterService();
-      final labelData = await printerService.generateQRLabel(
+      final labelData = await printerService.generateUnitLabel(
         unit: _createdUnit!,
         productName: _selectedProduct!.name,
         variantName: _selectedVariant!.name,
@@ -343,7 +343,7 @@ class _CreateUnitScreenState extends ConsumerState<CreateUnitScreen> {
       }
 
       // Print the label with proper dimensions
-      final success = await printerService.printQRLabel(
+      final success = await printerService.printLabel(
         labelData,
         labelWidth: 1.0,  // 1 inch labels
         labelHeight: 1.0,

@@ -34,8 +34,8 @@ void main() {
       validPngData = Uint8List.fromList(img.encodePng(image));
     });
 
-    test('generateQRLabel creates PDF with all required elements', () async {
-      final labelData = await printerService.generateQRLabel(
+    test('generateUnitLabel creates PDF with all required elements', () async {
+      final labelData = await printerService.generateUnitLabel(
         unit: testUnit,
         productName: 'Test Product',
         variantName: 'Test Variant',
@@ -51,8 +51,8 @@ void main() {
       expect(pdfHeader, equals('%PDF'));
     });
 
-    test('generateQRLabel includes customer info when available', () async {
-      final labelData = await printerService.generateQRLabel(
+    test('generateUnitLabel includes customer info when available', () async {
+      final labelData = await printerService.generateUnitLabel(
         unit: testUnit,
         productName: 'Test Product',
         variantName: 'Test Variant',
@@ -65,7 +65,7 @@ void main() {
       // Note: These might be compressed in the PDF, so we can't always find them as plain text
     });
 
-    test('generateQRLabel works without customer info', () async {
+    test('generateUnitLabel works without customer info', () async {
       final unitWithoutCustomer = ProductionUnit(
         id: 'test-id',
         uuid: 'test-uuid',
@@ -78,7 +78,7 @@ void main() {
         createdBy: 'test-user',
       );
 
-      final labelData = await printerService.generateQRLabel(
+      final labelData = await printerService.generateUnitLabel(
         unit: unitWithoutCustomer,
         productName: 'Test Product',
         variantName: 'Test Variant',
@@ -108,11 +108,11 @@ void main() {
       // This will be tested through manual testing
     }, skip: 'Requires Flutter bindings and platform channel mocking');
 
-    test('generateQRLabel handles long product names', () async {
+    test('generateUnitLabel handles long product names', () async {
       final longProductName = 'A' * 100; // Very long product name
       final longVariantName = 'B' * 100; // Very long variant name
 
-      final labelData = await printerService.generateQRLabel(
+      final labelData = await printerService.generateUnitLabel(
         unit: testUnit,
         productName: longProductName,
         variantName: longVariantName,
@@ -123,8 +123,8 @@ void main() {
       expect(labelData.isNotEmpty, isTrue);
     });
 
-    test('generateQRLabel handles special characters', () async {
-      final labelData = await printerService.generateQRLabel(
+    test('generateUnitLabel handles special characters', () async {
+      final labelData = await printerService.generateUnitLabel(
         unit: testUnit.copyWith(
           customerName: 'Test & Customer <>"',
           shopifyOrderNumber: 'ORD-123\'456',

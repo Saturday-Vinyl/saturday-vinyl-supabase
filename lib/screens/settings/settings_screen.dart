@@ -12,6 +12,7 @@ import '../../models/app_association.dart';
 import '../../providers/settings_provider.dart';
 import '../../services/printer_service.dart';
 import '../../services/qr_service.dart';
+import '../../services/niimbot/niimbot_printer.dart';
 import '../../repositories/settings_repository.dart';
 import '../../utils/app_logger.dart';
 import '../../widgets/settings/scanner_config_card.dart';
@@ -36,12 +37,27 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _isSaving = false;
   bool _isTesting = false;
 
-  // Form state
+  // Form state - default printer
   String? _selectedPrinterId;
   String? _selectedPrinterName;
   bool _autoPrint = false;
   double _labelWidth = 1.0;
   double _labelHeight = 1.0;
+
+  // Form state - tag label printer
+  String? _selectedTagPrinterId;
+  String? _selectedTagPrinterName;
+  double _tagLabelWidth = 1.0;
+  double _tagLabelHeight = 1.0;
+  bool _isTestingTagPrint = false;
+
+  // Form state - Niimbot printer
+  TagPrinterType _tagPrinterType = TagPrinterType.standard;
+  String? _selectedNiimbotPort;
+  int _niimbotDensity = 3;
+  List<String> _availableSerialPorts = [];
+  bool _isLoadingSerialPorts = false;
+  bool _isTestingNiimbotConnection = false;
 
   // File associations state
   Map<String, AppAssociation> _appAssociations = {};
@@ -63,6 +79,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     _loadPrinters();
     _loadSettings();
     _loadAppAssociations();
+    _loadSerialPorts();
   }
 
   Future<void> _loadPrinters() async {
@@ -106,6 +123,27 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
   }
 
+  Future<void> _loadSerialPorts() async {
+    setState(() => _isLoadingSerialPorts = true);
+
+    try {
+      AppLogger.info('Loading available serial ports...');
+      final ports = NiimbotPrinter.getAvailablePorts();
+      AppLogger.info('Found ${ports.length} serial ports: ${ports.join(", ")}');
+
+      setState(() {
+        _availableSerialPorts = ports;
+        _isLoadingSerialPorts = false;
+      });
+    } catch (e, stackTrace) {
+      AppLogger.error('Error loading serial ports', e, stackTrace);
+      setState(() {
+        _availableSerialPorts = [];
+        _isLoadingSerialPorts = false;
+      });
+    }
+  }
+
   void _loadSettings() {
     final settingsAsync = ref.read(printerSettingsProvider);
     settingsAsync.whenData((settings) {
@@ -115,6 +153,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         _autoPrint = settings.autoPrint;
         _labelWidth = settings.labelWidth;
         _labelHeight = settings.labelHeight;
+        _selectedTagPrinterId = settings.tagLabelPrinterId;
+        _selectedTagPrinterName = settings.tagLabelPrinterName;
+        _tagLabelWidth = settings.tagLabelWidth;
+        _tagLabelHeight = settings.tagLabelHeight;
+        _tagPrinterType = settings.tagPrinterType;
+        _selectedNiimbotPort = settings.niimbotPort;
+        _niimbotDensity = settings.niimbotDensity;
       });
     });
   }
@@ -126,9 +171,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       final newSettings = PrinterSettings(
         defaultPrinterId: _selectedPrinterId,
         defaultPrinterName: _selectedPrinterName,
+        tagLabelPrinterId: _selectedTagPrinterId,
+        tagLabelPrinterName: _selectedTagPrinterName,
         autoPrint: _autoPrint,
         labelWidth: _labelWidth,
         labelHeight: _labelHeight,
+        tagLabelWidth: _tagLabelWidth,
+        tagLabelHeight: _tagLabelHeight,
+        tagPrinterType: _tagPrinterType,
+        niimbotPort: _selectedNiimbotPort,
+        niimbotDensity: _niimbotDensity,
       );
 
       if (!newSettings.isValid()) {
@@ -195,7 +247,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
       // Create test unit data
       AppLogger.info('Generating test label PDF...');
-      final testLabel = await _printerService.generateQRLabel(
+      final testLabel = await _printerService.generateUnitLabel(
         unit: _createTestUnit(),
         productName: 'Test Product',
         variantName: 'Test Variant',
@@ -229,7 +281,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
       // Print the test label with timeout, passing label dimensions
       AppLogger.info('Sending to printer with dimensions: $_labelWidth" x $_labelHeight"...');
-      final success = await _printerService.printQRLabel(
+      final success = await _printerService.printLabel(
         testLabel,
         labelWidth: _labelWidth,
         labelHeight: _labelHeight,
@@ -298,6 +350,169 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       createdAt: now,
       createdBy: 'test',
     );
+  }
+
+  Future<void> _testTagPrint() async {
+    // Use selected tag printer or fall back to default
+    final printerId = _selectedTagPrinterId ?? _selectedPrinterId;
+    if (printerId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please select a printer first')),
+      );
+      return;
+    }
+
+    setState(() => _isTestingTagPrint = true);
+
+    try {
+      AppLogger.info('Starting tag label test print...');
+
+      // Generate a test QR code
+      AppLogger.info('Generating QR code for tag label test...');
+      final qrCode = await _qrService.generateTagQRCode(
+        'TEST-TAG-${DateTime.now().millisecondsSinceEpoch}',
+        size: 512,
+      ).timeout(
+        const Duration(seconds: 5),
+        onTimeout: () {
+          throw TimeoutException('QR code generation timed out');
+        },
+      );
+      AppLogger.info('QR code generated successfully');
+
+      // Generate test tag label
+      AppLogger.info('Generating tag label PDF...');
+      final testLabel = await _printerService.generateTagLabel(
+        qrImageData: qrCode,
+        labelWidth: _tagLabelWidth,
+        labelHeight: _tagLabelHeight,
+      ).timeout(
+        const Duration(seconds: 10),
+        onTimeout: () {
+          throw TimeoutException('Label generation timed out');
+        },
+      );
+      AppLogger.info('Tag label PDF generated (${testLabel.length} bytes)');
+
+      // Find and select the printer
+      AppLogger.info('Finding printer: $printerId');
+      final printer = await _printerService.findPrinterById(printerId);
+      if (printer != null) {
+        AppLogger.info('Selecting printer: ${printer.name}');
+        await _printerService.selectPrinter(printer);
+      } else {
+        throw Exception('Printer not found: $printerId');
+      }
+
+      // Print the test label
+      AppLogger.info('Sending to printer with dimensions: $_tagLabelWidth" x $_tagLabelHeight"...');
+      final success = await _printerService.printLabel(
+        testLabel,
+        labelWidth: _tagLabelWidth,
+        labelHeight: _tagLabelHeight,
+        useTagPrinter: true,
+      ).timeout(
+        const Duration(seconds: 30),
+        onTimeout: () {
+          AppLogger.warning('Print operation timed out after 30 seconds');
+          return false;
+        },
+      );
+      AppLogger.info('Print operation completed: $success');
+
+      setState(() => _isTestingTagPrint = false);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+                success ? 'Tag label sent to printer!' : 'Print failed - check printer connection'),
+            backgroundColor:
+                success ? SaturdayColors.success : SaturdayColors.error,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
+    } on TimeoutException catch (e) {
+      AppLogger.error('Tag print timeout', e);
+      setState(() => _isTestingTagPrint = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Print timeout: ${e.message}\n\nThe printer may be offline or busy.'),
+            backgroundColor: SaturdayColors.error,
+            duration: const Duration(seconds: 7),
+          ),
+        );
+      }
+    } catch (e, stackTrace) {
+      AppLogger.error('Error testing tag print', e, stackTrace);
+      setState(() => _isTestingTagPrint = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error testing print: $e'),
+            backgroundColor: SaturdayColors.error,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _testNiimbotConnection() async {
+    if (_selectedNiimbotPort == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please select a serial port first')),
+      );
+      return;
+    }
+
+    setState(() => _isTestingNiimbotConnection = true);
+
+    try {
+      AppLogger.info('Testing Niimbot connection on $_selectedNiimbotPort...');
+
+      final printer = NiimbotPrinter();
+      final connected = await printer.connect(_selectedNiimbotPort!);
+
+      if (!connected) {
+        throw Exception('Failed to connect to printer');
+      }
+
+      // Try to get battery level as a connection test
+      final battery = await printer.getBatteryLevel();
+      printer.disconnect();
+
+      AppLogger.info('Niimbot connection test successful. Battery: $battery%');
+
+      setState(() => _isTestingNiimbotConnection = false);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              battery != null
+                  ? 'Connected to Niimbot! Battery: $battery%'
+                  : 'Connected to Niimbot!',
+            ),
+            backgroundColor: SaturdayColors.success,
+          ),
+        );
+      }
+    } catch (e, stackTrace) {
+      AppLogger.error('Niimbot connection test failed', e, stackTrace);
+      setState(() => _isTestingNiimbotConnection = false);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Connection failed: $e'),
+            backgroundColor: SaturdayColors.error,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
+    }
   }
 
   // Load app associations from storage
@@ -425,6 +640,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               // Printer Configuration Section (desktop only)
               if (Platform.isMacOS || Platform.isWindows || Platform.isLinux)
                 _buildPrinterConfigurationSection(),
+
+              if (Platform.isMacOS || Platform.isWindows || Platform.isLinux)
+                const SizedBox(height: 32),
+
+              // Tag Label Printer Section (desktop only)
+              if (Platform.isMacOS || Platform.isWindows || Platform.isLinux)
+                _buildTagLabelPrinterSection(),
 
               if (Platform.isMacOS || Platform.isWindows || Platform.isLinux)
                 const SizedBox(height: 32),
@@ -655,6 +877,341 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 ),
               ),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTagLabelPrinterSection() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Tag Label Printer',
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+            ),
+            const SizedBox(height: 4),
+            const Text(
+              'Configure a separate printer for RFID tag labels (optional)',
+              style: TextStyle(
+                fontSize: 14,
+                color: SaturdayColors.secondaryGrey,
+              ),
+            ),
+            const Divider(height: 24),
+
+            // Printer Type Selection
+            const Text(
+              'Printer Type',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 8),
+            SegmentedButton<TagPrinterType>(
+              segments: const [
+                ButtonSegment<TagPrinterType>(
+                  value: TagPrinterType.standard,
+                  label: Text('Standard'),
+                  icon: Icon(Icons.print),
+                ),
+                ButtonSegment<TagPrinterType>(
+                  value: TagPrinterType.niimbot,
+                  label: Text('Niimbot'),
+                  icon: Icon(Icons.usb),
+                ),
+              ],
+              selected: {_tagPrinterType},
+              onSelectionChanged: (Set<TagPrinterType> newSelection) {
+                setState(() {
+                  _tagPrinterType = newSelection.first;
+                });
+              },
+            ),
+
+            const SizedBox(height: 20),
+
+            // Standard Printer Configuration
+            if (_tagPrinterType == TagPrinterType.standard) ...[
+              const Text(
+                'Tag Label Printer',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 8),
+              _isLoadingPrinters
+                  ? const CircularProgressIndicator()
+                  : DropdownButtonFormField<String>(
+                      initialValue: _selectedTagPrinterId,
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                        hintText: 'Use default printer',
+                      ),
+                      items: [
+                        const DropdownMenuItem<String>(
+                          value: null,
+                          child: Text('Use default printer'),
+                        ),
+                        ..._availablePrinters.map((printer) {
+                          return DropdownMenuItem(
+                            value: printer.name,
+                            child: Text(printer.name),
+                          );
+                        }),
+                      ],
+                      onChanged: (value) {
+                        setState(() {
+                          _selectedTagPrinterId = value;
+                          _selectedTagPrinterName = value;
+                        });
+                      },
+                    ),
+
+              const SizedBox(height: 20),
+
+              // Tag Label Size Configuration
+              const Text(
+                'Tag Label Size',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('Width (inches)'),
+                        const SizedBox(height: 4),
+                        TextFormField(
+                          initialValue: _tagLabelWidth.toStringAsFixed(1),
+                          decoration: const InputDecoration(
+                            border: OutlineInputBorder(),
+                            contentPadding: EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 8,
+                            ),
+                          ),
+                          keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true,
+                          ),
+                          onChanged: (value) {
+                            final width = double.tryParse(value);
+                            if (width != null) {
+                              setState(() => _tagLabelWidth = width);
+                            }
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('Height (inches)'),
+                        const SizedBox(height: 4),
+                        TextFormField(
+                          initialValue: _tagLabelHeight.toStringAsFixed(1),
+                          decoration: const InputDecoration(
+                            border: OutlineInputBorder(),
+                            contentPadding: EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 8,
+                            ),
+                          ),
+                          keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true,
+                          ),
+                          onChanged: (value) {
+                            final height = double.tryParse(value);
+                            if (height != null) {
+                              setState(() => _tagLabelHeight = height);
+                            }
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Size for labels printed from Tag Details screen',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: SaturdayColors.secondaryGrey,
+                ),
+              ),
+
+              const SizedBox(height: 24),
+
+              // Test Tag Print Button
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: _isTestingTagPrint ? null : _testTagPrint,
+                  icon: _isTestingTagPrint
+                      ? const SizedBox(
+                          height: 16,
+                          width: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.print),
+                  label: Text(_isTestingTagPrint ? 'Printing...' : 'Test Tag Label Print'),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                ),
+              ),
+            ],
+
+            // Niimbot Printer Configuration
+            if (_tagPrinterType == TagPrinterType.niimbot) ...[
+              const Text(
+                'USB Serial Port',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: _isLoadingSerialPorts
+                        ? const CircularProgressIndicator()
+                        : DropdownButtonFormField<String>(
+                            initialValue: _selectedNiimbotPort,
+                            decoration: const InputDecoration(
+                              border: OutlineInputBorder(),
+                              contentPadding: EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 8,
+                              ),
+                              hintText: 'Select serial port',
+                            ),
+                            items: [
+                              const DropdownMenuItem<String>(
+                                value: null,
+                                child: Text('Select serial port'),
+                              ),
+                              ..._availableSerialPorts.map((port) {
+                                return DropdownMenuItem(
+                                  value: port,
+                                  child: Text(port),
+                                );
+                              }),
+                            ],
+                            onChanged: (value) {
+                              setState(() {
+                                _selectedNiimbotPort = value;
+                              });
+                            },
+                          ),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton(
+                    icon: const Icon(Icons.refresh),
+                    onPressed: _loadSerialPorts,
+                    tooltip: 'Refresh ports',
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Connect your Niimbot printer via USB and select the serial port (e.g., /dev/cu.usbmodem...)',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: SaturdayColors.secondaryGrey,
+                ),
+              ),
+
+              const SizedBox(height: 20),
+
+              // Print Density
+              const Text(
+                'Print Density',
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: Slider(
+                      value: _niimbotDensity.toDouble(),
+                      min: 1,
+                      max: 5,
+                      divisions: 4,
+                      label: _niimbotDensity.toString(),
+                      onChanged: (value) {
+                        setState(() {
+                          _niimbotDensity = value.round();
+                        });
+                      },
+                    ),
+                  ),
+                  SizedBox(
+                    width: 40,
+                    child: Text(
+                      '$_niimbotDensity',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ],
+              ),
+              const Text(
+                '1 = Light, 5 = Dark (default: 3)',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: SaturdayColors.secondaryGrey,
+                ),
+              ),
+
+              const SizedBox(height: 24),
+
+              // Test Connection Button
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: _isTestingNiimbotConnection ? null : _testNiimbotConnection,
+                  icon: _isTestingNiimbotConnection
+                      ? const SizedBox(
+                          height: 16,
+                          width: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.cable),
+                  label: Text(_isTestingNiimbotConnection ? 'Testing...' : 'Test Connection'),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
       ),

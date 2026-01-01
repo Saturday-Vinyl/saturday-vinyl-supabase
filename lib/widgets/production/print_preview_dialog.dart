@@ -78,7 +78,7 @@ class _PrintPreviewDialogState extends ConsumerState<PrintPreviewDialog> {
 
   Future<void> _generateLabel() async {
     try {
-      final labelData = await _printerService.generateQRLabel(
+      final labelData = await _printerService.generateUnitLabel(
         unit: widget.unit,
         productName: widget.productName,
         variantName: widget.variantName,
@@ -110,7 +110,7 @@ class _PrintPreviewDialogState extends ConsumerState<PrintPreviewDialog> {
         await _printerService.selectPrinter(_selectedPrinter!);
       }
 
-      final success = await _printerService.printQRLabel(
+      final success = await _printerService.printLabel(
         _labelData!,
         labelWidth: 1.0,  // 1 inch labels
         labelHeight: 1.0,

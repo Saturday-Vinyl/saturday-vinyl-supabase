@@ -157,7 +157,7 @@ class _CompleteStepScreenState extends ConsumerState<CompleteStepScreen> {
           );
 
           // Print to configured printer with proper dimensions
-          final success = await printerService.printQRLabel(
+          final success = await printerService.printLabel(
             labelData,
             labelWidth: 1.0,  // 1 inch labels
             labelHeight: 1.0,

@@ -1,10 +1,14 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:saturday_app/config/theme.dart';
+import 'package:saturday_app/models/printer_settings.dart';
 import 'package:saturday_app/models/rfid_tag.dart';
 import 'package:saturday_app/providers/rfid_tag_provider.dart';
+import 'package:saturday_app/services/printer_service.dart';
 import 'package:saturday_app/services/qr_service.dart';
 import 'package:saturday_app/widgets/tags/tag_status_badge.dart';
 
@@ -46,9 +50,11 @@ class _TagDetailScreenState extends ConsumerState<TagDetailScreen> {
   bool _isRetiring = false;
   bool _isSavingQR = false;
   bool _isGeneratingQR = false;
+  bool _isPrintingLabel = false;
   Uint8List? _qrCodeData;
   String? _lastGeneratedEpc;
   final _qrService = QRService();
+  final _printerService = PrinterService();
 
   @override
   Widget build(BuildContext context) {
@@ -186,26 +192,53 @@ class _TagDetailScreenState extends ConsumerState<TagDetailScreen> {
                     ),
                     TagStatusBadge(status: tag.status),
                     const SizedBox(height: 8),
-                    // Save QR button
+                    // Save QR and Print buttons
                     if (_qrCodeData != null)
-                      TextButton.icon(
-                        onPressed: _isSavingQR ? null : () => _saveQRCode(tag),
-                        icon: _isSavingQR
-                            ? const SizedBox(
-                                width: 14,
-                                height: 14,
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : const Icon(Icons.save_alt, size: 16),
-                        label: Text(
-                          _isSavingQR ? 'Saving...' : 'Save QR Code',
-                          style: const TextStyle(fontSize: 13),
-                        ),
-                        style: TextButton.styleFrom(
-                          padding: EdgeInsets.zero,
-                          minimumSize: Size.zero,
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        ),
+                      Wrap(
+                        spacing: 16,
+                        runSpacing: 8,
+                        children: [
+                          TextButton.icon(
+                            onPressed: _isSavingQR ? null : () => _saveQRCode(tag),
+                            icon: _isSavingQR
+                                ? const SizedBox(
+                                    width: 14,
+                                    height: 14,
+                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                  )
+                                : const Icon(Icons.save_alt, size: 16),
+                            label: Text(
+                              _isSavingQR ? 'Saving...' : 'Save QR Code',
+                              style: const TextStyle(fontSize: 13),
+                            ),
+                            style: TextButton.styleFrom(
+                              padding: EdgeInsets.zero,
+                              minimumSize: Size.zero,
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            ),
+                          ),
+                          // Print Label button (desktop only)
+                          if (Platform.isMacOS || Platform.isWindows || Platform.isLinux)
+                            TextButton.icon(
+                              onPressed: _isPrintingLabel ? null : () => _printTagLabel(tag),
+                              icon: _isPrintingLabel
+                                  ? const SizedBox(
+                                      width: 14,
+                                      height: 14,
+                                      child: CircularProgressIndicator(strokeWidth: 2),
+                                    )
+                                  : const Icon(Icons.print, size: 16),
+                              label: Text(
+                                _isPrintingLabel ? 'Printing...' : 'Print Label',
+                                style: const TextStyle(fontSize: 13),
+                              ),
+                              style: TextButton.styleFrom(
+                                padding: EdgeInsets.zero,
+                                minimumSize: Size.zero,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                            ),
+                        ],
                       ),
                   ],
                 ),
@@ -495,6 +528,60 @@ class _TagDetailScreenState extends ConsumerState<TagDetailScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Failed to save QR code: $e'),
+            backgroundColor: SaturdayColors.error,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _printTagLabel(RfidTag tag) async {
+    if (_qrCodeData == null) return;
+
+    setState(() => _isPrintingLabel = true);
+
+    try {
+      // Load printer settings
+      await _printerService.loadSettings();
+
+      final settings = _printerService.getSettings();
+      bool success;
+
+      // Check if using Niimbot printer - send raw QR image directly
+      if (settings?.tagPrinterType == TagPrinterType.niimbot) {
+        success = await _printerService.printTagLabelToNiimbot(_qrCodeData!);
+      } else {
+        // Standard printer - generate PDF label first
+        final labelData = await _printerService.generateTagLabel(
+          qrImageData: _qrCodeData!,
+        );
+
+        // Print using tag printer (falls back to default if not configured)
+        success = await _printerService.printLabel(
+          labelData,
+          useTagPrinter: true,
+        );
+      }
+
+      if (mounted) {
+        setState(() => _isPrintingLabel = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              success
+                  ? 'Label sent to printer'
+                  : 'Print failed - check printer settings',
+            ),
+            backgroundColor: success ? SaturdayColors.success : SaturdayColors.error,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isPrintingLabel = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to print label: $e'),
             backgroundColor: SaturdayColors.error,
           ),
         );

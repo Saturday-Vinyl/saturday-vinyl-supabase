@@ -6,6 +6,7 @@ The Saturday! Admin App includes a comprehensive label printing system designed 
 
 1. **Unit Creation Labels** - Generated when a production unit is first created
 2. **Step-Specific Labels** - Generated during production when completing specific steps
+3. **Tag Labels** - Generated from the Tag Details screen for RFID tags (QR code only)
 
 This document focuses on the step-specific label printing feature, which **supports multiple labels per production step**. For example, a "CNC Machine Sides" step can generate two separate labels: one for "LEFT SIDE" and one for "RIGHT SIDE".
 
@@ -356,6 +357,96 @@ Future<void> _printAllStepLabels() async {
 - Success/failure tracking per label
 - User-friendly summary messages
 - Proper error handling
+
+---
+
+## Tag Label Printing
+
+### Overview
+
+Tag labels are printed from the **Tag Details** screen (drawer/modal). These labels contain only a QR code - no text - since all tag information is encoded in the QR code URL.
+
+### Configuration
+
+Tag labels support a **dedicated printer** separate from the production label printer. This allows you to use different printers for:
+- Production labels (unit creation, step completion)
+- Tag labels (RFID tag QR codes)
+
+**Settings Screen Configuration:**
+
+1. Navigate to Settings
+2. Find "Tag Label Printer" section
+3. Select a printer from the dropdown (or leave as "Use default printer")
+4. Configure tag label size (width and height in inches)
+5. Click "Test Tag Label Print" to verify
+6. Click "Save Settings"
+
+### PrinterSettings Fields
+
+```dart
+// Tag label printer (separate from default)
+final String? tagLabelPrinterId;
+final String? tagLabelPrinterName;
+
+// Tag label size
+final double tagLabelWidth;  // default: 1.0"
+final double tagLabelHeight; // default: 1.0"
+```
+
+### PrinterService Methods
+
+```dart
+// Generate a tag label (QR code only, centered)
+Future<Uint8List> generateTagLabel({
+  required Uint8List qrImageData,
+  double? labelWidth,
+  double? labelHeight,
+});
+
+// Print label with optional tag printer routing
+Future<bool> printLabel(
+  Uint8List labelData, {
+  double? labelWidth,
+  double? labelHeight,
+  bool useTagPrinter = false,  // Routes to tag printer
+});
+```
+
+### Tag Detail Screen
+
+The Tag Details drawer shows a "Print Label" button next to "Save QR Code" when:
+- The app is running on a desktop platform (macOS, Windows, Linux)
+- A QR code has been generated for the tag
+
+**Printing Flow:**
+1. User opens Tag Details drawer
+2. QR code is generated automatically
+3. User clicks "Print Label" button
+4. Label is generated using `generateTagLabel()`
+5. Label is printed using `printLabel(useTagPrinter: true)`
+6. Success/failure message is displayed
+
+### Label Layout
+
+Tag labels contain only the QR code, centered and sized to fill the label:
+
+```
+┌─────────────┐
+│             │
+│             │
+│  [QR CODE]  │  ← Centered, fills available space
+│             │
+│             │
+└─────────────┘
+```
+
+The QR code is sized to fit the label with small margins (4 points on each side).
+
+### Fallback Behavior
+
+If no tag label printer is configured:
+- The default production printer is used
+- Tag label size settings are still respected
 
 ---
 
@@ -870,6 +961,16 @@ Future<void> deleteLabelsForStep(String stepId);
 ### PrinterService Methods
 
 ```dart
+// Generate unit creation label
+Future<Uint8List> generateUnitLabel({
+  required ProductionUnit unit,
+  required String productName,
+  required String variantName,
+  required Uint8List qrImageData,
+  double? labelWidth,
+  double? labelHeight,
+});
+
 // Generate step-specific label
 Future<Uint8List> generateStepLabel({
   required ProductionUnit unit,
@@ -881,8 +982,21 @@ Future<Uint8List> generateStepLabel({
   double? labelHeight,
 });
 
+// Generate tag label (QR code only)
+Future<Uint8List> generateTagLabel({
+  required Uint8List qrImageData,
+  double? labelWidth,
+  double? labelHeight,
+});
+
 // Print label to configured printer
-Future<bool> printQRLabel(Uint8List labelData);
+// Set useTagPrinter=true to route to tag label printer
+Future<bool> printLabel(
+  Uint8List labelData, {
+  double? labelWidth,
+  double? labelHeight,
+  bool useTagPrinter = false,
+});
 ```
 
 ### Riverpod Providers
