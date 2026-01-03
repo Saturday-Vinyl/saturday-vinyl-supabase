@@ -151,14 +151,12 @@ The ESP32-C6 was selected for its native support of all required wireless protoc
 | GPIO4 | UART1_RX | RFID module TX (hub receives) |
 | GPIO5 | UART1_TX | RFID module RX (hub transmits) |
 | GPIO6 | RFID_EN | RFID module enable (active high) |
-| GPIO8 | LED_R | RGB LED - Red (PWM) |
-| GPIO9 | LED_G | RGB LED - Green (PWM) |
-| GPIO10 | LED_B | RGB LED - Blue (PWM) |
+| GPIO8 | WS2812_DATA | Addressable RGB LED (RMT) - strapping pin |
+| GPIO12 | USB_D- | USB-C data minus |
+| GPIO13 | USB_D+ | USB-C data plus |
 | GPIO18 | BUTTON | Multi-purpose button (active low, internal pull-up) |
-| GPIO19 | USB_D- | USB-C data minus |
-| GPIO20 | USB_D+ | USB-C data plus |
 
-*Note: Pin assignments are preliminary and subject to change during hardware design.*
+*Note: GPIO8 is a strapping pin; the DevKit includes proper pull resistors. GPIO9 and GPIO10 are available for future expansion.*
 
 ### YRM100 UHF RFID Module
 
@@ -185,17 +183,19 @@ The YRM100 module handles all RFID operations for "Now Playing" detection.
 │  ┌───┐ ┌───┐ ┌───┐ ┌───┐ ┌───┐     │
 │  │ 1 │ │ 2 │ │ 3 │ │ 4 │ │ 5 │     │
 │  └───┘ └───┘ └───┘ └───┘ └───┘     │
-│  GND   VCC   TX    RX    EN        │
+│  GND   EN    RXD   TXD   VCC       │
 └─────────────────────────────────────┘
 ```
 
 | Pin | Name | Connection |
 |-----|------|------------|
 | 1 | GND | Ground |
-| 2 | VCC | 3.3V |
-| 3 | TX | ESP32-C6 GPIO4 (UART1_RX) |
-| 4 | RX | ESP32-C6 GPIO5 (UART1_TX) |
-| 5 | EN | ESP32-C6 GPIO6 |
+| 2 | EN | ESP32-C6 GPIO6 (active HIGH, >1.5V) |
+| 3 | RXD | ESP32-C6 GPIO5 (UART1_TX) |
+| 4 | TXD | ESP32-C6 GPIO4 (UART1_RX) |
+| 5 | VCC | 5V (from USB) |
+
+*Note: The YRM100 requires 3-5V power and draws up to 260mA peak current during RF transmission.*
 
 ### Power
 
@@ -210,8 +210,8 @@ The YRM100 module handles all RFID operations for "Now Playing" detection.
 | Component | Interface | Purpose |
 |-----------|-----------|---------|
 | YRM100 RFID | UART1 | Now Playing detection |
-| RGB LED | GPIO (PWM) | Status indication |
-| Button | GPIO (input) | User interaction |
+| WS2812 RGB LED | GPIO8 (RMT) | Status indication |
+| Button | GPIO18 (input) | User interaction |
 | USB-C | USB | Power + serial console |
 
 ---
@@ -775,16 +775,38 @@ Hub → Host: {"status": "provisioned", "hub_id": "HUB-XXXX"}
 
 ### LED Implementation
 
-The LED uses PWM for smooth transitions and brightness control:
+The hub uses an onboard WS2812 addressable RGB LED connected to GPIO8, driven via the
+ESP-IDF RMT peripheral and `led_strip` component.
 
 ```c
+#include "led_strip.h"
+
+// LED state structure
 typedef struct {
-    uint8_t r, g, b;      // Color (0-255)
+    uint8_t r, g, b;       // Color (0-255)
     uint8_t brightness;    // Overall brightness (0-255)
     led_pattern_t pattern; // Solid, blink, pulse
     uint16_t period_ms;    // Pattern period
 } led_state_t;
+
+// Initialize WS2812
+led_strip_handle_t led_strip;
+led_strip_config_t strip_config = {
+    .strip_gpio_num = 8,
+    .max_leds = 1,
+};
+led_strip_rmt_config_t rmt_config = {
+    .resolution_hz = 10 * 1000 * 1000,  // 10 MHz
+};
+led_strip_new_rmt_device(&strip_config, &rmt_config, &led_strip);
+
+// Set color
+led_strip_set_pixel(led_strip, 0, r, g, b);
+led_strip_refresh(led_strip);
 ```
+
+**Note:** GPIO8 is a strapping pin. The ESP32-C6-DevKitC-1 includes the required pull
+resistors. For production PCBs, follow Espressif's reference design (R6: 3.3kΩ, R29: 10kΩ).
 
 ### Button Actions
 

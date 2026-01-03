@@ -61,3 +61,23 @@ coverage.xml
 # Debug
 core
 core.*
+
+# Fusion/EAGLE temporary and backup files
+*.s#?
+*.b#?
+*.l#?
+*.pro
+*.job
+*.dru
+*.gpi
+*.gto
+*.gts
+*.gtl
+*.gbl
+*.gbs
+*.gbo
+*.gtp
+*.gbp
+*.gm1
+*.drl
+*.xln
