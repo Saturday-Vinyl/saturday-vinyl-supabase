@@ -20,6 +20,11 @@
  * - ESP-IDF event loop integration
  * - LED feedback for Now Playing state
  * - Configurable debounce timing via NVS
+ *
+ * Phase 4: Wi-Fi Connectivity
+ * - Wi-Fi station mode with auto-reconnect
+ * - HTTPS client with TLS certificate bundle
+ * - LED feedback for connection state
  */
 
 #include <stdio.h>
@@ -38,8 +43,16 @@
 #include "rfid_protocol.h"
 #include "now_playing.h"
 #include "config_store.h"
+#include "wifi_manager.h"
+#include "http_client.h"
 
 static const char *TAG = "SV_HUB";
+
+/* Track Wi-Fi connection state for LED updates */
+static bool s_wifi_connected = false;
+
+/* Flag to trigger connectivity test from main loop (avoid stack overflow in event handler) */
+static bool s_test_connectivity_pending = false;
 
 /* Track if a Saturday tag was detected in the current poll cycle */
 static bool s_saturday_tag_detected_this_poll = false;
@@ -284,6 +297,111 @@ static esp_err_t start_rfid_polling(void)
 }
 
 /*******************************************************************************
+ * Wi-Fi Event Handler (Phase 4)
+ ******************************************************************************/
+
+/**
+ * @brief Handler for Wi-Fi manager events
+ *
+ * Updates LED to reflect Wi-Fi connection state.
+ */
+static void on_wifi_event(void *handler_args, esp_event_base_t base,
+                          int32_t event_id, void *event_data)
+{
+    switch (event_id) {
+        case WIFI_MANAGER_EVENT_CONNECTED: {
+            wifi_connection_info_t *info = (wifi_connection_info_t *)event_data;
+            s_wifi_connected = true;
+            ESP_LOGI(TAG, "Wi-Fi connected: %s (RSSI: %d dBm)", info->ssid, info->rssi);
+
+            /* Flash cyan to indicate connection, then return to normal */
+            led_flash(LED_COLOR_CYAN, 500);
+
+            /* Set LED to idle state (dim green) */
+            led_set_state(LED_COLOR_GREEN, LED_PATTERN_SOLID, 0);
+            led_set_brightness(16);
+
+            /*
+             * Schedule connectivity test for main loop.
+             * Don't call http_test_connectivity() here - TLS operations
+             * require more stack than the event task provides.
+             */
+            s_test_connectivity_pending = true;
+            break;
+        }
+
+        case WIFI_MANAGER_EVENT_DISCONNECTED:
+            s_wifi_connected = false;
+            ESP_LOGW(TAG, "Wi-Fi disconnected - will attempt to reconnect");
+            /* Show orange slow blink to indicate reconnecting */
+            led_set_state(LED_COLOR_ORANGE, LED_PATTERN_BLINK_SLOW, 1000);
+            break;
+
+        case WIFI_MANAGER_EVENT_CONNECTION_FAILED:
+            s_wifi_connected = false;
+            ESP_LOGE(TAG, "Wi-Fi connection failed - check credentials");
+            /* Flash red to indicate error */
+            led_flash(LED_COLOR_RED, 500);
+            vTaskDelay(pdMS_TO_TICKS(550));
+            led_set_state(LED_COLOR_RED, LED_PATTERN_BLINK_SLOW, 1000);
+            break;
+
+        default:
+            break;
+    }
+}
+
+/**
+ * @brief Initialize Wi-Fi and connect
+ *
+ * Initializes Wi-Fi manager and attempts connection using stored credentials
+ * or hardcoded test credentials if none stored.
+ */
+static esp_err_t start_wifi(void)
+{
+    ESP_LOGI(TAG, "Initializing Wi-Fi...");
+
+    /* Show yellow pulse while connecting */
+    led_set_state(LED_COLOR_YELLOW, LED_PATTERN_PULSE, 1500);
+
+    /* Initialize Wi-Fi manager */
+    esp_err_t ret = wifi_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Wi-Fi init failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    /* Initialize HTTP client */
+    ret = http_client_init();
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "HTTP client init failed: %s", esp_err_to_name(ret));
+        /* Continue anyway - HTTP is optional for this phase */
+    }
+
+    /* Register for Wi-Fi manager events */
+    ret = esp_event_handler_register(WIFI_MANAGER_EVENTS, ESP_EVENT_ANY_ID,
+                                      on_wifi_event, NULL);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to register Wi-Fi event handler: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    /* Try to connect using stored credentials */
+    if (config_has_wifi()) {
+        ESP_LOGI(TAG, "Found stored Wi-Fi credentials");
+        ret = wifi_connect_stored();
+        if (ret == ESP_OK) {
+            return ESP_OK;
+        }
+        ESP_LOGW(TAG, "Failed to use stored credentials: %s", esp_err_to_name(ret));
+    }
+
+    /* No stored credentials - Wi-Fi provisioning will be implemented in a future phase */
+    ESP_LOGW(TAG, "No Wi-Fi credentials configured - waiting for provisioning");
+    return ESP_ERR_NOT_FOUND;
+}
+
+/*******************************************************************************
  * Main Application
  ******************************************************************************/
 
@@ -293,7 +411,7 @@ void app_main(void)
 
     ESP_LOGI(TAG, "===========================================");
     ESP_LOGI(TAG, "  Saturday Vinyl Hub Firmware v%s", FIRMWARE_VERSION);
-    ESP_LOGI(TAG, "  Phase 3: Now Playing Logic");
+    ESP_LOGI(TAG, "  Phase 4: Wi-Fi Connectivity");
     ESP_LOGI(TAG, "===========================================");
 
     /* Log chip info */
@@ -383,12 +501,16 @@ void app_main(void)
     led_set_brightness(16);  /* Very dim for idle state */
 
     ESP_LOGI(TAG, "===========================================");
-    ESP_LOGI(TAG, "  Initialization complete!");
-    ESP_LOGI(TAG, "  - Place record on turntable for Now Playing");
-    ESP_LOGI(TAG, "  - Press button to change LED color");
-    ESP_LOGI(TAG, "  - Hold 3-5s for long press demo");
-    ESP_LOGI(TAG, "  - Hold >10s for factory reset demo");
+    ESP_LOGI(TAG, "  Hardware initialization complete!");
     ESP_LOGI(TAG, "===========================================");
+
+    /*
+     * Initialize Wi-Fi (Phase 4)
+     */
+    ret = start_wifi();
+    if (ret != ESP_OK && ret != ESP_ERR_NOT_FOUND) {
+        ESP_LOGW(TAG, "Wi-Fi initialization issue - continuing without Wi-Fi");
+    }
 
     /* Start RFID polling with Now Playing integration (Phase 2 + 3) */
     ret = start_rfid_polling();
@@ -396,19 +518,65 @@ void app_main(void)
         ESP_LOGW(TAG, "RFID/Now Playing not started - continuing without RFID");
     }
 
+    ESP_LOGI(TAG, "===========================================");
+    ESP_LOGI(TAG, "  System ready!");
+    ESP_LOGI(TAG, "  - Place record on turntable for Now Playing");
+    ESP_LOGI(TAG, "  - Press button to change LED color");
+    ESP_LOGI(TAG, "  - Hold 3-5s for provisioning mode");
+    ESP_LOGI(TAG, "  - Hold >10s for factory reset");
+    ESP_LOGI(TAG, "===========================================");
+
     /* Main loop - periodic health check and stats */
     uint32_t loop_count = 0;
     while (1) {
-        vTaskDelay(pdMS_TO_TICKS(10000));
+        vTaskDelay(pdMS_TO_TICKS(1000));  /* 1 second loop for responsiveness */
         loop_count++;
 
-        /* Periodic health check */
-        ESP_LOGI(TAG, "Health: heap=%lu bytes, uptime=%lus",
+        /*
+         * Handle pending connectivity test (triggered by Wi-Fi connect event).
+         * This runs in the main task which has adequate stack for TLS.
+         */
+        if (s_test_connectivity_pending) {
+            s_test_connectivity_pending = false;
+            ESP_LOGI(TAG, "Running connectivity test...");
+            esp_err_t ret = http_test_connectivity();
+            if (ret == ESP_OK) {
+                ESP_LOGI(TAG, "Internet connectivity verified");
+                led_flash(LED_COLOR_GREEN, 200);
+            } else {
+                ESP_LOGW(TAG, "Internet connectivity test failed");
+            }
+        }
+
+        /* Health check every 10 seconds */
+        if (loop_count % 10 != 0) {
+            continue;
+        }
+
+        /* Periodic health check with Wi-Fi status */
+        char ip_str[16] = "N/A";
+        if (s_wifi_connected) {
+            wifi_get_ip_string(ip_str, sizeof(ip_str));
+        }
+        ESP_LOGI(TAG, "Health: heap=%lu bytes, uptime=%lus, wifi=%s, ip=%s",
                  (unsigned long)esp_get_free_heap_size(),
-                 (unsigned long)(loop_count * 10));
+                 (unsigned long)loop_count,
+                 s_wifi_connected ? "connected" : "disconnected",
+                 ip_str);
+
+        /* Wi-Fi stats every minute (60 seconds = 60 loop iterations) */
+        if (loop_count % 60 == 0 && s_wifi_connected) {
+            wifi_manager_status_t wifi_status;
+            if (wifi_get_status(&wifi_status) == ESP_OK) {
+                ESP_LOGI(TAG, "Wi-Fi: ssid=%s, rssi=%d dBm, attempts=%lu, disconnects=%lu",
+                         wifi_status.ssid, wifi_status.rssi,
+                         (unsigned long)wifi_status.connect_attempts,
+                         (unsigned long)wifi_status.disconnect_count);
+            }
+        }
 
         /* RFID and Now Playing stats every minute */
-        if (loop_count % 6 == 0 && yrm100_is_polling_task_running()) {
+        if (loop_count % 60 == 0 && yrm100_is_polling_task_running()) {
             uint32_t polls, tags, saturday;
             yrm100_get_poll_stats(&polls, &tags, &saturday);
             ESP_LOGI(TAG, "RFID stats: polls=%lu, tags=%lu, saturday=%lu",

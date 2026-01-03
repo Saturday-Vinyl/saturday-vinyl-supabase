@@ -62,11 +62,18 @@ esp_err_t config_get_wifi(char *ssid, size_t ssid_len,
 /**
  * @brief Store Wi-Fi credentials
  *
- * @param ssid Wi-Fi SSID
- * @param password Wi-Fi password
+ * @param ssid Wi-Fi SSID (max 32 chars)
+ * @param password Wi-Fi password (max 64 chars, NULL for open networks)
  * @return ESP_OK on success, error code otherwise
  */
 esp_err_t config_set_wifi(const char *ssid, const char *password);
+
+/**
+ * @brief Clear stored Wi-Fi credentials
+ *
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t config_clear_wifi(void);
 
 /**
  * @brief Get RFID configuration

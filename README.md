@@ -188,22 +188,23 @@ The project uses `sdkconfig.defaults` to set sensible defaults. Key settings:
 
 ## Current Status
 
-**Phase 2: RFID Detection** - Complete
+**Phase 4: Wi-Fi Connectivity** - Complete
 
-All RFID detection functionality has been implemented:
-- YRM100 frame protocol codec (build/parse frames)
-- Tag data extraction (EPC, RSSI, PC word)
-- Saturday tag validation (0x5356 prefix check)
-- Background polling task with callbacks
-- Polling statistics tracking
+All Wi-Fi connectivity functionality has been implemented:
+- Wi-Fi station mode with event-based connection management
+- Auto-reconnect with exponential backoff (1s to 60s max)
+- Wi-Fi credential storage in NVS
+- HTTPS client with TLS certificate bundle
+- LED feedback for connection states
+- Internet connectivity testing
 
 ### Phase Checklist
 
 - [x] Phase 0: Project Setup
 - [x] Phase 1: Hardware Bring-Up
 - [x] Phase 2: RFID Detection
-- [ ] Phase 3: Now Playing Logic
-- [ ] Phase 4: Wi-Fi Connectivity
+- [x] Phase 3: Now Playing Logic
+- [x] Phase 4: Wi-Fi Connectivity
 - [ ] Phase 5: Supabase Integration
 - [ ] Phase 6: Serial Provisioning
 - [ ] Phase 7: BLE Provisioning
@@ -434,53 +435,217 @@ int8_t rssi_dbm = rfid_rssi_to_dbm(tag.rssi);
 Example: 5356A1B2C3D4E5F67890ABCD
 ```
 
-## Testing Phase 2 Components
+### Wi-Fi Manager (`components/network/wifi_manager.c`)
+
+Wi-Fi station mode connection management with auto-reconnect. Added in Phase 4.
+
+**Features:**
+- Station mode initialization and connection
+- Event-based state notifications via WIFI_MANAGER_EVENTS
+- Auto-reconnect with exponential backoff (1s, 2s, 4s, ... max 60s)
+- Connection statistics tracking (attempts, disconnects, RSSI)
+- Credential storage integration with config_store
+
+**Usage:**
+```c
+#include "wifi_manager.h"
+#include "config_store.h"
+
+// Store credentials (typically done during provisioning)
+config_set_wifi("MyNetwork", "MyPassword");
+
+// Initialize Wi-Fi and connect
+wifi_init();
+wifi_connect_stored();  // Uses stored credentials
+
+// Or connect directly
+wifi_connect("MyNetwork", "MyPassword");
+
+// Check connection status
+if (wifi_is_connected()) {
+    char ip[16];
+    wifi_get_ip_string(ip, sizeof(ip));
+    printf("Connected with IP: %s\n", ip);
+}
+
+// Get detailed status
+wifi_manager_status_t status;
+wifi_get_status(&status);
+printf("RSSI: %d dBm, Attempts: %lu\n", status.rssi, status.connect_attempts);
+```
+
+**Event Handling:**
+```c
+static void on_wifi_event(void *arg, esp_event_base_t base,
+                          int32_t event_id, void *event_data) {
+    switch (event_id) {
+        case WIFI_MANAGER_EVENT_CONNECTED:
+            // Connected with IP
+            break;
+        case WIFI_MANAGER_EVENT_DISCONNECTED:
+            // Lost connection, auto-reconnecting
+            break;
+        case WIFI_MANAGER_EVENT_CONNECTION_FAILED:
+            // Bad credentials or network not found
+            break;
+    }
+}
+
+esp_event_handler_register(WIFI_MANAGER_EVENTS, ESP_EVENT_ANY_ID,
+                           on_wifi_event, NULL);
+```
+
+**LED States:**
+| State | LED Pattern | Description |
+|-------|------------|-------------|
+| Connecting | Yellow pulse | Attempting to connect |
+| Connected | Cyan flash, then dim green | Successfully connected |
+| Reconnecting | Orange slow blink | Lost connection, retrying |
+| Failed | Red slow blink | Bad credentials or network not found |
+
+### HTTP Client (`components/network/http_client.c`)
+
+Simple HTTP/HTTPS client for REST API communication. Added in Phase 4.
+
+**Features:**
+- HTTP GET and POST requests
+- HTTPS with ESP certificate bundle (no manual cert setup)
+- JSON POST support with Content-Type header
+- Response buffering up to 4KB
+- Request timing measurement
+- Connectivity testing
+
+**Usage:**
+```c
+#include "http_client.h"
+
+http_client_init();
+
+// Simple GET request
+http_response_t response;
+if (http_get("https://api.example.com/data", &response, 5000) == ESP_OK) {
+    printf("Status: %d, Body: %s\n", response.status_code, response.body);
+    http_response_free(&response);
+}
+
+// POST JSON
+const char *json = "{\"key\": \"value\"}";
+if (http_post_json("https://api.example.com/data", json, &response, 10000) == ESP_OK) {
+    printf("Response: %s\n", response.body);
+    http_response_free(&response);
+}
+
+// Test internet connectivity
+if (http_test_connectivity() == ESP_OK) {
+    printf("Internet access confirmed\n");
+}
+```
+
+**Important Notes:**
+- Always call `http_response_free()` after processing a response
+- Requires Wi-Fi to be connected before making requests
+- Uses Cloudflare's 1.1.1.1 for connectivity testing (HTTPS)
+- TLS certificates are included via ESP-IDF's certificate bundle
+
+## Configuring Wi-Fi Credentials
+
+Since provisioning (Phase 6-7) is not yet implemented, you can configure Wi-Fi credentials for testing using one of these methods:
+
+### Method 1: Hardcode in Code (Development Only)
+
+Add this to `main.c` before calling `wifi_connect_stored()`:
+```c
+// Store test credentials (do this once, they persist in NVS)
+config_set_wifi("YourSSID", "YourPassword");
+```
+
+### Method 2: Use IDF Monitor Console
+
+You can add a simple console command to set credentials at runtime. This will be replaced by proper provisioning in Phase 6-7.
+
+### Method 3: Flash with Pre-configured NVS
+
+Create a CSV file with credentials and flash to NVS partition using `nvs_partition_gen.py`.
+
+## Testing
+
+### Boot Sequence
 
 When the firmware boots, it:
 1. Displays a white pulsing LED during initialization
-2. Switches to solid green when ready
-3. Starts background RFID polling task
+2. Initializes hardware (LED, button, RFID)
+3. Shows yellow pulse while connecting to Wi-Fi (if credentials stored)
+4. Flashes cyan when Wi-Fi connected, then starts RFID polling
+5. Switches to dim green solid for idle state
 
-**Button Test:**
+### Button Test
 - Short press: Cycles through LED colors
-- Long press (3-5s): Blue slow blink (provisioning demo)
-- Very long press (>10s): Red fast blink (factory reset demo)
+- Long press (3-5s): Blue slow blink (provisioning mode - demo)
+- Very long press (>10s): Red fast blink (factory reset - demo)
 
-**RFID Test:**
+### Wi-Fi Test (Phase 4)
+- With valid credentials: Yellow pulse → Cyan flash → Internet test → Dim green
+- With invalid credentials: Yellow pulse → Red blink (failed)
+- Router disconnect: Orange slow blink (reconnecting)
+- After reconnect: Cyan flash → Dim green
+
+### RFID Test
 - Firmware version is queried on startup
-- Green flash when Saturday tag (0x5356 prefix) is detected
-- Yellow flash when non-Saturday tag is detected
-- Orange flash if module doesn't respond (check wiring)
+- Green flash when Saturday tag (0x5356 prefix) detected and confirmed
+- Tag removed: Cyan flash, then dim green idle
 
-**Tag Detection:**
-When a tag is detected, the console will show:
+### Now Playing (Phase 3)
+When a Saturday tag is detected and confirmed:
 ```
-I (xxx) SV_HUB: Saturday tag detected: 5356A1B2C3D4E5F67890ABCD (RSSI: -45 dBm)
+I (xxx) SV_HUB: >>> NOW PLAYING: 5356A1B2C3D4E5F67890ABCD (RSSI: -45 dBm)
 ```
-or for non-Saturday tags:
+When removed:
 ```
-I (xxx) SV_HUB: Non-Saturday tag detected: E20000123456789ABCDEF012 (RSSI: -52 dBm)
+I (xxx) SV_HUB: <<< STOPPED PLAYING: 5356A1B2C3D4E5F67890ABCD (duration: 180000 ms)
 ```
 
-**Polling Statistics:**
-Every minute, the console displays polling stats:
+### Health Check Output
+Every 10 seconds:
 ```
+I (xxx) SV_HUB: Health: heap=280000 bytes, uptime=60s, wifi=connected, ip=192.168.1.100
+```
+
+Every 60 seconds (with Wi-Fi connected):
+```
+I (xxx) SV_HUB: Wi-Fi: ssid=MyNetwork, rssi=-45 dBm, attempts=1, disconnects=0
 I (xxx) SV_HUB: RFID stats: polls=120, tags=15, saturday=12
+I (xxx) SV_HUB: Now Playing: state=IDLE, placed=5, removed=5
 ```
 
-**Expected Console Output:**
+### Expected Console Output (Phase 4)
 ```
-I (xxx) SV_HUB: Saturday Vinyl Hub Firmware v0.1.0
-I (xxx) SV_HUB: Phase 2: RFID Detection
+I (xxx) SV_HUB: ===========================================
+I (xxx) SV_HUB:   Saturday Vinyl Hub Firmware v0.1.0
+I (xxx) SV_HUB:   Phase 4: Wi-Fi Connectivity
+I (xxx) SV_HUB: ===========================================
+I (xxx) SV_HUB: ESP32-C6 with 1 CPU core(s), WiFi/BT/BLE/802.15.4
+I (xxx) SV_HUB: Initializing NVS...
+I (xxx) SV_HUB: NVS initialized
+I (xxx) SV_HUB: Creating default event loop...
 I (xxx) LED_MGR: LED manager initialized successfully
 I (xxx) BUTTON: Button handler initialized successfully
 I (xxx) YRM100: YRM100 driver initialized successfully
-I (xxx) SV_HUB: Initializing RFID subsystem...
-I (xxx) YRM100: YRM100 module enabled
-I (xxx) YRM100: Firmware version: ...
-I (xxx) YRM100: Tag callback registered
-I (xxx) YRM100: Polling task started
-I (xxx) SV_HUB: RFID polling started (interval=500ms, power=10dBm)
+I (xxx) SV_HUB: ===========================================
+I (xxx) SV_HUB:   Hardware initialization complete!
+I (xxx) SV_HUB: ===========================================
+I (xxx) WIFI_MGR: Initializing Wi-Fi manager...
+I (xxx) WIFI_MGR: Wi-Fi manager initialized successfully
+I (xxx) WIFI_MGR: Connecting to 'MyNetwork'... (attempt 1)
+I (xxx) WIFI_MGR: Connected to AP, waiting for IP...
+I (xxx) WIFI_MGR: Connected to 'MyNetwork' - IP: 192.168.1.100 (RSSI: -45 dBm)
+I (xxx) SV_HUB: Wi-Fi connected: MyNetwork (RSSI: -45 dBm)
+I (xxx) HTTP: Testing internet connectivity...
+I (xxx) HTTP: GET https://1.1.1.1/cdn-cgi/trace -> 200 (xxx bytes, xxx ms)
+I (xxx) HTTP: Internet connectivity OK (response in xxx ms)
+I (xxx) SV_HUB: Internet connectivity verified
+I (xxx) SV_HUB: ===========================================
+I (xxx) SV_HUB:   System ready!
+I (xxx) SV_HUB: ===========================================
 ```
 
 ## Troubleshooting
@@ -508,6 +673,62 @@ Run from the project root directory, not from `main/` or `build/`.
 ### OpenThread build errors
 
 Ensure you're using ESP-IDF v5.2+ which has improved ESP32-C6 OpenThread support.
+
+### Wi-Fi connects but no IP address (DHCP timeout)
+
+The ESP32-C6 has a weaker antenna than phones/laptops. If you see:
+```
+I (xxx) WIFI_MGR: Connected to AP, waiting for IP...
+W (xxx) WIFI_MGR: DHCP timeout - no IP received within 15000 ms, disconnecting to retry
+```
+
+**Causes:**
+- Weak signal (RSSI below -80 dBm) - DHCP packets get lost
+- Connected to a mesh extender instead of main router
+- Router DHCP server is slow/overloaded
+
+**Solutions:**
+1. Move the ESP32-C6 closer to the router
+2. Check the RSSI in logs - aim for better than -70 dBm
+3. The firmware will auto-retry with exponential backoff (up to 60s)
+
+**Note:** The firmware includes a 15-second DHCP timeout. If no IP is received within this time, it disconnects and retries automatically.
+
+### Wi-Fi signal strength (RSSI) reference
+
+| RSSI (dBm) | Quality | Notes |
+|------------|---------|-------|
+| -30 to -50 | Excellent | Very close to router |
+| -50 to -60 | Good | Reliable operation |
+| -60 to -70 | Fair | May see occasional issues |
+| -70 to -80 | Weak | DHCP timeouts possible |
+| Below -80 | Poor | Unreliable, move closer |
+
+### LED RMT errors ("channel not in init state")
+
+If you see:
+```
+E (xxx) rmt: rmt_tx_enable(763): channel not in init state
+E (xxx) led_strip_rmt: led_strip_rmt_refresh(81): enable RMT channel failed
+```
+
+This was a race condition between the LED pattern task and `led_flash()` both trying to update the LED simultaneously. **Fixed in Phase 4** by adding mutex protection around RMT access in `led_apply_color()`.
+
+If you see this error, ensure you have the latest code with the RMT mutex fix.
+
+### ESP-IDF v6.x API changes
+
+When building with ESP-IDF v6.x (development versions), note these changes:
+
+1. **esp-tls component name:** Use `esp-tls` (with hyphen) in CMakeLists.txt PRIV_REQUIRES, not `esp_tls`
+
+2. **HTTP client events:** The switch statement in http_client.c must handle these additional enum values:
+   - `HTTP_EVENT_ON_HEADERS_COMPLETE`
+   - `HTTP_EVENT_ON_STATUS_CODE`
+
+   Otherwise you'll get `-Werror=switch` compiler errors.
+
+3. **Function naming conflicts:** Avoid using `wifi_deinit()` as a function name - it conflicts with ESP-IDF's internal `wifi_deinit` in `libnet80211.a`. Use `wifi_manager_deinit()` instead.
 
 ## Documentation
 

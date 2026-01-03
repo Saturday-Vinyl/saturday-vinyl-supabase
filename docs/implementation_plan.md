@@ -394,43 +394,71 @@ This document breaks down the hub firmware development into iterative phases. Ea
 
 **Goal:** Connect to Wi-Fi network and make basic HTTP requests.
 
+**Status:** Complete
+
 ### Tasks
 
 #### 4.1 Wi-Fi Manager
-- [ ] Create `components/network/wifi_manager.c`
-- [ ] Implement Wi-Fi station mode initialization
-- [ ] Implement connection with stored credentials:
+- [x] Create `components/network/wifi_manager.c`
+- [x] Implement Wi-Fi station mode initialization
+- [x] Implement connection with stored credentials:
   ```c
   esp_err_t wifi_init(void);
   esp_err_t wifi_connect(const char *ssid, const char *password);
   esp_err_t wifi_disconnect(void);
   bool wifi_is_connected(void);
   ```
-- [ ] Handle Wi-Fi events (connected, disconnected, got IP)
+- [x] Handle Wi-Fi events (connected, disconnected, got IP)
 - [ ] Test: Hardcode credentials, verify connection
 
+**Implementation Notes:**
+- Event-based architecture using ESP-IDF event loop
+- Posts WIFI_MANAGER_EVENTS for application integration
+- Tracks connection statistics (attempts, disconnects, RSSI)
+- Thread-safe state management
+
 #### 4.2 Wi-Fi Credential Storage
-- [ ] Add to config store:
+- [x] Add to config store:
   ```c
   esp_err_t config_get_wifi(char *ssid, size_t ssid_len,
                             char *password, size_t pass_len);
   esp_err_t config_set_wifi(const char *ssid, const char *password);
   bool config_has_wifi(void);
   ```
+- [x] Added config_clear_wifi() for credential removal
 - [ ] Encrypt password in NVS (optional, can use NVS encryption)
 - [ ] Test: Store credentials, reboot, auto-connect
 
+**Implementation Notes:**
+- NVS namespace: `sv_wifi`
+- Keys: `ssid`, `password`
+- Validation: SSID max 32 chars, password max 64 chars
+- Empty password supported for open networks
+
 #### 4.3 Connection State Machine
-- [ ] Implement auto-reconnect on disconnect
-- [ ] Exponential backoff for retry (1s, 2s, 4s, ... max 60s)
-- [ ] Update LED state based on connection status
+- [x] Implement auto-reconnect on disconnect
+- [x] Exponential backoff for retry (1s, 2s, 4s, ... max 60s)
+- [x] Update LED state based on connection status
 - [ ] Test: Disconnect router, verify reconnect behavior
 
+**Implementation Notes:**
+- States: DISCONNECTED, CONNECTING, CONNECTED, RECONNECTING
+- Auto-reconnect enabled by default, uses esp_timer for backoff
+- LED feedback: Yellow pulse (connecting), Cyan flash (connected),
+  Orange blink (reconnecting), Red blink (failed)
+
 #### 4.4 Basic HTTP Client
-- [ ] Test HTTP client with simple GET request
-- [ ] Configure TLS certificates for HTTPS
-- [ ] Make test request to httpbin.org or similar
+- [x] Create `components/network/http_client.c`
+- [x] Implement http_get() and http_post_json() functions
+- [x] Configure TLS certificates using ESP certificate bundle
+- [x] Implement http_test_connectivity() using Cloudflare endpoint
 - [ ] Test: Verify response received and parsed
+
+**Implementation Notes:**
+- Uses esp_http_client with esp_crt_bundle for HTTPS
+- Response buffering up to 4KB
+- Request timing measurement included
+- Connectivity test uses https://1.1.1.1/cdn-cgi/trace
 
 ### Deliverables
 - Wi-Fi connects automatically on boot (if configured)

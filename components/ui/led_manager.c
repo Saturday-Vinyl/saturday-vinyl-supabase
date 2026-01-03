@@ -103,8 +103,14 @@ static led_state_t s_led = {
  * Internal Functions
  ******************************************************************************/
 
+/* Mutex for RMT access - prevents concurrent led_strip_refresh calls */
+static SemaphoreHandle_t s_rmt_mutex = NULL;
+
 /**
  * @brief Apply brightness scaling and set the WS2812 LED color
+ *
+ * Thread-safe: Uses mutex to prevent concurrent RMT access which can
+ * cause "channel not in init state" errors.
  */
 static void led_apply_color(uint8_t r, uint8_t g, uint8_t b)
 {
@@ -117,9 +123,12 @@ static void led_apply_color(uint8_t r, uint8_t g, uint8_t b)
     uint32_t bg = (g * s_led.brightness) / 255;
     uint32_t bb = (b * s_led.brightness) / 255;
 
-    /* Set pixel color and refresh */
-    led_strip_set_pixel(s_led.strip, 0, br, bg, bb);
-    led_strip_refresh(s_led.strip);
+    /* Protect RMT access with mutex to prevent concurrent refresh calls */
+    if (s_rmt_mutex != NULL && xSemaphoreTake(s_rmt_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+        led_strip_set_pixel(s_led.strip, 0, br, bg, bb);
+        led_strip_refresh(s_led.strip);
+        xSemaphoreGive(s_rmt_mutex);
+    }
 }
 
 /**
@@ -229,6 +238,15 @@ esp_err_t led_init(void)
     s_led.mutex = xSemaphoreCreateMutex();
     if (s_led.mutex == NULL) {
         ESP_LOGE(TAG, "Failed to create mutex");
+        return ESP_ERR_NO_MEM;
+    }
+
+    /* Create mutex for RMT access (prevents concurrent led_strip_refresh) */
+    s_rmt_mutex = xSemaphoreCreateMutex();
+    if (s_rmt_mutex == NULL) {
+        ESP_LOGE(TAG, "Failed to create RMT mutex");
+        vSemaphoreDelete(s_led.mutex);
+        s_led.mutex = NULL;
         return ESP_ERR_NO_MEM;
     }
 
