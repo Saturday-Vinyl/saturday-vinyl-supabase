@@ -88,6 +88,10 @@ typedef struct {
     yrm100_tag_callback_t tag_callback;
     void *callback_user_data;
 
+    /* Poll complete callback (Phase 3) */
+    yrm100_poll_complete_callback_t poll_complete_callback;
+    void *poll_complete_user_data;
+
     /* Statistics */
     uint32_t stat_total_polls;
     uint32_t stat_tags_detected;
@@ -575,14 +579,22 @@ esp_err_t yrm100_single_poll_with_data(rfid_tag_t *tag)
         return ESP_ERR_INVALID_RESPONSE;
     }
 
-    if (frame.type != RFID_FRAME_TYPE_RESPONSE) {
+    /* Accept both RESPONSE and NOTICE frames for tag data:
+     * - RESPONSE (0x01) with command 0xFF = error/no-tag response
+     * - NOTICE (0x02) with command 0x22 = tag detected
+     */
+    if (frame.type == RFID_FRAME_TYPE_RESPONSE) {
+        /* Error response - check for "no tag found" (0x15) */
+        if (frame.command == 0xFF && frame.param_len >= 1 && frame.params != NULL) {
+            if (frame.params[0] == RFID_RESP_TAG_NOT_FOUND) {
+                return ESP_ERR_NOT_FOUND;
+            }
+            ESP_LOGD(TAG, "Response error code: 0x%02X", frame.params[0]);
+            return ESP_ERR_NOT_FOUND;
+        }
+    } else if (frame.type != RFID_FRAME_TYPE_NOTICE) {
+        ESP_LOGD(TAG, "Unexpected frame type: 0x%02X", frame.type);
         return ESP_ERR_INVALID_RESPONSE;
-    }
-
-    /* Check if tag was found or not found (error code 0x15) */
-    if (frame.param_len >= 1 && frame.params != NULL &&
-        frame.params[0] == RFID_RESP_TAG_NOT_FOUND) {
-        return ESP_ERR_NOT_FOUND;
     }
 
     /* Tag found - parse if requested */
@@ -730,8 +742,11 @@ static void rfid_polling_task(void *arg)
         ret = yrm100_single_poll_with_data(&tag);
         s_rfid.stat_total_polls++;
 
+        bool tag_detected = false;
+
         if (ret == ESP_OK) {
             /* Tag detected */
+            tag_detected = true;
             s_rfid.stat_tags_detected++;
 
             if (tag.is_saturday_tag) {
@@ -764,6 +779,11 @@ static void rfid_polling_task(void *arg)
             ESP_LOGD(TAG, "Poll error: %s", esp_err_to_name(ret));
         }
 
+        /* Invoke poll complete callback if registered (Phase 3) */
+        if (s_rfid.poll_complete_callback != NULL) {
+            s_rfid.poll_complete_callback(tag_detected, s_rfid.poll_complete_user_data);
+        }
+
         /* Wait for next poll interval */
         vTaskDelay(pdMS_TO_TICKS(s_rfid.poll_config.poll_interval_ms));
     }
@@ -782,6 +802,18 @@ void yrm100_register_tag_callback(yrm100_tag_callback_t callback, void *user_dat
         ESP_LOGI(TAG, "Tag callback registered");
     } else {
         ESP_LOGI(TAG, "Tag callback unregistered");
+    }
+}
+
+void yrm100_register_poll_complete_callback(yrm100_poll_complete_callback_t callback, void *user_data)
+{
+    s_rfid.poll_complete_callback = callback;
+    s_rfid.poll_complete_user_data = user_data;
+
+    if (callback != NULL) {
+        ESP_LOGI(TAG, "Poll complete callback registered");
+    } else {
+        ESP_LOGI(TAG, "Poll complete callback unregistered");
     }
 }
 

@@ -40,6 +40,17 @@ extern "C" {
 typedef void (*yrm100_tag_callback_t)(const rfid_tag_t *tag, void *user_data);
 
 /**
+ * @brief Callback function for poll cycle completion
+ *
+ * Called from the polling task after each poll cycle completes.
+ * Useful for tracking when no tag was detected in a poll.
+ *
+ * @param tag_detected True if a tag was detected this cycle, false otherwise
+ * @param user_data User data passed to yrm100_register_poll_complete_callback
+ */
+typedef void (*yrm100_poll_complete_callback_t)(bool tag_detected, void *user_data);
+
+/**
  * @brief Polling task configuration
  */
 typedef struct {
@@ -186,6 +197,18 @@ esp_err_t yrm100_read_tag_notice(rfid_tag_t *tag, uint32_t timeout_ms);
  * @param user_data User data to pass to callback
  */
 void yrm100_register_tag_callback(yrm100_tag_callback_t callback, void *user_data);
+
+/**
+ * @brief Register callback for poll cycle completion
+ *
+ * The callback will be invoked from the polling task after each poll
+ * cycle completes. Useful for Now Playing state machine to detect
+ * when no tag was found.
+ *
+ * @param callback Function to call after each poll (NULL to unregister)
+ * @param user_data User data to pass to callback
+ */
+void yrm100_register_poll_complete_callback(yrm100_poll_complete_callback_t callback, void *user_data);
 
 /**
  * @brief Start the background polling task

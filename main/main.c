@@ -14,6 +14,12 @@
  * - Tag detection with EPC extraction
  * - Saturday tag validation (0x5356 prefix)
  * - Background polling task with callbacks
+ *
+ * Phase 3: Now Playing Logic
+ * - Debounced state machine for tag presence detection
+ * - ESP-IDF event loop integration
+ * - LED feedback for Now Playing state
+ * - Configurable debounce timing via NVS
  */
 
 #include <stdio.h>
@@ -22,6 +28,7 @@
 #include "esp_log.h"
 #include "esp_system.h"
 #include "esp_chip_info.h"
+#include "esp_event.h"
 #include "nvs_flash.h"
 
 #include "app_config.h"
@@ -29,8 +36,13 @@
 #include "button_handler.h"
 #include "yrm100_driver.h"
 #include "rfid_protocol.h"
+#include "now_playing.h"
+#include "config_store.h"
 
 static const char *TAG = "SV_HUB";
+
+/* Track if a Saturday tag was detected in the current poll cycle */
+static bool s_saturday_tag_detected_this_poll = false;
 
 /*******************************************************************************
  * Button Callback
@@ -86,7 +98,50 @@ static esp_err_t nvs_init(void)
 }
 
 /*******************************************************************************
- * RFID Tag Callback (Phase 2)
+ * Now Playing Event Handler (Phase 3)
+ ******************************************************************************/
+
+/**
+ * @brief Handler for Now Playing events (TAG_PLACED / TAG_REMOVED)
+ *
+ * Updates LED to reflect Now Playing state.
+ */
+static void on_now_playing_event(void *handler_args, esp_event_base_t base,
+                                  int32_t event_id, void *event_data)
+{
+    const now_playing_event_t *event = (const now_playing_event_t *)event_data;
+    char epc_str[25];
+    rfid_epc_to_hex_string(event->epc, event->epc_len, epc_str, sizeof(epc_str));
+
+    switch (event_id) {
+        case NOW_PLAYING_EVENT_TAG_PLACED:
+            ESP_LOGI(TAG, ">>> NOW PLAYING: %s (RSSI: %d dBm)", epc_str, event->rssi);
+            /* Flash green to indicate tag confirmed, then show dim green solid */
+            led_flash(LED_COLOR_GREEN, 300);
+            /* After flash, set to dim green solid to indicate Now Playing */
+            vTaskDelay(pdMS_TO_TICKS(350));
+            led_set_state(LED_COLOR_GREEN, LED_PATTERN_SOLID, 0);
+            led_set_brightness(64);
+            break;
+
+        case NOW_PLAYING_EVENT_TAG_REMOVED:
+            ESP_LOGI(TAG, "<<< STOPPED PLAYING: %s (duration: %lu ms)",
+                     epc_str, (unsigned long)event->duration_ms);
+            /* Flash briefly, then return to idle state (very dim green) */
+            led_flash(LED_COLOR_CYAN, 200);
+            vTaskDelay(pdMS_TO_TICKS(250));
+            led_set_state(LED_COLOR_GREEN, LED_PATTERN_SOLID, 0);
+            led_set_brightness(16);  /* Very dim for idle */
+            break;
+
+        default:
+            ESP_LOGW(TAG, "Unknown Now Playing event: %ld", (long)event_id);
+            break;
+    }
+}
+
+/*******************************************************************************
+ * RFID Tag Callback (Phase 2 + Phase 3 Integration)
  ******************************************************************************/
 
 /**
@@ -94,6 +149,8 @@ static esp_err_t nvs_init(void)
  *
  * This callback runs in the context of the RFID polling task, so it
  * should be quick and non-blocking.
+ *
+ * Phase 3: Now feeds tags into the Now Playing state machine.
  */
 static void on_tag_detected(const rfid_tag_t *tag, void *user_data)
 {
@@ -101,29 +158,86 @@ static void on_tag_detected(const rfid_tag_t *tag, void *user_data)
     rfid_epc_to_hex_string(tag->epc, tag->epc_len, epc_str, sizeof(epc_str));
 
     if (tag->is_saturday_tag) {
-        ESP_LOGI(TAG, "Saturday tag detected: %s (RSSI: %d dBm)",
+        ESP_LOGD(TAG, "Saturday tag: %s (RSSI: %d dBm)",
                  epc_str, rfid_rssi_to_dbm(tag->rssi));
-        led_flash(LED_COLOR_GREEN, 150);
+
+        /* Mark that we saw a Saturday tag this poll cycle */
+        s_saturday_tag_detected_this_poll = true;
+
+        /* Feed to Now Playing state machine */
+        now_playing_on_tag_detected(tag);
     } else {
-        ESP_LOGI(TAG, "Non-Saturday tag detected: %s (RSSI: %d dBm)",
+        ESP_LOGD(TAG, "Non-Saturday tag: %s (RSSI: %d dBm)",
                  epc_str, rfid_rssi_to_dbm(tag->rssi));
-        led_flash(LED_COLOR_YELLOW, 150);
+        /* Non-Saturday tags don't affect Now Playing state */
     }
 }
 
+/**
+ * @brief Callback invoked after each poll cycle completes
+ *
+ * Used to inform the Now Playing state machine when no Saturday tag was seen.
+ */
+static void on_poll_cycle_complete(bool tag_detected, void *user_data)
+{
+    (void)tag_detected;  /* We track Saturday tags specifically */
+
+    if (!s_saturday_tag_detected_this_poll) {
+        /* No Saturday tag was seen this poll - notify state machine */
+        now_playing_on_poll_complete_no_tag();
+    }
+    /* Reset for next poll cycle */
+    s_saturday_tag_detected_this_poll = false;
+}
+
 /*******************************************************************************
- * RFID Initialization (Phase 2)
+ * RFID and Now Playing Initialization (Phase 2 + Phase 3)
  ******************************************************************************/
 
 /**
- * @brief Initialize and start RFID polling
+ * @brief Initialize and start RFID polling with Now Playing integration
  *
- * Validates communication with the RFID module, then starts the
- * background polling task which will invoke callbacks on tag detection.
+ * Validates communication with the RFID module, initializes the Now Playing
+ * state machine, and starts the background polling task.
  */
 static esp_err_t start_rfid_polling(void)
 {
     ESP_LOGI(TAG, "Initializing RFID subsystem...");
+
+    /* Load RFID configuration from NVS */
+    rfid_config_t rfid_cfg;
+    esp_err_t ret = config_get_rfid(&rfid_cfg);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to load RFID config, using defaults");
+        rfid_cfg.poll_interval_ms = DEFAULT_POLL_INTERVAL_MS;
+        rfid_cfg.rf_power_dbm = DEFAULT_RF_POWER_DBM;
+        rfid_cfg.debounce_present_ms = DEFAULT_DEBOUNCE_PRESENT_MS;
+        rfid_cfg.debounce_absent_ms = DEFAULT_DEBOUNCE_ABSENT_MS;
+    }
+
+    ESP_LOGI(TAG, "RFID config: poll=%dms, power=%ddBm, deb_present=%dms, deb_absent=%dms",
+             rfid_cfg.poll_interval_ms, rfid_cfg.rf_power_dbm,
+             rfid_cfg.debounce_present_ms, rfid_cfg.debounce_absent_ms);
+
+    /* Initialize Now Playing state machine with config from NVS */
+    now_playing_config_t np_config = {
+        .debounce_present_ms = rfid_cfg.debounce_present_ms,
+        .debounce_absent_ms = rfid_cfg.debounce_absent_ms,
+    };
+    ret = now_playing_init(&np_config);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to initialize Now Playing: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    ESP_LOGI(TAG, "Now Playing state machine initialized");
+
+    /* Register for Now Playing events */
+    ret = esp_event_handler_register(NOW_PLAYING_EVENTS, ESP_EVENT_ANY_ID,
+                                      on_now_playing_event, NULL);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to register Now Playing event handler: %s", esp_err_to_name(ret));
+        return ret;
+    }
 
     /* Enable the RFID module */
     yrm100_enable(true);
@@ -131,7 +245,7 @@ static esp_err_t start_rfid_polling(void)
 
     /* Try to get firmware version to verify communication */
     char version[32] = {0};
-    esp_err_t ret = yrm100_get_firmware_version(version, sizeof(version));
+    ret = yrm100_get_firmware_version(version, sizeof(version));
 
     if (ret == ESP_OK) {
         ESP_LOGI(TAG, "RFID module firmware: %s", version);
@@ -146,24 +260,25 @@ static esp_err_t start_rfid_polling(void)
         return ret;
     }
 
-    /* Register callback for tag detection */
+    /* Register callbacks for tag detection and poll completion */
     yrm100_register_tag_callback(on_tag_detected, NULL);
+    yrm100_register_poll_complete_callback(on_poll_cycle_complete, NULL);
 
-    /* Configure and start polling task */
-    yrm100_poll_config_t config = {
-        .poll_interval_ms = DEFAULT_POLL_INTERVAL_MS,
-        .rf_power_dbm = DEFAULT_RF_POWER_DBM,
-        .filter_saturday_only = false,  /* Report all tags for debugging */
+    /* Configure and start polling task with config from NVS */
+    yrm100_poll_config_t poll_config = {
+        .poll_interval_ms = rfid_cfg.poll_interval_ms,
+        .rf_power_dbm = rfid_cfg.rf_power_dbm,
+        .filter_saturday_only = false,  /* Report all tags so non-Saturday still logged */
     };
 
-    ret = yrm100_start_polling_task(&config);
+    ret = yrm100_start_polling_task(&poll_config);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to start polling task: %s", esp_err_to_name(ret));
         return ret;
     }
 
     ESP_LOGI(TAG, "RFID polling started (interval=%dms, power=%ddBm)",
-             config.poll_interval_ms, config.rf_power_dbm);
+             poll_config.poll_interval_ms, poll_config.rf_power_dbm);
 
     return ESP_OK;
 }
@@ -178,7 +293,7 @@ void app_main(void)
 
     ESP_LOGI(TAG, "===========================================");
     ESP_LOGI(TAG, "  Saturday Vinyl Hub Firmware v%s", FIRMWARE_VERSION);
-    ESP_LOGI(TAG, "  Phase 2: RFID Detection");
+    ESP_LOGI(TAG, "  Phase 3: Now Playing Logic");
     ESP_LOGI(TAG, "===========================================");
 
     /* Log chip info */
@@ -197,6 +312,29 @@ void app_main(void)
     ESP_LOGI(TAG, "Initializing NVS...");
     ESP_ERROR_CHECK(nvs_init());
     ESP_LOGI(TAG, "NVS initialized");
+
+    /*
+     * Create default event loop - required for Now Playing events (Phase 3)
+     */
+    ESP_LOGI(TAG, "Creating default event loop...");
+    ret = esp_event_loop_create_default();
+    if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
+        /* ESP_ERR_INVALID_STATE means it's already created, which is fine */
+        ESP_LOGE(TAG, "Failed to create event loop: %s", esp_err_to_name(ret));
+    } else {
+        ESP_LOGI(TAG, "Event loop ready");
+    }
+
+    /*
+     * Initialize Configuration Store (Phase 3)
+     */
+    ESP_LOGI(TAG, "Initializing config store...");
+    ret = config_init();
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Config init warning: %s", esp_err_to_name(ret));
+    } else {
+        ESP_LOGI(TAG, "Config store initialized");
+    }
 
     /*
      * Initialize LED Manager (Task 1.1)
@@ -240,22 +378,22 @@ void app_main(void)
     /* Short delay before starting main operation */
     vTaskDelay(pdMS_TO_TICKS(1000));
 
-    /* Switch to green solid to indicate ready */
+    /* Switch to dim green solid to indicate idle (ready, no tag) */
     led_set_state(LED_COLOR_GREEN, LED_PATTERN_SOLID, 0);
-    led_set_brightness(64);  /* Dim to 25% for normal operation */
+    led_set_brightness(16);  /* Very dim for idle state */
 
     ESP_LOGI(TAG, "===========================================");
     ESP_LOGI(TAG, "  Initialization complete!");
+    ESP_LOGI(TAG, "  - Place record on turntable for Now Playing");
     ESP_LOGI(TAG, "  - Press button to change LED color");
     ESP_LOGI(TAG, "  - Hold 3-5s for long press demo");
     ESP_LOGI(TAG, "  - Hold >10s for factory reset demo");
-    ESP_LOGI(TAG, "  - RFID polling active");
     ESP_LOGI(TAG, "===========================================");
 
-    /* Start RFID polling (Phase 2) */
+    /* Start RFID polling with Now Playing integration (Phase 2 + 3) */
     ret = start_rfid_polling();
     if (ret != ESP_OK) {
-        ESP_LOGW(TAG, "RFID polling not started - continuing without RFID");
+        ESP_LOGW(TAG, "RFID/Now Playing not started - continuing without RFID");
     }
 
     /* Main loop - periodic health check and stats */
@@ -269,13 +407,22 @@ void app_main(void)
                  (unsigned long)esp_get_free_heap_size(),
                  (unsigned long)(loop_count * 10));
 
-        /* RFID polling stats every minute */
+        /* RFID and Now Playing stats every minute */
         if (loop_count % 6 == 0 && yrm100_is_polling_task_running()) {
             uint32_t polls, tags, saturday;
             yrm100_get_poll_stats(&polls, &tags, &saturday);
             ESP_LOGI(TAG, "RFID stats: polls=%lu, tags=%lu, saturday=%lu",
                      (unsigned long)polls, (unsigned long)tags,
                      (unsigned long)saturday);
+
+            /* Now Playing status */
+            now_playing_status_t np_status;
+            if (now_playing_get_status(&np_status) == ESP_OK) {
+                ESP_LOGI(TAG, "Now Playing: state=%s, placed=%lu, removed=%lu",
+                         now_playing_state_to_string(np_status.state),
+                         (unsigned long)np_status.total_placed_events,
+                         (unsigned long)np_status.total_removed_events);
+            }
         }
     }
 }

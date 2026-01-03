@@ -288,15 +288,17 @@ This document breaks down the hub firmware development into iterative phases. Ea
 
 **Goal:** Implement debounced "Now Playing" detection with state machine.
 
+**Status:** Complete
+
 ### Tasks
 
 #### 3.1 Configuration Storage (Basic)
-- [ ] Create `components/config/config_store.c`
-- [ ] Initialize NVS:
+- [x] Create `components/config/config_store.c`
+- [x] Initialize NVS:
   ```c
   esp_err_t config_init(void);
   ```
-- [ ] Implement RFID config read/write:
+- [x] Implement RFID config read/write:
   ```c
   typedef struct {
       uint16_t poll_interval_ms;
@@ -308,26 +310,38 @@ This document breaks down the hub firmware development into iterative phases. Ea
   esp_err_t config_get_rfid(rfid_config_t *config);
   esp_err_t config_set_rfid(const rfid_config_t *config);
   ```
-- [ ] Use sensible defaults if not configured
+- [x] Use sensible defaults if not configured
 - [ ] Test: Set config, reboot, verify config persists
 
+**Implementation Notes:**
+- NVS namespace: `sv_rfid`
+- Keys: `poll_int`, `rf_power`, `deb_pres`, `deb_abs`
+- Validation on set: poll_interval 100-5000ms, rf_power 0-30dBm, debounce 0-5000/10000ms
+- Graceful fallback to defaults if NVS not found
+
 #### 3.2 Now Playing State Machine
-- [ ] Create `components/rfid/now_playing.c`
-- [ ] Implement state machine:
+- [x] Create `components/rfid/now_playing.c`
+- [x] Implement state machine:
   ```c
   typedef enum {
-      NOW_PLAYING_IDLE,
-      NOW_PLAYING_TAG_CONFIRMING,
-      NOW_PLAYING_TAG_PRESENT,
-      NOW_PLAYING_TAG_REMOVING,
+      NOW_PLAYING_STATE_IDLE,
+      NOW_PLAYING_STATE_TAG_CONFIRMING,
+      NOW_PLAYING_STATE_TAG_PRESENT,
+      NOW_PLAYING_STATE_TAG_REMOVING,
   } now_playing_state_t;
   ```
-- [ ] Track current tag EPC and timestamps
-- [ ] Implement state transitions with debounce timers
+- [x] Track current tag EPC and timestamps
+- [x] Implement state transitions with debounce timers
 - [ ] Test: Place tag, observe state transitions in logs
 
+**Implementation Notes:**
+- Mutex-protected state for thread safety
+- Separate pending/current tag tracking
+- Time-based debouncing using esp_timer_get_time()
+- Statistics tracking (total placed/removed events)
+
 #### 3.3 Event Generation
-- [ ] Define events:
+- [x] Define events:
   ```c
   typedef enum {
       NOW_PLAYING_EVENT_TAG_PLACED,
@@ -342,14 +356,25 @@ This document breaks down the hub firmware development into iterative phases. Ea
       uint32_t duration_ms;  // For removal events
   } now_playing_event_t;
   ```
-- [ ] Integrate with ESP-IDF event loop
+- [x] Integrate with ESP-IDF event loop
 - [ ] Test: Subscribe to events, log when received
 
+**Implementation Notes:**
+- Event base: `NOW_PLAYING_EVENTS` (ESP_EVENT_DEFINE_BASE)
+- Events posted to default event loop
+- Duration calculated automatically for removal events
+
 #### 3.4 LED Feedback
-- [ ] Flash LED green briefly when tag confirmed
-- [ ] Show dim green when tag present
-- [ ] Return to idle state color when tag removed
+- [x] Flash LED green briefly when tag confirmed
+- [x] Show dim green (brightness 64) when tag present
+- [x] Return to very dim green (brightness 16) when tag removed
+- [x] Flash cyan briefly on tag removal
 - [ ] Test: Visual confirmation of state changes
+
+**Implementation Notes:**
+- Event handler registered in main.c
+- LED brightness: 16 (idle), 64 (now playing)
+- Flash duration: 300ms placed, 200ms removed
 
 ### Deliverables
 - Debounced tag detection (no false triggers)
