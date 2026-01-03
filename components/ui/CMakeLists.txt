@@ -3,5 +3,5 @@ idf_component_register(
         "led_manager.c"
         "button_handler.c"
     INCLUDE_DIRS "include"
-    REQUIRES driver esp_timer
+    REQUIRES esp_driver_gpio esp_timer led_strip
 )

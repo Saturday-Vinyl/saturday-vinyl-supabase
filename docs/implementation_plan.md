@@ -1,8 +1,8 @@
 # Saturday Vinyl Hub Firmware - Implementation Plan
 
 **Project:** sv-hub-firmware
-**Document Version:** 0.1.0
-**Last Updated:** 2025-01-XX
+**Document Version:** 0.2.0
+**Last Updated:** 2026-01-03
 
 ---
 
@@ -100,7 +100,7 @@ This document breaks down the hub firmware development into iterative phases. Ea
 
 #### 1.1 RGB LED Driver
 - [x] Create `components/ui/led_manager.c`
-- [x] Configure LEDC PWM for RGB channels (GPIO8, GPIO9, GPIO10)
+- [x] Configure WS2812 addressable LED on GPIO8 (DevKitC-1 onboard LED)
 - [x] Implement basic functions:
   ```c
   void led_init(void);
@@ -110,10 +110,12 @@ This document breaks down the hub firmware development into iterative phases. Ea
 - [x] Test: Cycle through colors (red → green → blue → white)
 
 **Implementation Notes:**
-- PWM at 5kHz with 8-bit resolution for smooth dimming
+- Uses ESP-IDF led_strip component (espressif/led_strip managed component)
+- WS2812 protocol via RMT peripheral at 10MHz resolution
 - Pattern support: SOLID, BLINK_SLOW, BLINK_FAST, PULSE, FLASH
 - Background FreeRTOS task handles pattern generation
 - Thread-safe with mutex protection
+- GPIO8 is the onboard WS2812 on ESP32-C6-DevKitC-1
 
 #### 1.2 Button Input
 - [x] Create `components/ui/button_handler.c`
@@ -135,8 +137,10 @@ This document breaks down the hub firmware development into iterative phases. Ea
 - Callback registration for application handling
 
 #### 1.3 UART for RFID Module
-- [x] Configure UART1 (GPIO4 TX, GPIO5 RX) at 115200 baud
-- [x] Configure GPIO6 as RFID enable pin
+- [x] Configure UART1 at 115200 baud:
+  - GPIO5 = ESP32 TX → YRM100 RXD (Yellow wire)
+  - GPIO4 = ESP32 RX ← YRM100 TXD (Green wire)
+- [x] Configure GPIO6 as RFID enable pin (active HIGH, with pull-up)
 - [x] Implement basic send/receive functions:
   ```c
   void rfid_uart_init(void);
@@ -148,9 +152,20 @@ This document breaks down the hub firmware development into iterative phases. Ea
 
 **Implementation Notes:**
 - Full frame protocol implemented (build, parse, checksum)
-- Commands: GetFirmwareVersion, Get/SetRfPower, Single/MultiplePoll
+- Commands: GetFirmwareVersion (with 0x00 param), Get/SetRfPower, Single/MultiplePoll
 - Raw send/receive functions available for debugging
 - Thread-safe UART access with mutex
+- EN pin requires GPIO_MODE_INPUT_OUTPUT with pull-up for reliable operation
+- 500ms delay after enabling module before sending commands
+
+**YRM100 Wiring Reference:**
+| YRM100 Pin | Wire Color | ESP32 GPIO |
+|------------|------------|------------|
+| 1 (GND) | Red | GND |
+| 2 (EN) | Black | GPIO6 |
+| 3 (RXD) | Yellow | GPIO5 |
+| 4 (TXD) | Green | GPIO4 |
+| 5 (VCC) | Blue | 3.3V |
 
 #### 1.4 USB Serial Console
 - [x] Verify UART0 works for debug output (should work by default)
@@ -173,16 +188,18 @@ This document breaks down the hub firmware development into iterative phases. Ea
 
 **Goal:** Detect RFID tags and extract EPC data.
 
+**Status:** Complete
+
 ### Tasks
 
 #### 2.1 YRM100 Frame Codec
-- [ ] Create `components/rfid/rfid_protocol.c`
-- [ ] Implement frame builder:
+- [x] Create `components/rfid/rfid_protocol.c`
+- [x] Implement frame builder:
   ```c
   size_t rfid_build_frame(uint8_t cmd, const uint8_t *params,
                           size_t param_len, uint8_t *out_buf);
   ```
-- [ ] Implement frame parser:
+- [x] Implement frame parser:
   ```c
   typedef struct {
       uint8_t type;      // 0x00=cmd, 0x01=response, 0x02=notice
@@ -193,12 +210,17 @@ This document breaks down the hub firmware development into iterative phases. Ea
 
   bool rfid_parse_frame(const uint8_t *buf, size_t len, rfid_frame_t *frame);
   ```
-- [ ] Implement checksum calculation and validation
-- [ ] Test: Build and parse known frames from documentation
+- [x] Implement checksum calculation and validation
+- [x] Test: Build and parse known frames from documentation
+
+**Implementation Notes:**
+- Header file: `components/rfid/include/rfid_protocol.h`
+- Frame finding function `rfid_find_frame()` for extracting frames from streams
+- Utility functions: `rfid_epc_to_hex_string()`, `rfid_rssi_to_dbm()`
 
 #### 2.2 YRM100 Driver
-- [ ] Create `components/rfid/yrm100_driver.c`
-- [ ] Implement command functions:
+- [x] Create `components/rfid/yrm100_driver.c`
+- [x] Implement command functions:
   ```c
   bool yrm100_init(void);
   bool yrm100_get_firmware_version(char *version, size_t max_len);
@@ -207,11 +229,16 @@ This document breaks down the hub firmware development into iterative phases. Ea
   bool yrm100_start_polling(void);
   bool yrm100_stop_polling(void);
   ```
-- [ ] Implement response handling with timeout
-- [ ] Test: Get firmware version, set/get RF power
+- [x] Implement response handling with timeout
+- [x] Test: Get firmware version, set/get RF power
+
+**Implementation Notes:**
+- Added `yrm100_single_poll_with_data()` for full tag data extraction
+- Added `yrm100_read_tag_notice()` for continuous polling mode
+- Thread-safe with mutex protection on UART access
 
 #### 2.3 Tag Polling
-- [ ] Implement tag notice frame parsing:
+- [x] Implement tag notice frame parsing:
   ```c
   typedef struct {
       uint8_t rssi;
@@ -222,15 +249,27 @@ This document breaks down the hub firmware development into iterative phases. Ea
 
   bool rfid_parse_tag_notice(const rfid_frame_t *frame, rfid_tag_t *tag);
   ```
-- [ ] Extract EPC length from PC word (bits 15-11)
-- [ ] Implement Saturday tag validation (prefix check)
-- [ ] Test: Place tag near antenna, verify EPC logged correctly
+- [x] Extract EPC length from PC word (bits 15-11)
+- [x] Implement Saturday tag validation (prefix check)
+- [x] Test: Place tag near antenna, verify EPC logged correctly
+
+**Implementation Notes:**
+- `rfid_tag_t` structure includes `is_saturday_tag` boolean
+- Saturday prefix: 0x5356 ("SV" in ASCII)
+- EPC length extracted from PC word bits 15-11 (word count * 2)
 
 #### 2.4 Continuous Polling Task
-- [ ] Create FreeRTOS task for RFID polling
-- [ ] Read incoming frames in a loop
-- [ ] Parse tag notices and log detected tags
-- [ ] Test: Multiple tags, tags entering/leaving field
+- [x] Create FreeRTOS task for RFID polling
+- [x] Read incoming frames in a loop
+- [x] Parse tag notices and log detected tags
+- [x] Test: Multiple tags, tags entering/leaving field
+
+**Implementation Notes:**
+- Background task: `yrm100_start_polling_task()` / `yrm100_stop_polling_task()`
+- Callback-based: `yrm100_register_tag_callback()`
+- Configurable: poll interval, RF power, Saturday-only filter
+- Statistics: `yrm100_get_poll_stats()` for monitoring
+- Uses single polls with intervals (cleaner than continuous mode)
 
 ### Deliverables
 - YRM100 commands work reliably

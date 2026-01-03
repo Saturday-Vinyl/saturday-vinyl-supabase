@@ -3,5 +3,5 @@ idf_component_register(
         "ble_prov.c"
         "serial_prov.c"
     INCLUDE_DIRS "include"
-    REQUIRES nvs_flash bt json
+    REQUIRES nvs_flash bt
 )

@@ -21,13 +21,21 @@ The Saturday Vinyl Hub performs two primary functions:
 |------|----------|-------------|
 | 0 | UART0_TX | Debug console TX |
 | 1 | UART0_RX | Debug console RX |
-| 4 | UART1_TX | RFID module RX |
-| 5 | UART1_RX | RFID module TX |
-| 6 | RFID_EN | RFID module enable |
-| 8 | LED_R | RGB LED - Red (PWM) |
-| 9 | LED_G | RGB LED - Green (PWM) |
-| 10 | LED_B | RGB LED - Blue (PWM) |
+| 4 | UART1_RX | RFID module TXD (ESP32 receives from YRM100) |
+| 5 | UART1_TX | RFID module RXD (ESP32 transmits to YRM100) |
+| 6 | RFID_EN | RFID module enable (active HIGH, needs pull-up) |
+| 8 | LED_WS2812 | Onboard WS2812 addressable RGB LED |
 | 18 | BUTTON | Multi-purpose button |
+
+### YRM100 RFID Module Wiring
+
+| YRM100 Pin | Wire Color | ESP32-C6 GPIO | Description |
+|------------|------------|---------------|-------------|
+| 1 (GND) | Red | GND | Ground |
+| 2 (EN) | Black | GPIO6 | Enable (HIGH = active) |
+| 3 (RXD) | Yellow | GPIO5 | Module receives from ESP32 |
+| 4 (TXD) | Green | GPIO4 | Module transmits to ESP32 |
+| 5 (VCC) | Blue | 3.3V | Power (3-5V) |
 
 ## Development Environment Setup
 
@@ -180,18 +188,20 @@ The project uses `sdkconfig.defaults` to set sensible defaults. Key settings:
 
 ## Current Status
 
-**Phase 1: Hardware Bring-Up** - Complete
+**Phase 2: RFID Detection** - Complete
 
-All hardware peripherals have been validated and are functional:
-- RGB LED with PWM control and pattern generation
-- Button with debounced input and press duration detection
-- RFID module UART communication
+All RFID detection functionality has been implemented:
+- YRM100 frame protocol codec (build/parse frames)
+- Tag data extraction (EPC, RSSI, PC word)
+- Saturday tag validation (0x5356 prefix check)
+- Background polling task with callbacks
+- Polling statistics tracking
 
 ### Phase Checklist
 
 - [x] Phase 0: Project Setup
 - [x] Phase 1: Hardware Bring-Up
-- [ ] Phase 2: RFID Detection
+- [x] Phase 2: RFID Detection
 - [ ] Phase 3: Now Playing Logic
 - [ ] Phase 4: Wi-Fi Connectivity
 - [ ] Phase 5: Supabase Integration
@@ -208,10 +218,10 @@ All hardware peripherals have been validated and are functional:
 
 ### LED Manager (`components/ui/led_manager.c`)
 
-PWM-based RGB LED control with pattern support.
+WS2812 addressable RGB LED control with pattern support.
 
 **Features:**
-- 8-bit PWM resolution at 5kHz (smooth, flicker-free)
+- WS2812 (NeoPixel) protocol via RMT peripheral
 - Color presets: OFF, RED, GREEN, BLUE, YELLOW, CYAN, MAGENTA, WHITE, ORANGE
 - Patterns: SOLID, BLINK_SLOW (1Hz), BLINK_FAST (2Hz), PULSE, FLASH
 - Brightness control (0-255)
@@ -229,8 +239,9 @@ led_flash(LED_COLOR_BLUE, 200);  // Brief 200ms flash
 ```
 
 **Hardware Notes:**
-- Assumes common-anode RGB LED (active low)
-- GPIOs 8 (R), 9 (G), 10 (B)
+- ESP32-C6-DevKitC-1 has onboard WS2812 on GPIO8
+- Uses ESP-IDF led_strip component (espressif/led_strip managed component)
+- Single addressable LED, controlled via RMT peripheral at 10MHz
 
 ### Button Handler (`components/ui/button_handler.c`)
 
@@ -273,12 +284,15 @@ UART communication with the YRM100 UHF RFID module.
 - Commands implemented:
   - Get firmware version
   - Get/Set RF power (0-30 dBm)
-  - Single poll for tags
+  - Single poll for tags (with or without tag data)
   - Start/Stop continuous polling
-- Thread-safe UART access
-- Raw send/receive for debugging
+- **Phase 2 additions:**
+  - Tag data parsing (EPC, RSSI, PC word)
+  - Saturday tag detection (0x5356 prefix)
+  - Background polling task with callbacks
+  - Polling statistics
 
-**Usage:**
+**Basic Usage:**
 ```c
 #include "yrm100_driver.h"
 
@@ -290,28 +304,142 @@ yrm100_get_firmware_version(version, sizeof(version));
 
 yrm100_set_rf_power(10);  // 10 dBm
 
+// Simple poll (tag presence only)
 esp_err_t ret = yrm100_single_poll();
 if (ret == ESP_OK) {
     // Tag detected
 }
+
+// Poll with tag data (Phase 2)
+rfid_tag_t tag;
+ret = yrm100_single_poll_with_data(&tag);
+if (ret == ESP_OK) {
+    // tag.epc, tag.rssi, tag.is_saturday_tag available
+}
+```
+
+**Background Polling (Phase 2):**
+```c
+#include "yrm100_driver.h"
+
+// Callback invoked on tag detection
+void on_tag_detected(const rfid_tag_t *tag, void *user_data) {
+    if (tag->is_saturday_tag) {
+        // Handle Saturday tag
+        char epc_str[25];
+        rfid_epc_to_hex_string(tag->epc, tag->epc_len, epc_str, sizeof(epc_str));
+        ESP_LOGI("APP", "Saturday tag: %s", epc_str);
+    }
+}
+
+// Register callback and start polling
+yrm100_register_tag_callback(on_tag_detected, NULL);
+
+yrm100_poll_config_t config = {
+    .poll_interval_ms = 500,
+    .rf_power_dbm = 10,
+    .filter_saturday_only = true,  // Only report Saturday tags
+};
+yrm100_start_polling_task(&config);
+
+// Later: get statistics
+uint32_t polls, tags, saturday;
+yrm100_get_poll_stats(&polls, &tags, &saturday);
+
+// Stop polling when done
+yrm100_stop_polling_task();
 ```
 
 **Hardware Notes:**
-- UART1: GPIO4 (TX), GPIO5 (RX), 115200 baud 8N1
-- GPIO6: Enable pin (active high)
-- Allow 100ms after enabling before sending commands
+- UART1: GPIO5 (TX to YRM100 RXD), GPIO4 (RX from YRM100 TXD), 115200 baud 8N1
+- GPIO6: Enable pin (active HIGH, configure with internal pull-up)
+- Allow 500ms after enabling before sending commands (YRM100 boot time)
 
 **Frame Format:**
 ```
 [0xBB] [Type] [Cmd] [PL_MSB] [PL_LSB] [Params...] [Checksum] [0x7E]
+
+Type values:
+  0x00 = Command (host to module)
+  0x01 = Response (module to host)
+  0x02 = Notice (unsolicited from module, e.g., tag detected)
+
+Checksum = (Type + Cmd + PL_MSB + PL_LSB + Params[0..n]) & 0xFF
+
+Common commands:
+  0x03 = Get Firmware Version (send param 0x00 for hardware info)
+  0x22 = Single Poll (inventory one tag)
+  0xB0 = Set RF Power
+  0xB1 = Get RF Power
+  0x27 = Start Multiple Poll
+  0x28 = Stop Multiple Poll
 ```
 
-## Testing Phase 1 Components
+**Common Error Codes (returned as 0xFF response):**
+| Code | Meaning |
+|------|---------|
+| 0x15 | No tag in RF field |
+| 0x16 | Tag read error |
+| 0x09 | Parameter error |
+
+### RFID Protocol Codec (`components/rfid/rfid_protocol.c`)
+
+Low-level frame building and parsing for the YRM100 module. Added in Phase 2.
+
+**Features:**
+- Frame building with automatic checksum
+- Frame parsing with validation
+- Tag data extraction from poll responses
+- Saturday tag prefix validation
+- EPC to hex string conversion
+- RSSI to dBm conversion
+
+**Usage:**
+```c
+#include "rfid_protocol.h"
+
+// Build a command frame
+uint8_t frame[32];
+size_t len = rfid_build_frame(RFID_CMD_SINGLE_POLL, NULL, 0, frame, sizeof(frame));
+
+// Parse a received frame
+rfid_frame_t parsed;
+if (rfid_parse_frame(rx_buf, rx_len, &parsed)) {
+    if (parsed.type == RFID_FRAME_TYPE_NOTICE) {
+        // Tag notice received
+        rfid_tag_t tag;
+        if (rfid_parse_tag(&parsed, &tag)) {
+            // Use tag.epc, tag.rssi, tag.is_saturday_tag
+        }
+    }
+}
+
+// Convert EPC to string
+char epc_str[25];
+rfid_epc_to_hex_string(tag.epc, tag.epc_len, epc_str, sizeof(epc_str));
+
+// Convert RSSI to dBm
+int8_t rssi_dbm = rfid_rssi_to_dbm(tag.rssi);
+```
+
+**Saturday Tag Format:**
+```
+┌─────────────┬─────────────────────────────────────────┐
+│   Prefix    │              Random Data                │
+│  (2 bytes)  │              (10 bytes)                 │
+├─────────────┼─────────────────────────────────────────┤
+│    5356     │    XXXX XXXX XXXX XXXX XXXX             │
+│   ("SV")    │    (80 random bits)                     │
+└─────────────┴─────────────────────────────────────────┘
+Example: 5356A1B2C3D4E5F67890ABCD
+```
+
+## Testing Phase 2 Components
 
 When the firmware boots, it:
 1. Displays a white pulsing LED during initialization
 2. Switches to solid green when ready
-3. Starts RFID polling every 2 seconds
+3. Starts background RFID polling task
 
 **Button Test:**
 - Short press: Cycles through LED colors
@@ -320,18 +448,39 @@ When the firmware boots, it:
 
 **RFID Test:**
 - Firmware version is queried on startup
-- Green flash when tag is detected
+- Green flash when Saturday tag (0x5356 prefix) is detected
+- Yellow flash when non-Saturday tag is detected
 - Orange flash if module doesn't respond (check wiring)
+
+**Tag Detection:**
+When a tag is detected, the console will show:
+```
+I (xxx) SV_HUB: Saturday tag detected: 5356A1B2C3D4E5F67890ABCD (RSSI: -45 dBm)
+```
+or for non-Saturday tags:
+```
+I (xxx) SV_HUB: Non-Saturday tag detected: E20000123456789ABCDEF012 (RSSI: -52 dBm)
+```
+
+**Polling Statistics:**
+Every minute, the console displays polling stats:
+```
+I (xxx) SV_HUB: RFID stats: polls=120, tags=15, saturday=12
+```
 
 **Expected Console Output:**
 ```
 I (xxx) SV_HUB: Saturday Vinyl Hub Firmware v0.1.0
-I (xxx) SV_HUB: Phase 1: Hardware Bring-Up
+I (xxx) SV_HUB: Phase 2: RFID Detection
 I (xxx) LED_MGR: LED manager initialized successfully
 I (xxx) BUTTON: Button handler initialized successfully
 I (xxx) YRM100: YRM100 driver initialized successfully
+I (xxx) SV_HUB: Initializing RFID subsystem...
 I (xxx) YRM100: YRM100 module enabled
 I (xxx) YRM100: Firmware version: ...
+I (xxx) YRM100: Tag callback registered
+I (xxx) YRM100: Polling task started
+I (xxx) SV_HUB: RFID polling started (interval=500ms, power=10dBm)
 ```
 
 ## Troubleshooting

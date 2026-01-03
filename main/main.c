@@ -9,6 +9,11 @@
  * - RGB LED with PWM patterns
  * - Button with debounced press detection
  * - RFID module UART communication
+ *
+ * Phase 2: RFID Detection
+ * - Tag detection with EPC extraction
+ * - Saturday tag validation (0x5356 prefix)
+ * - Background polling task with callbacks
  */
 
 #include <stdio.h>
@@ -16,12 +21,14 @@
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_system.h"
+#include "esp_chip_info.h"
 #include "nvs_flash.h"
 
 #include "app_config.h"
 #include "led_manager.h"
 #include "button_handler.h"
 #include "yrm100_driver.h"
+#include "rfid_protocol.h"
 
 static const char *TAG = "SV_HUB";
 
@@ -79,73 +86,86 @@ static esp_err_t nvs_init(void)
 }
 
 /*******************************************************************************
- * RFID Test Task
+ * RFID Tag Callback (Phase 2)
  ******************************************************************************/
 
 /**
- * @brief Task to demonstrate RFID module communication
+ * @brief Callback invoked when a tag is detected by the polling task
  *
- * Periodically attempts to communicate with the RFID module.
- * In Phase 1, this just tests basic UART connectivity.
+ * This callback runs in the context of the RFID polling task, so it
+ * should be quick and non-blocking.
  */
-static void rfid_test_task(void *arg)
+static void on_tag_detected(const rfid_tag_t *tag, void *user_data)
 {
-    ESP_LOGI(TAG, "RFID test task started");
+    char epc_str[25];
+    rfid_epc_to_hex_string(tag->epc, tag->epc_len, epc_str, sizeof(epc_str));
+
+    if (tag->is_saturday_tag) {
+        ESP_LOGI(TAG, "Saturday tag detected: %s (RSSI: %d dBm)",
+                 epc_str, rfid_rssi_to_dbm(tag->rssi));
+        led_flash(LED_COLOR_GREEN, 150);
+    } else {
+        ESP_LOGI(TAG, "Non-Saturday tag detected: %s (RSSI: %d dBm)",
+                 epc_str, rfid_rssi_to_dbm(tag->rssi));
+        led_flash(LED_COLOR_YELLOW, 150);
+    }
+}
+
+/*******************************************************************************
+ * RFID Initialization (Phase 2)
+ ******************************************************************************/
+
+/**
+ * @brief Initialize and start RFID polling
+ *
+ * Validates communication with the RFID module, then starts the
+ * background polling task which will invoke callbacks on tag detection.
+ */
+static esp_err_t start_rfid_polling(void)
+{
+    ESP_LOGI(TAG, "Initializing RFID subsystem...");
 
     /* Enable the RFID module */
     yrm100_enable(true);
     vTaskDelay(pdMS_TO_TICKS(500));  /* Extra settling time */
 
-    /* Try to get firmware version */
+    /* Try to get firmware version to verify communication */
     char version[32] = {0};
     esp_err_t ret = yrm100_get_firmware_version(version, sizeof(version));
 
     if (ret == ESP_OK) {
         ESP_LOGI(TAG, "RFID module firmware: %s", version);
-        led_flash(LED_COLOR_GREEN, 200);  /* Green flash on success */
+        led_flash(LED_COLOR_GREEN, 200);
     } else if (ret == ESP_ERR_TIMEOUT) {
         ESP_LOGW(TAG, "RFID module not responding (timeout) - check wiring");
         led_flash(LED_COLOR_ORANGE, 200);
+        return ret;
     } else {
         ESP_LOGE(TAG, "RFID communication error: %s", esp_err_to_name(ret));
         led_flash(LED_COLOR_RED, 200);
+        return ret;
     }
 
-    /* Try to get/set RF power */
-    uint8_t power = 0;
-    ret = yrm100_get_rf_power(&power);
-    if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "Current RF power: %d dBm", power);
+    /* Register callback for tag detection */
+    yrm100_register_tag_callback(on_tag_detected, NULL);
+
+    /* Configure and start polling task */
+    yrm100_poll_config_t config = {
+        .poll_interval_ms = DEFAULT_POLL_INTERVAL_MS,
+        .rf_power_dbm = DEFAULT_RF_POWER_DBM,
+        .filter_saturday_only = false,  /* Report all tags for debugging */
+    };
+
+    ret = yrm100_start_polling_task(&config);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start polling task: %s", esp_err_to_name(ret));
+        return ret;
     }
 
-    /* Set to default power */
-    ret = yrm100_set_rf_power(DEFAULT_RF_POWER_DBM);
-    if (ret == ESP_OK) {
-        ESP_LOGI(TAG, "RF power set to %d dBm", DEFAULT_RF_POWER_DBM);
-    }
+    ESP_LOGI(TAG, "RFID polling started (interval=%dms, power=%ddBm)",
+             config.poll_interval_ms, config.rf_power_dbm);
 
-    /* Periodic single poll test */
-    int poll_count = 0;
-    while (1) {
-        vTaskDelay(pdMS_TO_TICKS(2000));  /* Poll every 2 seconds */
-
-        ret = yrm100_single_poll();
-        poll_count++;
-
-        if (ret == ESP_OK) {
-            ESP_LOGI(TAG, "Tag detected on poll #%d!", poll_count);
-            led_flash(LED_COLOR_GREEN, 100);
-        } else if (ret == ESP_ERR_NOT_FOUND) {
-            ESP_LOGD(TAG, "No tag found (poll #%d)", poll_count);
-        } else if (ret == ESP_ERR_TIMEOUT) {
-            /* Module not responding - only log occasionally */
-            if (poll_count % 10 == 0) {
-                ESP_LOGW(TAG, "RFID module timeout (poll #%d)", poll_count);
-            }
-        } else {
-            ESP_LOGD(TAG, "Poll error: %s", esp_err_to_name(ret));
-        }
-    }
+    return ESP_OK;
 }
 
 /*******************************************************************************
@@ -158,7 +178,7 @@ void app_main(void)
 
     ESP_LOGI(TAG, "===========================================");
     ESP_LOGI(TAG, "  Saturday Vinyl Hub Firmware v%s", FIRMWARE_VERSION);
-    ESP_LOGI(TAG, "  Phase 1: Hardware Bring-Up");
+    ESP_LOGI(TAG, "  Phase 2: RFID Detection");
     ESP_LOGI(TAG, "===========================================");
 
     /* Log chip info */
@@ -229,18 +249,33 @@ void app_main(void)
     ESP_LOGI(TAG, "  - Press button to change LED color");
     ESP_LOGI(TAG, "  - Hold 3-5s for long press demo");
     ESP_LOGI(TAG, "  - Hold >10s for factory reset demo");
-    ESP_LOGI(TAG, "  - RFID polling every 2 seconds");
+    ESP_LOGI(TAG, "  - RFID polling active");
     ESP_LOGI(TAG, "===========================================");
 
-    /* Start RFID test task */
-    xTaskCreate(rfid_test_task, "rfid_test", 4096, NULL, 5, NULL);
+    /* Start RFID polling (Phase 2) */
+    ret = start_rfid_polling();
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "RFID polling not started - continuing without RFID");
+    }
 
-    /* Main loop - just keep running */
+    /* Main loop - periodic health check and stats */
+    uint32_t loop_count = 0;
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(10000));
+        loop_count++;
 
         /* Periodic health check */
-        ESP_LOGI(TAG, "Heap free: %lu bytes",
-                 (unsigned long)esp_get_free_heap_size());
+        ESP_LOGI(TAG, "Health: heap=%lu bytes, uptime=%lus",
+                 (unsigned long)esp_get_free_heap_size(),
+                 (unsigned long)(loop_count * 10));
+
+        /* RFID polling stats every minute */
+        if (loop_count % 6 == 0 && yrm100_is_polling_task_running()) {
+            uint32_t polls, tags, saturday;
+            yrm100_get_poll_stats(&polls, &tags, &saturday);
+            ESP_LOGI(TAG, "RFID stats: polls=%lu, tags=%lu, saturday=%lu",
+                     (unsigned long)polls, (unsigned long)tags,
+                     (unsigned long)saturday);
+        }
     }
 }

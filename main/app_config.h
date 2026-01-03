@@ -23,14 +23,12 @@
 #define PIN_UART0_RX            1
 
 /* RFID Module UART (UART1) */
-#define PIN_RFID_TX             4   /* ESP32 TX -> YRM100 RX */
-#define PIN_RFID_RX             5   /* ESP32 RX <- YRM100 TX */
+#define PIN_RFID_TX             5   /* ESP32 TX -> YRM100 RX (GPIO5 = LP_UART_TXD) */
+#define PIN_RFID_RX             4   /* ESP32 RX <- YRM100 TX (GPIO4 = LP_UART_RXD) */
 #define PIN_RFID_EN             6   /* RFID module enable (active high) */
 
-/* RGB LED (active low, PWM capable) */
-#define PIN_LED_R               8
-#define PIN_LED_G               9
-#define PIN_LED_B               10
+/* RGB LED (WS2812 addressable LED on DevKitC-1) */
+#define PIN_LED_WS2812          8   /* Onboard addressable RGB LED */
 
 /* Button (active low, internal pull-up) */
 #define PIN_BUTTON              18

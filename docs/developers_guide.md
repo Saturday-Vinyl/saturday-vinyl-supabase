@@ -148,8 +148,8 @@ The ESP32-C6 was selected for its native support of all required wireless protoc
 |------|----------|-------------|
 | GPIO0 | UART0_TX | Debug console TX |
 | GPIO1 | UART0_RX | Debug console RX |
-| GPIO4 | UART1_TX | RFID module RX (hub transmits) |
-| GPIO5 | UART1_RX | RFID module TX (hub receives) |
+| GPIO4 | UART1_RX | RFID module TX (hub receives) |
+| GPIO5 | UART1_TX | RFID module RX (hub transmits) |
 | GPIO6 | RFID_EN | RFID module enable (active high) |
 | GPIO8 | LED_R | RGB LED - Red (PWM) |
 | GPIO9 | LED_G | RGB LED - Green (PWM) |
@@ -193,8 +193,8 @@ The YRM100 module handles all RFID operations for "Now Playing" detection.
 |-----|------|------------|
 | 1 | GND | Ground |
 | 2 | VCC | 3.3V |
-| 3 | TX | ESP32-C6 GPIO5 (UART1_RX) |
-| 4 | RX | ESP32-C6 GPIO4 (UART1_TX) |
+| 3 | TX | ESP32-C6 GPIO4 (UART1_RX) |
+| 4 | RX | ESP32-C6 GPIO5 (UART1_TX) |
 | 5 | EN | ESP32-C6 GPIO6 |
 
 ### Power

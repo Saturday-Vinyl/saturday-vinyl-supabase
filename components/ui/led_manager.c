@@ -1,19 +1,18 @@
 /**
  * @file led_manager.c
- * @brief RGB LED control implementation using LEDC PWM
+ * @brief RGB LED control implementation using WS2812 addressable LED
  *
- * Uses the ESP32-C6 LEDC peripheral for smooth PWM control of an RGB LED.
- * Supports solid colors, blinking, and pulsing patterns.
+ * Uses the ESP32-C6 RMT peripheral via the led_strip driver to control
+ * the onboard WS2812 addressable RGB LED on the DevKitC-1 board.
  *
  * Hardware Notes:
- * - Assumes common-anode RGB LED (active low: 0 = full brightness)
- * - GPIO8 = Red, GPIO9 = Green, GPIO10 = Blue
- * - PWM frequency: 5kHz (inaudible, smooth dimming)
- * - Resolution: 8-bit (0-255)
+ * - ESP32-C6-DevKitC-1 has onboard WS2812 on GPIO8
+ * - Single addressable LED, controlled via RMT peripheral
+ * - Protocol: 800kHz single-wire (NeoPixel compatible)
  */
 
 #include "led_manager.h"
-#include "driver/ledc.h"
+#include "led_strip.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -27,27 +26,15 @@ static const char *TAG = "LED_MGR";
  * Configuration
  ******************************************************************************/
 
-/* Pin definitions - should match app_config.h */
-#define LED_PIN_R           8
-#define LED_PIN_G           9
-#define LED_PIN_B           10
-
-/* PWM configuration */
-#define LED_PWM_FREQ_HZ     5000
-#define LED_PWM_RESOLUTION  LEDC_TIMER_8_BIT
-#define LED_PWM_MAX_DUTY    255
-
-/* LEDC channel assignments */
-#define LED_LEDC_TIMER      LEDC_TIMER_0
-#define LED_LEDC_MODE       LEDC_LOW_SPEED_MODE
-#define LED_LEDC_CH_R       LEDC_CHANNEL_0
-#define LED_LEDC_CH_G       LEDC_CHANNEL_1
-#define LED_LEDC_CH_B       LEDC_CHANNEL_2
+/* WS2812 LED on GPIO8 (onboard DevKitC-1) */
+#define LED_STRIP_GPIO          8
+#define LED_STRIP_NUM_LEDS      1
+#define LED_STRIP_RMT_RES_HZ    (10 * 1000 * 1000)  /* 10 MHz resolution */
 
 /* Pattern task configuration */
-#define LED_TASK_STACK_SIZE 2048
-#define LED_TASK_PRIORITY   2
-#define LED_PATTERN_TICK_MS 20  /* Update interval for smooth patterns */
+#define LED_TASK_STACK_SIZE     2048
+#define LED_TASK_PRIORITY       2
+#define LED_PATTERN_TICK_MS     20  /* Update interval for smooth patterns */
 
 /*******************************************************************************
  * Color Preset Definitions (RGB values 0-255)
@@ -76,6 +63,9 @@ static const rgb_t COLOR_PRESETS[] = {
  ******************************************************************************/
 
 typedef struct {
+    /* LED strip handle */
+    led_strip_handle_t strip;
+
     /* Current color and brightness */
     uint8_t r;
     uint8_t g;
@@ -96,6 +86,7 @@ typedef struct {
 } led_state_t;
 
 static led_state_t s_led = {
+    .strip = NULL,
     .r = 0,
     .g = 0,
     .b = 0,
@@ -113,28 +104,22 @@ static led_state_t s_led = {
  ******************************************************************************/
 
 /**
- * @brief Apply brightness and invert for common-anode LED, then set PWM duty
+ * @brief Apply brightness scaling and set the WS2812 LED color
  */
-static void led_apply_pwm(uint8_t r, uint8_t g, uint8_t b)
+static void led_apply_color(uint8_t r, uint8_t g, uint8_t b)
 {
+    if (s_led.strip == NULL) {
+        return;
+    }
+
     /* Apply brightness scaling */
     uint32_t br = (r * s_led.brightness) / 255;
     uint32_t bg = (g * s_led.brightness) / 255;
     uint32_t bb = (b * s_led.brightness) / 255;
 
-    /* Invert for common-anode LED (255 - value gives "active low" behavior) */
-    uint32_t duty_r = LED_PWM_MAX_DUTY - br;
-    uint32_t duty_g = LED_PWM_MAX_DUTY - bg;
-    uint32_t duty_b = LED_PWM_MAX_DUTY - bb;
-
-    ledc_set_duty(LED_LEDC_MODE, LED_LEDC_CH_R, duty_r);
-    ledc_update_duty(LED_LEDC_MODE, LED_LEDC_CH_R);
-
-    ledc_set_duty(LED_LEDC_MODE, LED_LEDC_CH_G, duty_g);
-    ledc_update_duty(LED_LEDC_MODE, LED_LEDC_CH_G);
-
-    ledc_set_duty(LED_LEDC_MODE, LED_LEDC_CH_B, duty_b);
-    ledc_update_duty(LED_LEDC_MODE, LED_LEDC_CH_B);
+    /* Set pixel color and refresh */
+    led_strip_set_pixel(s_led.strip, 0, br, bg, bb);
+    led_strip_refresh(s_led.strip);
 }
 
 /**
@@ -145,13 +130,11 @@ static void led_apply_pwm(uint8_t r, uint8_t g, uint8_t b)
 static uint8_t led_pulse_curve(uint8_t phase)
 {
     /* Simple raised cosine approximation for smooth pulsing */
-    /* Uses integer math: (1 - cos(phase * pi / 128)) / 2 approximated */
     int32_t x = phase;
     if (x > 128) {
         x = 256 - x;
     }
     /* Quadratic approximation of sine for 0-90 degrees */
-    /* Scale: 0-128 input maps to 0-255 output via parabola */
     int32_t result = (x * x * 255) / (128 * 128);
     return (uint8_t)result;
 }
@@ -174,7 +157,7 @@ static void led_pattern_task(void *arg)
 
             switch (pattern) {
                 case LED_PATTERN_SOLID:
-                    led_apply_pwm(r, g, b);
+                    led_apply_color(r, g, b);
                     vTaskDelay(pdMS_TO_TICKS(100));  /* Low update rate for solid */
                     break;
 
@@ -184,9 +167,9 @@ static void led_pattern_task(void *arg)
                     uint32_t half_period = period / 2;
                     uint32_t phase = tick % period;
                     if (phase < half_period) {
-                        led_apply_pwm(r, g, b);
+                        led_apply_color(r, g, b);
                     } else {
-                        led_apply_pwm(0, 0, 0);
+                        led_apply_color(0, 0, 0);
                     }
                     vTaskDelay(pdMS_TO_TICKS(LED_PATTERN_TICK_MS));
                     tick += LED_PATTERN_TICK_MS;
@@ -203,7 +186,7 @@ static void led_pattern_task(void *arg)
                     uint8_t pr = (r * intensity) / 255;
                     uint8_t pg = (g * intensity) / 255;
                     uint8_t pb = (b * intensity) / 255;
-                    led_apply_pwm(pr, pg, pb);
+                    led_apply_color(pr, pg, pb);
 
                     vTaskDelay(pdMS_TO_TICKS(LED_PATTERN_TICK_MS));
                     tick += LED_PATTERN_TICK_MS;
@@ -213,7 +196,7 @@ static void led_pattern_task(void *arg)
 
                 case LED_PATTERN_FLASH:
                     /* Flash is handled by led_flash(), not the pattern task */
-                    led_apply_pwm(0, 0, 0);
+                    led_apply_color(0, 0, 0);
                     vTaskDelay(pdMS_TO_TICKS(100));
                     break;
 
@@ -240,7 +223,7 @@ esp_err_t led_init(void)
         return ESP_OK;
     }
 
-    ESP_LOGI(TAG, "Initializing LED manager (PWM)");
+    ESP_LOGI(TAG, "Initializing LED manager (WS2812 on GPIO%d)", LED_STRIP_GPIO);
 
     /* Create mutex for thread-safe access */
     s_led.mutex = xSemaphoreCreateMutex();
@@ -249,55 +232,36 @@ esp_err_t led_init(void)
         return ESP_ERR_NO_MEM;
     }
 
-    /* Configure LEDC timer */
-    ledc_timer_config_t timer_conf = {
-        .speed_mode = LED_LEDC_MODE,
-        .timer_num = LED_LEDC_TIMER,
-        .duty_resolution = LED_PWM_RESOLUTION,
-        .freq_hz = LED_PWM_FREQ_HZ,
-        .clk_cfg = LEDC_AUTO_CLK,
-    };
-    esp_err_t ret = ledc_timer_config(&timer_conf);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to configure LEDC timer: %s", esp_err_to_name(ret));
-        return ret;
-    }
-
-    /* Configure LEDC channels for R, G, B */
-    ledc_channel_config_t ch_conf = {
-        .speed_mode = LED_LEDC_MODE,
-        .timer_sel = LED_LEDC_TIMER,
-        .intr_type = LEDC_INTR_DISABLE,
-        .duty = LED_PWM_MAX_DUTY,  /* Start with LED off (inverted) */
-        .hpoint = 0,
+    /* Configure LED strip */
+    led_strip_config_t strip_config = {
+        .strip_gpio_num = LED_STRIP_GPIO,
+        .max_leds = LED_STRIP_NUM_LEDS,
+        .led_model = LED_MODEL_WS2812,
+        .color_component_format = LED_STRIP_COLOR_COMPONENT_FMT_GRB,
+        .flags = {
+            .invert_out = false,
+        },
     };
 
-    /* Red channel */
-    ch_conf.channel = LED_LEDC_CH_R;
-    ch_conf.gpio_num = LED_PIN_R;
-    ret = ledc_channel_config(&ch_conf);
+    led_strip_rmt_config_t rmt_config = {
+        .clk_src = RMT_CLK_SRC_DEFAULT,
+        .resolution_hz = LED_STRIP_RMT_RES_HZ,
+        .mem_block_symbols = 64,
+        .flags = {
+            .with_dma = false,
+        },
+    };
+
+    esp_err_t ret = led_strip_new_rmt_device(&strip_config, &rmt_config, &s_led.strip);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to configure red channel: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Failed to create LED strip: %s", esp_err_to_name(ret));
+        vSemaphoreDelete(s_led.mutex);
+        s_led.mutex = NULL;
         return ret;
     }
 
-    /* Green channel */
-    ch_conf.channel = LED_LEDC_CH_G;
-    ch_conf.gpio_num = LED_PIN_G;
-    ret = ledc_channel_config(&ch_conf);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to configure green channel: %s", esp_err_to_name(ret));
-        return ret;
-    }
-
-    /* Blue channel */
-    ch_conf.channel = LED_LEDC_CH_B;
-    ch_conf.gpio_num = LED_PIN_B;
-    ret = ledc_channel_config(&ch_conf);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Failed to configure blue channel: %s", esp_err_to_name(ret));
-        return ret;
-    }
+    /* Clear LED initially */
+    led_strip_clear(s_led.strip);
 
     /* Start pattern task */
     s_led.task_running = true;
@@ -312,6 +276,10 @@ esp_err_t led_init(void)
     if (task_ret != pdPASS) {
         ESP_LOGE(TAG, "Failed to create pattern task");
         s_led.task_running = false;
+        led_strip_del(s_led.strip);
+        s_led.strip = NULL;
+        vSemaphoreDelete(s_led.mutex);
+        s_led.mutex = NULL;
         return ESP_ERR_NO_MEM;
     }
 
@@ -335,7 +303,7 @@ void led_set_color(uint8_t r, uint8_t g, uint8_t b)
 
         /* If solid pattern, apply immediately */
         if (s_led.pattern == LED_PATTERN_SOLID) {
-            led_apply_pwm(r, g, b);
+            led_apply_color(r, g, b);
         }
         xSemaphoreGive(s_led.mutex);
     }
@@ -366,7 +334,7 @@ void led_set_brightness(uint8_t brightness)
 
         /* If solid pattern, apply immediately */
         if (s_led.pattern == LED_PATTERN_SOLID) {
-            led_apply_pwm(s_led.r, s_led.g, s_led.b);
+            led_apply_color(s_led.r, s_led.g, s_led.b);
         }
         xSemaphoreGive(s_led.mutex);
     }
@@ -442,7 +410,7 @@ void led_flash(led_color_preset_t color, uint16_t duration_ms)
         return;
     }
 
-    led_apply_pwm(preset->r, preset->g, preset->b);
+    led_apply_color(preset->r, preset->g, preset->b);
     vTaskDelay(pdMS_TO_TICKS(duration_ms));
 
     /* Restore previous state */
@@ -453,7 +421,7 @@ void led_flash(led_color_preset_t color, uint16_t duration_ms)
         s_led.pattern = saved_pattern;
 
         if (saved_pattern == LED_PATTERN_SOLID) {
-            led_apply_pwm(saved_r, saved_g, saved_b);
+            led_apply_color(saved_r, saved_g, saved_b);
         }
         xSemaphoreGive(s_led.mutex);
     }

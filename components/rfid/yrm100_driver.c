@@ -6,15 +6,21 @@
  * The YRM100 uses a binary frame protocol at 115200 baud.
  *
  * Hardware Notes:
- * - UART1: GPIO4 (TX to module RX), GPIO5 (RX from module TX)
+ * - UART1: GPIO5 (TX to module RX), GPIO4 (RX from module TX)
  * - GPIO6: Module enable pin (active high)
  * - Baud rate: 115200, 8N1
  *
  * Frame Format:
  * [Header:0xBB] [Type:1B] [Command:1B] [PL_MSB:1B] [PL_LSB:1B] [Params:N] [Checksum:1B] [End:0x7E]
+ *
+ * Phase 2 additions:
+ * - Tag data parsing with EPC, RSSI extraction
+ * - Continuous polling with callback support
+ * - Background polling FreeRTOS task
  */
 
 #include "yrm100_driver.h"
+#include "rfid_protocol.h"
 #include "driver/uart.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
@@ -31,8 +37,8 @@ static const char *TAG = "YRM100";
 
 /* Pin definitions - should match app_config.h */
 #define RFID_UART_NUM           UART_NUM_1
-#define RFID_TX_PIN             4   /* ESP32 TX -> YRM100 RX */
-#define RFID_RX_PIN             5   /* ESP32 RX <- YRM100 TX */
+#define RFID_TX_PIN             5   /* ESP32 TX -> YRM100 RX (GPIO5 = LP_UART_TXD) */
+#define RFID_RX_PIN             4   /* ESP32 RX <- YRM100 TX (GPIO4 = LP_UART_RXD) */
 #define RFID_EN_PIN             6   /* Enable pin (active high) */
 
 /* UART configuration */
@@ -59,6 +65,11 @@ static const char *TAG = "YRM100";
 #define MAX_FRAME_SIZE          128
 #define MAX_PARAMS_SIZE         100
 
+/* Polling task configuration */
+#define POLLING_TASK_STACK_SIZE     4096
+#define POLLING_TASK_PRIORITY       5
+#define POLLING_TASK_NAME           "rfid_poll"
+
 /*******************************************************************************
  * Internal State
  ******************************************************************************/
@@ -69,12 +80,31 @@ typedef struct {
     SemaphoreHandle_t uart_mutex;
     uint8_t tx_buf[MAX_FRAME_SIZE];
     uint8_t rx_buf[MAX_FRAME_SIZE];
+
+    /* Polling task state (Phase 2) */
+    TaskHandle_t poll_task_handle;
+    bool poll_task_running;
+    yrm100_poll_config_t poll_config;
+    yrm100_tag_callback_t tag_callback;
+    void *callback_user_data;
+
+    /* Statistics */
+    uint32_t stat_total_polls;
+    uint32_t stat_tags_detected;
+    uint32_t stat_saturday_tags;
 } yrm100_state_t;
 
 static yrm100_state_t s_rfid = {
     .initialized = false,
     .enabled = false,
     .uart_mutex = NULL,
+    .poll_task_handle = NULL,
+    .poll_task_running = false,
+    .tag_callback = NULL,
+    .callback_user_data = NULL,
+    .stat_total_polls = 0,
+    .stat_tags_detected = 0,
+    .stat_saturday_tags = 0,
 };
 
 /*******************************************************************************
@@ -221,8 +251,8 @@ static esp_err_t send_command(uint8_t cmd, const uint8_t *params, uint16_t param
     /* Build and send frame */
     size_t frame_len = build_frame(cmd, params, param_len, s_rfid.tx_buf);
 
-    ESP_LOGD(TAG, "Sending command 0x%02X (%d bytes)", cmd, frame_len);
-    ESP_LOG_BUFFER_HEX_LEVEL(TAG, s_rfid.tx_buf, frame_len, ESP_LOG_DEBUG);
+    ESP_LOGI(TAG, "Sending command 0x%02X (%d bytes)", cmd, frame_len);
+    ESP_LOG_BUFFER_HEX_LEVEL(TAG, s_rfid.tx_buf, frame_len, ESP_LOG_INFO);
 
     /* Clear RX buffer */
     uart_flush_input(RFID_UART_NUM);
@@ -240,13 +270,13 @@ static esp_err_t send_command(uint8_t cmd, const uint8_t *params, uint16_t param
                                   pdMS_TO_TICKS(timeout_ms));
 
     if (rx_len <= 0) {
-        ESP_LOGD(TAG, "No response received (timeout)");
+        ESP_LOGW(TAG, "No response received (timeout after %d ms)", timeout_ms);
         xSemaphoreGive(s_rfid.uart_mutex);
         return ESP_ERR_TIMEOUT;
     }
 
-    ESP_LOGD(TAG, "Received %d bytes", rx_len);
-    ESP_LOG_BUFFER_HEX_LEVEL(TAG, s_rfid.rx_buf, rx_len, ESP_LOG_DEBUG);
+    ESP_LOGI(TAG, "Received %d bytes", rx_len);
+    ESP_LOG_BUFFER_HEX_LEVEL(TAG, s_rfid.rx_buf, rx_len, ESP_LOG_INFO);
 
     /* Copy response */
     if (response != NULL && response_max_len > 0) {
@@ -281,11 +311,12 @@ esp_err_t yrm100_init(void)
         return ESP_ERR_NO_MEM;
     }
 
-    /* Configure enable pin */
+    /* Configure enable pin with pull-up to help drive the line */
+    ESP_LOGI(TAG, "Configuring EN pin GPIO%d as output with pull-up", RFID_EN_PIN);
     gpio_config_t en_conf = {
         .pin_bit_mask = (1ULL << RFID_EN_PIN),
-        .mode = GPIO_MODE_OUTPUT,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .mode = GPIO_MODE_INPUT_OUTPUT,  /* Input/output so we can read back */
+        .pull_up_en = GPIO_PULLUP_ENABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
         .intr_type = GPIO_INTR_DISABLE,
     };
@@ -294,10 +325,12 @@ esp_err_t yrm100_init(void)
         ESP_LOGE(TAG, "Failed to configure enable pin: %s", esp_err_to_name(ret));
         return ret;
     }
+    ESP_LOGI(TAG, "EN pin configured successfully");
 
     /* Start with module disabled */
     gpio_set_level(RFID_EN_PIN, 0);
     s_rfid.enabled = false;
+    ESP_LOGI(TAG, "EN pin set to 0 (disabled), readback=%d", gpio_get_level(RFID_EN_PIN));
 
     /* Configure UART */
     uart_config_t uart_config = {
@@ -344,13 +377,17 @@ void yrm100_enable(bool enable)
         return;
     }
 
-    gpio_set_level(RFID_EN_PIN, enable ? 1 : 0);
+    ESP_LOGI(TAG, "Setting EN pin GPIO%d to %d", RFID_EN_PIN, enable ? 1 : 0);
+    esp_err_t ret = gpio_set_level(RFID_EN_PIN, enable ? 1 : 0);
+    ESP_LOGI(TAG, "gpio_set_level returned: %s", esp_err_to_name(ret));
     s_rfid.enabled = enable;
 
     if (enable) {
-        /* Give module time to power up */
-        vTaskDelay(pdMS_TO_TICKS(100));
-        ESP_LOGI(TAG, "YRM100 module enabled");
+        /* Give module time to power up - YRM100 needs ~500ms after enable */
+        ESP_LOGI(TAG, "Waiting for YRM100 to initialize...");
+        vTaskDelay(pdMS_TO_TICKS(500));
+        int level = gpio_get_level(RFID_EN_PIN);
+        ESP_LOGI(TAG, "YRM100 module enabled (GPIO%d level=%d after 500ms)", RFID_EN_PIN, level);
     } else {
         ESP_LOGI(TAG, "YRM100 module disabled");
     }
@@ -365,7 +402,9 @@ esp_err_t yrm100_get_firmware_version(char *version, size_t max_len)
     uint8_t response[32];
     size_t response_len = 0;
 
-    esp_err_t ret = send_command(CMD_GET_FIRMWARE_VER, NULL, 0,
+    /* Per M100 protocol: parameter 0x00 = hardware version info */
+    uint8_t params[] = {0x00};
+    esp_err_t ret = send_command(CMD_GET_FIRMWARE_VER, params, sizeof(params),
                                   response, sizeof(response), &response_len,
                                   RFID_RX_TIMEOUT_MS);
     if (ret != ESP_OK) {
@@ -374,10 +413,10 @@ esp_err_t yrm100_get_firmware_version(char *version, size_t max_len)
 
     /* Parse response */
     uint8_t type, cmd;
-    const uint8_t *params;
+    const uint8_t *resp_params;
     uint16_t param_len;
 
-    if (!parse_frame(response, response_len, &type, &cmd, &params, &param_len)) {
+    if (!parse_frame(response, response_len, &type, &cmd, &resp_params, &param_len)) {
         return ESP_ERR_INVALID_RESPONSE;
     }
 
@@ -386,10 +425,10 @@ esp_err_t yrm100_get_firmware_version(char *version, size_t max_len)
         return ESP_ERR_INVALID_RESPONSE;
     }
 
-    /* Copy version string (params contain version info) */
+    /* Copy version string (resp_params contain version info) */
     size_t copy_len = (param_len < max_len - 1) ? param_len : max_len - 1;
-    if (params != NULL && copy_len > 0) {
-        memcpy(version, params, copy_len);
+    if (resp_params != NULL && copy_len > 0) {
+        memcpy(version, resp_params, copy_len);
     }
     version[copy_len] = '\0';
 
@@ -508,7 +547,17 @@ esp_err_t yrm100_stop_polling(void)
     return ESP_OK;
 }
 
+bool yrm100_is_enabled(void)
+{
+    return s_rfid.initialized && s_rfid.enabled;
+}
+
 esp_err_t yrm100_single_poll(void)
+{
+    return yrm100_single_poll_with_data(NULL);
+}
+
+esp_err_t yrm100_single_poll_with_data(rfid_tag_t *tag)
 {
     uint8_t response[64];
     size_t response_len = 0;
@@ -520,26 +569,92 @@ esp_err_t yrm100_single_poll(void)
         return ret;
     }
 
-    /* Parse response */
-    uint8_t type, cmd;
-    const uint8_t *params;
-    uint16_t param_len;
-
-    if (!parse_frame(response, response_len, &type, &cmd, &params, &param_len)) {
+    /* Parse response frame */
+    rfid_frame_t frame;
+    if (!rfid_parse_frame(response, response_len, &frame)) {
         return ESP_ERR_INVALID_RESPONSE;
     }
 
-    if (type != FRAME_TYPE_RESPONSE) {
+    if (frame.type != RFID_FRAME_TYPE_RESPONSE) {
         return ESP_ERR_INVALID_RESPONSE;
     }
 
-    /* Check if tag was found (response contains tag data) or not found (error code 0x15) */
-    if (param_len >= 1 && params != NULL && params[0] == 0x15) {
+    /* Check if tag was found or not found (error code 0x15) */
+    if (frame.param_len >= 1 && frame.params != NULL &&
+        frame.params[0] == RFID_RESP_TAG_NOT_FOUND) {
         return ESP_ERR_NOT_FOUND;
     }
 
-    /* Tag found - full parsing will be done in Phase 2 */
-    ESP_LOGI(TAG, "Tag detected");
+    /* Tag found - parse if requested */
+    if (tag != NULL) {
+        if (!rfid_parse_tag(&frame, tag)) {
+            ESP_LOGW(TAG, "Failed to parse tag data");
+            return ESP_ERR_INVALID_RESPONSE;
+        }
+
+        char epc_str[25];
+        rfid_epc_to_hex_string(tag->epc, tag->epc_len, epc_str, sizeof(epc_str));
+        ESP_LOGI(TAG, "Tag detected: EPC=%s, RSSI=%d dBm, Saturday=%s",
+                 epc_str, rfid_rssi_to_dbm(tag->rssi),
+                 tag->is_saturday_tag ? "yes" : "no");
+    } else {
+        ESP_LOGI(TAG, "Tag detected");
+    }
+
+    return ESP_OK;
+}
+
+esp_err_t yrm100_read_tag_notice(rfid_tag_t *tag, uint32_t timeout_ms)
+{
+    if (tag == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (!s_rfid.initialized || !s_rfid.enabled) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (xSemaphoreTake(s_rfid.uart_mutex, pdMS_TO_TICKS(timeout_ms)) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+
+    /* Read data from UART */
+    int rx_len = uart_read_bytes(RFID_UART_NUM, s_rfid.rx_buf, MAX_FRAME_SIZE,
+                                  pdMS_TO_TICKS(timeout_ms));
+
+    if (rx_len <= 0) {
+        xSemaphoreGive(s_rfid.uart_mutex);
+        return ESP_ERR_TIMEOUT;
+    }
+
+    ESP_LOGD(TAG, "Received %d bytes", rx_len);
+    ESP_LOG_BUFFER_HEX_LEVEL(TAG, s_rfid.rx_buf, rx_len, ESP_LOG_DEBUG);
+
+    xSemaphoreGive(s_rfid.uart_mutex);
+
+    /* Find and parse frame */
+    size_t frame_start, frame_len;
+    if (!rfid_find_frame(s_rfid.rx_buf, rx_len, &frame_start, &frame_len)) {
+        ESP_LOGD(TAG, "No valid frame found in received data");
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+
+    rfid_frame_t frame;
+    if (!rfid_parse_frame(&s_rfid.rx_buf[frame_start], frame_len, &frame)) {
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+
+    /* Check if this is a tag notice */
+    if (frame.type != RFID_FRAME_TYPE_NOTICE) {
+        ESP_LOGD(TAG, "Frame is not a notice (type=0x%02X)", frame.type);
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+
+    /* Parse tag data */
+    if (!rfid_parse_tag(&frame, tag)) {
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+
     return ESP_OK;
 }
 
@@ -583,4 +698,190 @@ int yrm100_receive_raw(uint8_t *buf, size_t max_len, uint32_t timeout_ms)
     xSemaphoreGive(s_rfid.uart_mutex);
 
     return rx_len;
+}
+
+/*******************************************************************************
+ * Background Polling Task (Phase 2)
+ ******************************************************************************/
+
+/**
+ * @brief Background task that continuously polls for RFID tags
+ *
+ * Uses single polls with intervals rather than continuous polling mode
+ * for better control and cleaner code.
+ */
+static void rfid_polling_task(void *arg)
+{
+    ESP_LOGI(TAG, "RFID polling task started (interval=%dms, power=%ddBm)",
+             s_rfid.poll_config.poll_interval_ms,
+             s_rfid.poll_config.rf_power_dbm);
+
+    /* Configure RF power */
+    esp_err_t ret = yrm100_set_rf_power(s_rfid.poll_config.rf_power_dbm);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to set RF power: %s", esp_err_to_name(ret));
+    }
+
+    rfid_tag_t tag;
+    char epc_str[25];
+
+    while (s_rfid.poll_task_running) {
+        /* Perform single poll with tag data */
+        ret = yrm100_single_poll_with_data(&tag);
+        s_rfid.stat_total_polls++;
+
+        if (ret == ESP_OK) {
+            /* Tag detected */
+            s_rfid.stat_tags_detected++;
+
+            if (tag.is_saturday_tag) {
+                s_rfid.stat_saturday_tags++;
+            }
+
+            /* Apply filter if configured */
+            bool should_report = true;
+            if (s_rfid.poll_config.filter_saturday_only && !tag.is_saturday_tag) {
+                should_report = false;
+                ESP_LOGD(TAG, "Filtered non-Saturday tag");
+            }
+
+            /* Invoke callback if registered */
+            if (should_report && s_rfid.tag_callback != NULL) {
+                rfid_epc_to_hex_string(tag.epc, tag.epc_len, epc_str, sizeof(epc_str));
+                ESP_LOGD(TAG, "Invoking callback for tag: %s", epc_str);
+                s_rfid.tag_callback(&tag, s_rfid.callback_user_data);
+            }
+        } else if (ret == ESP_ERR_NOT_FOUND) {
+            /* No tag - this is normal */
+            ESP_LOGD(TAG, "No tag in field");
+        } else if (ret == ESP_ERR_TIMEOUT) {
+            /* Module not responding - log occasionally */
+            if (s_rfid.stat_total_polls % 20 == 0) {
+                ESP_LOGW(TAG, "RFID module timeout (poll #%lu)",
+                         (unsigned long)s_rfid.stat_total_polls);
+            }
+        } else {
+            ESP_LOGD(TAG, "Poll error: %s", esp_err_to_name(ret));
+        }
+
+        /* Wait for next poll interval */
+        vTaskDelay(pdMS_TO_TICKS(s_rfid.poll_config.poll_interval_ms));
+    }
+
+    ESP_LOGI(TAG, "RFID polling task stopped");
+    s_rfid.poll_task_handle = NULL;
+    vTaskDelete(NULL);
+}
+
+void yrm100_register_tag_callback(yrm100_tag_callback_t callback, void *user_data)
+{
+    s_rfid.tag_callback = callback;
+    s_rfid.callback_user_data = user_data;
+
+    if (callback != NULL) {
+        ESP_LOGI(TAG, "Tag callback registered");
+    } else {
+        ESP_LOGI(TAG, "Tag callback unregistered");
+    }
+}
+
+esp_err_t yrm100_start_polling_task(const yrm100_poll_config_t *config)
+{
+    if (!s_rfid.initialized) {
+        ESP_LOGE(TAG, "YRM100 not initialized");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (s_rfid.poll_task_running) {
+        ESP_LOGW(TAG, "Polling task already running");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    /* Apply configuration */
+    if (config != NULL) {
+        s_rfid.poll_config = *config;
+    } else {
+        yrm100_poll_config_t default_config = YRM100_POLL_CONFIG_DEFAULT();
+        s_rfid.poll_config = default_config;
+    }
+
+    /* Reset statistics */
+    s_rfid.stat_total_polls = 0;
+    s_rfid.stat_tags_detected = 0;
+    s_rfid.stat_saturday_tags = 0;
+
+    /* Enable the module if not already enabled */
+    if (!s_rfid.enabled) {
+        yrm100_enable(true);
+    }
+
+    /* Start the task */
+    s_rfid.poll_task_running = true;
+    BaseType_t result = xTaskCreate(
+        rfid_polling_task,
+        POLLING_TASK_NAME,
+        POLLING_TASK_STACK_SIZE,
+        NULL,
+        POLLING_TASK_PRIORITY,
+        &s_rfid.poll_task_handle
+    );
+
+    if (result != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create polling task");
+        s_rfid.poll_task_running = false;
+        return ESP_ERR_NO_MEM;
+    }
+
+    ESP_LOGI(TAG, "Polling task started");
+    return ESP_OK;
+}
+
+esp_err_t yrm100_stop_polling_task(void)
+{
+    if (!s_rfid.poll_task_running) {
+        ESP_LOGW(TAG, "Polling task not running");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    ESP_LOGI(TAG, "Stopping polling task...");
+
+    /* Signal task to stop */
+    s_rfid.poll_task_running = false;
+
+    /* Wait for task to finish (up to 2 seconds) */
+    for (int i = 0; i < 20 && s_rfid.poll_task_handle != NULL; i++) {
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+
+    if (s_rfid.poll_task_handle != NULL) {
+        ESP_LOGW(TAG, "Polling task did not stop gracefully, forcing delete");
+        vTaskDelete(s_rfid.poll_task_handle);
+        s_rfid.poll_task_handle = NULL;
+    }
+
+    ESP_LOGI(TAG, "Polling task stopped (polls=%lu, tags=%lu, saturday=%lu)",
+             (unsigned long)s_rfid.stat_total_polls,
+             (unsigned long)s_rfid.stat_tags_detected,
+             (unsigned long)s_rfid.stat_saturday_tags);
+
+    return ESP_OK;
+}
+
+bool yrm100_is_polling_task_running(void)
+{
+    return s_rfid.poll_task_running;
+}
+
+void yrm100_get_poll_stats(uint32_t *total_polls, uint32_t *tags_detected,
+                            uint32_t *saturday_tags)
+{
+    if (total_polls != NULL) {
+        *total_polls = s_rfid.stat_total_polls;
+    }
+    if (tags_detected != NULL) {
+        *tags_detected = s_rfid.stat_tags_detected;
+    }
+    if (saturday_tags != NULL) {
+        *saturday_tags = s_rfid.stat_saturday_tags;
+    }
 }
