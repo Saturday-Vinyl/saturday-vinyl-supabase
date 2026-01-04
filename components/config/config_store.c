@@ -31,7 +31,7 @@ static const char *TAG = "CONFIG";
 
 /* Default values */
 #define DEFAULT_POLL_INTERVAL_MS        500
-#define DEFAULT_RF_POWER_DBM            10
+#define DEFAULT_RF_POWER_DBM            15  /* YRM100 minimum is 15 dBm */
 #define DEFAULT_DEBOUNCE_PRESENT_MS     1000
 #define DEFAULT_DEBOUNCE_ABSENT_MS      2000
 

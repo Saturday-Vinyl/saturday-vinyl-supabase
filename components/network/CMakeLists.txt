@@ -5,6 +5,6 @@ idf_component_register(
         "thread_br.c"
         "coap_server.c"
     INCLUDE_DIRS "include"
-    REQUIRES esp_wifi esp_netif esp_event nvs_flash esp_timer esp_http_client
+    REQUIRES esp_wifi esp_netif esp_event nvs_flash esp_timer esp_http_client lwip
     PRIV_REQUIRES config esp-tls
 )

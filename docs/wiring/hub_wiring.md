@@ -1,6 +1,6 @@
 # Saturday Vinyl Hub - Wiring Reference
 
-**Document Version:** 1.5.0
+**Document Version:** 1.6.0
 **Hardware Revision:** Dev Kit (ESP32-C6-DevKitC-1 + YRM100)
 **Last Updated:** 2025-01-XX
 
@@ -79,6 +79,9 @@ The Saturday Hub test harness connects an ESP32-C6 development board to:
 
 ## YRM100 RFID Module Wiring
 
+The YRM100 is a UHF RFID module using the M100 protocol. Two compatible module variants
+are supported, with different wire color schemes.
+
 ### Pinout
 
 ```
@@ -93,19 +96,48 @@ The Saturday Hub test harness connects an ESP32-C6 development board to:
         └─────────────────────────────────────┘
 ```
 
-### Connection Table
+### Module Variants
 
-| YRM100 Pin | Name | Connect To        | Wire Color (suggested) |
-|------------|------|-------------------|------------------------|
-| 1          | GND  | Common GND        | Black                  |
-| 2          | EN   | ESP32-C6 GPIO6    | Green                  |
-| 3          | RXD  | ESP32-C6 GPIO5    | Orange                 |
-| 4          | TXD  | ESP32-C6 GPIO4    | Yellow                 |
-| 5          | VCC  | USB 5V rail       | Red                    |
+| Variant | Manufacturer | Antenna Gain | Notes |
+|---------|--------------|--------------|-------|
+| **YRM100 (SBComponents)** | SBComponents | 3 dBi | Larger antenna, original module |
+| **YRM100 (Generic)** | AliExpress generic | 2 dBi | Smaller antenna, compact form factor |
+
+Both modules share identical electrical specifications and protocol:
+- Working voltage: DC 3.5V - 5V
+- Output power range: 15-26 dBm (**minimum 15 dBm**)
+- Baud rate: 115200 BPS (default)
+- Air interface: EPCglobal UHF Class 1 Gen 2 / ISO 18000-6C
+- Working spectrum: 840-960 MHz
+
+### Connection Tables
+
+#### YRM100 (SBComponents) - 3 dBi Antenna
+
+| YRM100 Pin | Name | Connect To        | Wire Color |
+|------------|------|-------------------|------------|
+| 1          | GND  | Common GND        | Black      |
+| 2          | EN   | ESP32-C6 GPIO6    | Green      |
+| 3          | RXD  | ESP32-C6 GPIO5    | Orange     |
+| 4          | TXD  | ESP32-C6 GPIO4    | Yellow     |
+| 5          | VCC  | USB 5V rail       | Red        |
+
+#### YRM100 (Generic/AliExpress) - 2 dBi Antenna
+
+| YRM100 Pin | Name | Connect To        | Wire Color |
+|------------|------|-------------------|------------|
+| 1          | GND  | Common GND        | Blue       |
+| 2          | EN   | ESP32-C6 GPIO6    | Green      |
+| 3          | RXD  | ESP32-C6 GPIO5    | Yellow     |
+| 4          | TXD  | ESP32-C6 GPIO4    | Black      |
+| 5          | VCC  | USB 5V rail       | Red        |
 
 > **Note:** The YRM100 VCC (Pin 5) must be connected to the 5V rail (from USB), not the
-> ESP32-C6's 3V3 output. The module requires 3-5V and draws up to 260mA
+> ESP32-C6's 3V3 output. The module requires 3.5-5V and draws up to 260mA
 > peak during RF transmission. EN (Pin 2) requires >1.5V to enable the module.
+>
+> **Important:** The minimum RF power for YRM100 modules is **15 dBm**. Setting lower values
+> will be accepted but the module silently uses 15 dBm.
 
 ### UART Configuration
 
@@ -347,7 +379,7 @@ For debugging and validation, expose these signals:
 | Qty | Component              | Part Number / Value      | Notes                     |
 |-----|------------------------|--------------------------|---------------------------|
 | 1   | ESP32-C6 Dev Board     | ESP32-C6-DevKitC-1       | Includes onboard WS2812   |
-| 1   | YRM100 RFID Module     | YRM100                   | With antenna              |
+| 1   | YRM100 RFID Module     | YRM100 (SBComponents 3dBi or Generic 2dBi) | With antenna |
 | 1   | Momentary Push Button  | 6mm tactile switch       | Normally open             |
 | 1   | Breadboard             | Half-size or full-size   | For prototyping           |
 | 1   | USB-C Cable            | Data-capable             | Power and programming     |
@@ -396,6 +428,7 @@ For debugging and validation, expose these signals:
 | 1.3.0   | 2025-01-XX | -      | Fixed UART pin assignments (GPIO4=RX, GPIO5=TX) |
 | 1.4.0   | 2025-01-XX | -      | Fixed USB pin assignments (GPIO12=D-, GPIO13=D+) |
 | 1.5.0   | 2025-01-XX | -      | Fixed YRM100 pinout per manufacturer specs       |
+| 1.6.0   | 2026-01-XX | -      | Added support for two YRM100 module variants (SBComponents 3dBi, Generic 2dBi) |
 
 ---
 

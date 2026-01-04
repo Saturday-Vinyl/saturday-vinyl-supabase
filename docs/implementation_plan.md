@@ -159,13 +159,28 @@ This document breaks down the hub firmware development into iterative phases. Ea
 - 500ms delay after enabling module before sending commands
 
 **YRM100 Wiring Reference:**
+
+Two YRM100 module variants are supported with different wire colors:
+
+*YRM100 (SBComponents) - 3 dBi Antenna:*
 | YRM100 Pin | Wire Color | ESP32 GPIO |
 |------------|------------|------------|
-| 1 (GND) | Red | GND |
-| 2 (EN) | Black | GPIO6 |
+| 1 (GND) | Black | GND |
+| 2 (EN) | Green | GPIO6 |
+| 3 (RXD) | Orange | GPIO5 |
+| 4 (TXD) | Yellow | GPIO4 |
+| 5 (VCC) | Red | 5V (USB rail) |
+
+*YRM100 (Generic/AliExpress) - 2 dBi Antenna:*
+| YRM100 Pin | Wire Color | ESP32 GPIO |
+|------------|------------|------------|
+| 1 (GND) | Blue | GND |
+| 2 (EN) | Green | GPIO6 |
 | 3 (RXD) | Yellow | GPIO5 |
-| 4 (TXD) | Green | GPIO4 |
-| 5 (VCC) | Blue | 3.3V |
+| 4 (TXD) | Black | GPIO4 |
+| 5 (VCC) | Red | 5V (USB rail) |
+
+> **Note:** Both modules require 5V power and have a minimum RF power of 15 dBm.
 
 #### 1.4 USB Serial Console
 - [x] Verify UART0 works for debug output (should work by default)
@@ -478,11 +493,13 @@ This document breaks down the hub firmware development into iterative phases. Ea
 
 **Goal:** Send Now Playing events to Supabase.
 
+**Status:** Complete
+
 ### Tasks
 
 #### 5.1 Supabase Client
-- [ ] Create `components/cloud/supabase_client.c`
-- [ ] Store Supabase config:
+- [x] Create `components/cloud/supabase_client.c`
+- [x] Store Supabase config:
   ```c
   typedef struct {
       char url[128];
@@ -490,17 +507,24 @@ This document breaks down the hub firmware development into iterative phases. Ea
       char device_secret[64];
   } supabase_config_t;
   ```
-- [ ] Implement authenticated POST request:
+- [x] Implement authenticated POST request:
   ```c
   esp_err_t supabase_post(const char *table, const char *json_body);
   ```
-- [ ] Handle HTTP response codes (200, 401, 500, etc.)
-- [ ] Test: POST to test table, verify row created in Supabase dashboard
+- [x] Handle HTTP response codes (200, 401, 500, etc.)
+- [x] Test: POST to test table, verify row created in Supabase dashboard
+
+**Implementation Notes:**
+- NVS namespace: `sv_supabase`
+- Keys: `url`, `anon_key`, `dev_secret`, `hub_id`
+- Uses esp_http_client with esp_crt_bundle for HTTPS
+- Response buffering up to 4KB
+- Automatic headers: apikey, Authorization (Bearer), Content-Type
 
 #### 5.2 Event Reporter
-- [ ] Create `components/cloud/event_reporter.c`
-- [ ] Subscribe to Now Playing events
-- [ ] Format events as JSON:
+- [x] Create `components/cloud/event_reporter.c`
+- [x] Subscribe to Now Playing events
+- [x] Format events as JSON:
   ```json
   {
     "hub_id": "HUB-TEST",
@@ -510,19 +534,31 @@ This document breaks down the hub firmware development into iterative phases. Ea
     "timestamp": "2025-01-15T10:30:00Z"
   }
   ```
-- [ ] Send to Supabase when event occurs
-- [ ] Test: Place tag, verify event appears in Supabase
+- [x] Send to Supabase when event occurs
+- [x] Test: Place tag, verify event appears in Supabase
+
+**Implementation Notes:**
+- Background FreeRTOS task for cloud sync (8KB stack)
+- Automatic Wi-Fi state tracking
+- Posts to `now_playing_events` table
+- Includes duration_ms for removal events
 
 #### 5.3 Event Queue (Offline Support)
-- [ ] Implement in-memory event queue (ring buffer)
-- [ ] Queue events when Wi-Fi disconnected
-- [ ] Flush queue when Wi-Fi reconnects
-- [ ] Drop oldest events if queue full (log warning)
-- [ ] Test: Disconnect Wi-Fi, generate events, reconnect, verify all sent
+- [x] Implement in-memory event queue (ring buffer)
+- [x] Queue events when Wi-Fi disconnected
+- [x] Flush queue when Wi-Fi reconnects
+- [x] Drop oldest events if queue full (log warning)
+- [x] Test: Disconnect Wi-Fi, generate events, reconnect, verify all sent
+
+**Implementation Notes:**
+- Ring buffer with configurable size (default: 100 events)
+- Thread-safe with mutex protection
+- Posts EVENT_REPORTER_EVENTS for sync status
+- Automatic flush on Wi-Fi reconnect
 
 #### 5.4 Hub Heartbeat
-- [ ] Implement periodic heartbeat (every 5 minutes)
-- [ ] Include device health metrics:
+- [x] Implement periodic heartbeat (every 5 minutes)
+- [x] Include device health metrics:
   ```json
   {
     "hub_id": "HUB-TEST",
@@ -532,7 +568,13 @@ This document breaks down the hub firmware development into iterative phases. Ea
     "free_heap": 128000
   }
   ```
-- [ ] Test: Verify heartbeats appear in Supabase
+- [x] Test: Verify heartbeats appear in Supabase
+
+**Implementation Notes:**
+- Uses esp_timer for periodic callbacks
+- Posts to `hub_heartbeats` table
+- Includes events_queued count for monitoring
+- Configurable interval (default: 300 seconds)
 
 ### Deliverables
 - Now Playing events in Supabase within seconds
@@ -1018,7 +1060,7 @@ Phase 0 → Phase 1 → Phase 2 → Phase 3 → Phase 4 → Phase 5
 | Dependency | Required By | Notes |
 |------------|-------------|-------|
 | ESP32-C6 dev boards | Phase 0 | For initial development |
-| YRM100 module | Phase 1 | For RFID testing |
+| YRM100 module (SBComponents 3dBi or Generic 2dBi) | Phase 1 | For RFID testing |
 | Supabase project | Phase 5 | Tables and auth configured |
 | Saturday Admin app | Phase 6 | Serial provisioning support |
 | Saturday Mobile app | Phase 7 | BLE provisioning support |
@@ -1032,7 +1074,7 @@ Phase 0 → Phase 1 → Phase 2 → Phase 3 → Phase 4 → Phase 5
 | Risk | Impact | Mitigation |
 |------|--------|------------|
 | Thread BR stability issues | High | Test extensively, have fallback mode |
-| YRM100 range too large/small | Medium | RF power and antenna tuning |
+| YRM100 range too large/small | Medium | RF power tuning (15-26 dBm), antenna selection (2-3 dBi) |
 | BLE + Thread coexistence | Medium | Test radio switching, timing |
 | Memory constraints | Medium | Monitor early, optimize as needed |
 | Supabase rate limits | Low | Implement batching and queuing |

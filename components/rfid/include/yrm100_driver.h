@@ -64,7 +64,7 @@ typedef struct {
  */
 #define YRM100_POLL_CONFIG_DEFAULT() { \
     .poll_interval_ms = 500, \
-    .rf_power_dbm = 10, \
+    .rf_power_dbm = 15, /* YRM100 minimum is 15 dBm */ \
     .filter_saturday_only = false, \
 }
 

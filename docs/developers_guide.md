@@ -1,7 +1,7 @@
 # Saturday Vinyl Hub Firmware - Developer Guide
 
 **Project:** sv-hub-firmware
-**Version:** 0.1.0
+**Version:** 0.2.0
 **Status:** Pre-development
 **Audience:** Internal Saturday Vinyl engineers and AI agents
 
@@ -160,19 +160,34 @@ The ESP32-C6 was selected for its native support of all required wireless protoc
 
 ### YRM100 UHF RFID Module
 
-The YRM100 module handles all RFID operations for "Now Playing" detection.
+The YRM100 module handles all RFID operations for "Now Playing" detection. Two compatible
+module variants are supported.
+
+#### Module Variants
+
+| Variant | Manufacturer | Antenna Gain | Notes |
+|---------|--------------|--------------|-------|
+| **YRM100 (SBComponents)** | SBComponents | 3 dBi | Larger antenna, original module |
+| **YRM100 (Generic)** | AliExpress generic | 2 dBi | Smaller antenna, compact form factor |
+
+#### Common Specifications
 
 | Parameter | Value |
 |-----------|-------|
-| Module | YRM100 |
-| Frequency | UHF 860-960 MHz |
+| Frequency | UHF 840-960 MHz |
 | Protocol | ISO 18000-6C / EPC Gen2 |
 | Interface | UART (3.3V TTL) |
 | Baud Rate | 115200 (8N1) |
-| RF Power | 0-30 dBm (configurable) |
-| Default Power | 20 dBm |
-| Supply Voltage | 3.3V - 5V |
+| RF Power | **15-26 dBm** (minimum 15 dBm) |
+| Default Power | 15 dBm |
+| Supply Voltage | 3.5V - 5V |
 | Enable Pin | Active high (min 1.5V) |
+| Standby Current | <80mA (EN high) |
+| Sleep Current | <100µA (EN low) |
+| Working Current | 180mA @ 3.5V (26 dBm), 110mA @ 3.5V (18 dBm) |
+
+> **Important:** The YRM100 has a **minimum RF power of 15 dBm**. Setting lower values
+> will be accepted but the module silently uses 15 dBm.
 
 #### YRM100 Pinout
 
@@ -195,7 +210,17 @@ The YRM100 module handles all RFID operations for "Now Playing" detection.
 | 4 | TXD | ESP32-C6 GPIO4 (UART1_RX) |
 | 5 | VCC | 5V (from USB) |
 
-*Note: The YRM100 requires 3-5V power and draws up to 260mA peak current during RF transmission.*
+#### Wire Colors by Module Variant
+
+| Pin | SBComponents | Generic (AliExpress) |
+|-----|--------------|----------------------|
+| 1 (GND) | Black | Blue |
+| 2 (EN) | Green | Green |
+| 3 (RXD) | Orange | Yellow |
+| 4 (TXD) | Yellow | Black |
+| 5 (VCC) | Red | Red |
+
+*Note: The YRM100 requires 3.5-5V power and draws up to 260mA peak current during RF transmission.*
 
 ### Power
 
@@ -509,7 +534,7 @@ The hub communicates with the YRM100 module using a binary frame protocol over U
 | SinglePoll | `0x22` | Poll for one tag |
 | MultiplePoll | `0x27` | Start continuous polling |
 | StopMultiplePoll | `0x28` | Stop continuous polling |
-| SetRfPower | `0xB6` | Set RF power level (0-30 dBm) |
+| SetRfPower | `0xB6` | Set RF power level (15-26 dBm, min 15 dBm) |
 | GetRfPower | `0xB7` | Get current RF power |
 
 #### Checksum Calculation
@@ -562,7 +587,7 @@ bool is_saturday_tag(const uint8_t *epc, size_t len) {
 | Parameter | Default | Range | Description |
 |-----------|---------|-------|-------------|
 | `poll_interval_ms` | 500 | 100-5000 | Time between RFID polls |
-| `rf_power_dbm` | 10 | 0-30 | RF output power |
+| `rf_power_dbm` | 15 | 15-26 | RF output power (module minimum is 15 dBm) |
 | `debounce_present_ms` | 1000 | 0-5000 | Time tag must be present to confirm |
 | `debounce_absent_ms` | 2000 | 0-10000 | Time tag must be absent to confirm removal |
 
@@ -871,7 +896,7 @@ Configuration is stored in the ESP32's NVS (Non-Volatile Storage) flash partitio
 
 ```c
 #define DEFAULT_POLL_INTERVAL_MS    500
-#define DEFAULT_RF_POWER_DBM        10
+#define DEFAULT_RF_POWER_DBM        15   // YRM100 minimum is 15 dBm
 #define DEFAULT_DEBOUNCE_PRESENT_MS 1000
 #define DEFAULT_DEBOUNCE_ABSENT_MS  2000
 ```
@@ -994,7 +1019,11 @@ MAJOR.MINOR.PATCH
 | Start polling | `BB 00 27 00 03 22 00 00 4C 7E` |
 | Stop polling | `BB 00 28 00 00 28 7E` |
 | Get RF power | `BB 00 B7 00 00 B7 7E` |
-| Set RF power (10 dBm) | `BB 00 B6 00 02 05 0A BD 7E` |
+| Set RF power (20 dBm) | `BB 00 B6 00 02 07 D0 8F 7E` |
+| Set RF power (15 dBm) | `BB 00 B6 00 02 05 DC 89 7E` |
+
+**Note:** RF power is specified in centidBm (dBm × 100). For example, 20 dBm = 2000 = 0x07D0, 15 dBm = 1500 = 0x05DC.
+The YRM100 module has a minimum power of 15 dBm - lower values are silently clamped.
 
 ### Quick Reference: Error Codes
 
@@ -1018,6 +1047,7 @@ MAJOR.MINOR.PATCH
 | Version | Date | Author | Changes |
 |---------|------|--------|---------|
 | 0.1.0 | 2025-01-XX | Initial | Initial draft |
+| 0.2.0 | 2026-01-XX | - | Added two YRM100 module variants (SBComponents 3dBi, Generic 2dBi), updated RF power specs (min 15 dBm) |
 
 ---
 

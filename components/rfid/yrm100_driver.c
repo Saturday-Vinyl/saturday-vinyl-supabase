@@ -442,15 +442,36 @@ esp_err_t yrm100_get_firmware_version(char *version, size_t max_len)
 
 esp_err_t yrm100_set_rf_power(uint8_t power_dbm)
 {
-    if (power_dbm > 30) {
-        ESP_LOGW(TAG, "RF power capped to 30 dBm (requested %d)", power_dbm);
-        power_dbm = 30;
+    /* Per YRM100/M100 protocol (section 2.17):
+     * - Power range: 0-33 dBm (module dependent)
+     * - Parameter format: 2 bytes, power in centidBm (dBm × 100)
+     * - Example: 20 dBm = 2000 = 0x07D0
+     *
+     * NOTE: YRM100 module has a MINIMUM power of 15 dBm. Values below this
+     * will be accepted but the module silently uses 15 dBm instead.
+     */
+    if (power_dbm < 15) {
+        ESP_LOGW(TAG, "RF power %d dBm is below YRM100 minimum (15 dBm) - module will use 15 dBm",
+                 power_dbm);
+    }
+    if (power_dbm > 33) {
+        ESP_LOGW(TAG, "RF power capped to 33 dBm (requested %d)", power_dbm);
+        power_dbm = 33;
     }
 
-    /* SetRfPower parameters: [Reserved:0x05] [Power:1B] */
-    uint8_t params[] = {0x05, power_dbm};
+    /* Convert dBm to centidBm (dBm × 100) */
+    uint16_t power_centidBm = (uint16_t)power_dbm * 100;
+
+    /* SetRfPower parameters: [Power_MSB] [Power_LSB] (big-endian centidBm) */
+    uint8_t params[] = {
+        (power_centidBm >> 8) & 0xFF,  /* MSB */
+        power_centidBm & 0xFF           /* LSB */
+    };
     uint8_t response[16];
     size_t response_len = 0;
+
+    ESP_LOGD(TAG, "Setting RF power: %d dBm = %d centidBm (0x%02X%02X)",
+             power_dbm, power_centidBm, params[0], params[1]);
 
     esp_err_t ret = send_command(CMD_SET_RF_POWER, params, sizeof(params),
                                   response, sizeof(response), &response_len,
@@ -505,11 +526,16 @@ esp_err_t yrm100_get_rf_power(uint8_t *power_dbm)
         return ESP_ERR_INVALID_RESPONSE;
     }
 
-    /* Response params: [Reserved:0x05] [Power:1B] */
+    /* Per YRM100/M100 protocol (section 2.18):
+     * Response params: [Power_MSB] [Power_LSB] (big-endian centidBm)
+     * Convert centidBm back to dBm by dividing by 100
+     */
     if (param_len >= 2 && params != NULL) {
-        *power_dbm = params[1];
-        ESP_LOGI(TAG, "Current RF power: %d dBm", *power_dbm);
+        uint16_t power_centidBm = ((uint16_t)params[0] << 8) | params[1];
+        *power_dbm = (uint8_t)(power_centidBm / 100);
+        ESP_LOGI(TAG, "Current RF power: %d dBm (%d centidBm)", *power_dbm, power_centidBm);
     } else {
+        ESP_LOGW(TAG, "Unexpected response param length: %d", param_len);
         return ESP_ERR_INVALID_RESPONSE;
     }
 
@@ -732,6 +758,20 @@ static void rfid_polling_task(void *arg)
     esp_err_t ret = yrm100_set_rf_power(s_rfid.poll_config.rf_power_dbm);
     if (ret != ESP_OK) {
         ESP_LOGW(TAG, "Failed to set RF power: %s", esp_err_to_name(ret));
+    }
+
+    /* Verify RF power was set correctly by reading it back */
+    uint8_t actual_power_dbm = 0;
+    ret = yrm100_get_rf_power(&actual_power_dbm);
+    if (ret == ESP_OK) {
+        if (actual_power_dbm != s_rfid.poll_config.rf_power_dbm) {
+            ESP_LOGW(TAG, "RF power mismatch: requested %d dBm, module reports %d dBm",
+                     s_rfid.poll_config.rf_power_dbm, actual_power_dbm);
+        } else {
+            ESP_LOGI(TAG, "RF power verified: %d dBm", actual_power_dbm);
+        }
+    } else {
+        ESP_LOGW(TAG, "Failed to verify RF power: %s", esp_err_to_name(ret));
     }
 
     rfid_tag_t tag;

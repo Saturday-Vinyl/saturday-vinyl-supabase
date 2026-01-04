@@ -25,9 +25,15 @@
  * - Wi-Fi station mode with auto-reconnect
  * - HTTPS client with TLS certificate bundle
  * - LED feedback for connection state
+ *
+ * Phase 5: Supabase Integration
+ * - Now Playing events sent to Supabase
+ * - Event queue with offline support
+ * - Periodic hub heartbeat
  */
 
 #include <stdio.h>
+#include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
@@ -45,6 +51,8 @@
 #include "config_store.h"
 #include "wifi_manager.h"
 #include "http_client.h"
+#include "supabase_client.h"
+#include "event_reporter.h"
 
 static const char *TAG = "SV_HUB";
 
@@ -314,6 +322,9 @@ static void on_wifi_event(void *handler_args, esp_event_base_t base,
             s_wifi_connected = true;
             ESP_LOGI(TAG, "Wi-Fi connected: %s (RSSI: %d dBm)", info->ssid, info->rssi);
 
+            /* Notify event reporter of Wi-Fi state (Phase 5) */
+            event_reporter_set_wifi_state(true);
+
             /* Flash cyan to indicate connection, then return to normal */
             led_flash(LED_COLOR_CYAN, 500);
 
@@ -333,6 +344,10 @@ static void on_wifi_event(void *handler_args, esp_event_base_t base,
         case WIFI_MANAGER_EVENT_DISCONNECTED:
             s_wifi_connected = false;
             ESP_LOGW(TAG, "Wi-Fi disconnected - will attempt to reconnect");
+
+            /* Notify event reporter of Wi-Fi state (Phase 5) */
+            event_reporter_set_wifi_state(false);
+
             /* Show orange slow blink to indicate reconnecting */
             led_set_state(LED_COLOR_ORANGE, LED_PATTERN_BLINK_SLOW, 1000);
             break;
@@ -340,6 +355,10 @@ static void on_wifi_event(void *handler_args, esp_event_base_t base,
         case WIFI_MANAGER_EVENT_CONNECTION_FAILED:
             s_wifi_connected = false;
             ESP_LOGE(TAG, "Wi-Fi connection failed - check credentials");
+
+            /* Notify event reporter of Wi-Fi state (Phase 5) */
+            event_reporter_set_wifi_state(false);
+
             /* Flash red to indicate error */
             led_flash(LED_COLOR_RED, 500);
             vTaskDelay(pdMS_TO_TICKS(550));
@@ -411,7 +430,7 @@ void app_main(void)
 
     ESP_LOGI(TAG, "===========================================");
     ESP_LOGI(TAG, "  Saturday Vinyl Hub Firmware v%s", FIRMWARE_VERSION);
-    ESP_LOGI(TAG, "  Phase 4: Wi-Fi Connectivity");
+    ESP_LOGI(TAG, "  Phase 5: Supabase Integration");
     ESP_LOGI(TAG, "===========================================");
 
     /* Log chip info */
@@ -505,11 +524,81 @@ void app_main(void)
     ESP_LOGI(TAG, "===========================================");
 
     /*
+     * Initialize Supabase Client (Phase 5)
+     */
+    ESP_LOGI(TAG, "Initializing Supabase client...");
+    ret = supabase_init();
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Supabase init failed: %s", esp_err_to_name(ret));
+    } else {
+        if (supabase_is_configured()) {
+            ESP_LOGI(TAG, "Supabase client initialized with stored config");
+        } else {
+            ESP_LOGI(TAG, "Supabase client initialized (awaiting configuration)");
+        }
+    }
+
+#if USE_TEST_CREDENTIALS
+    /*
+     * Apply test credentials (Phase 5 testing only)
+     * These will be stored in NVS and persist across reboots.
+     */
+    ESP_LOGI(TAG, "Applying test credentials...");
+
+    /* Set Wi-Fi credentials if not already stored */
+    if (!config_has_wifi()) {
+        ret = config_set_wifi(TEST_WIFI_SSID, TEST_WIFI_PASSWORD);
+        if (ret == ESP_OK) {
+            ESP_LOGI(TAG, "Test Wi-Fi credentials stored for '%s'", TEST_WIFI_SSID);
+        } else {
+            ESP_LOGE(TAG, "Failed to store Wi-Fi credentials: %s", esp_err_to_name(ret));
+        }
+    }
+
+    /* Set Supabase config if not already stored */
+    if (!supabase_is_configured()) {
+        supabase_config_t sb_config = {0};
+        strncpy(sb_config.url, TEST_SUPABASE_URL, sizeof(sb_config.url) - 1);
+        strncpy(sb_config.anon_key, TEST_SUPABASE_ANON_KEY, sizeof(sb_config.anon_key) - 1);
+        strncpy(sb_config.hub_id, TEST_HUB_ID, sizeof(sb_config.hub_id) - 1);
+
+        ret = supabase_set_config(&sb_config);
+        if (ret == ESP_OK) {
+            ESP_LOGI(TAG, "Test Supabase config stored for hub '%s'", TEST_HUB_ID);
+        } else {
+            ESP_LOGE(TAG, "Failed to store Supabase config: %s", esp_err_to_name(ret));
+        }
+    }
+#endif
+
+    /*
+     * Initialize Event Reporter (Phase 5)
+     */
+    ESP_LOGI(TAG, "Initializing event reporter...");
+    ret = event_reporter_init(NULL);  /* Use defaults */
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Event reporter init failed: %s", esp_err_to_name(ret));
+    } else {
+        ESP_LOGI(TAG, "Event reporter initialized");
+    }
+
+    /*
      * Initialize Wi-Fi (Phase 4)
      */
     ret = start_wifi();
     if (ret != ESP_OK && ret != ESP_ERR_NOT_FOUND) {
         ESP_LOGW(TAG, "Wi-Fi initialization issue - continuing without Wi-Fi");
+    }
+
+    /*
+     * Start Event Reporter (Phase 5)
+     * Must be after Wi-Fi init so we can track initial connection state
+     */
+    ret = event_reporter_start();
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Event reporter start failed: %s", esp_err_to_name(ret));
+    } else {
+        ESP_LOGI(TAG, "Event reporter started");
     }
 
     /* Start RFID polling with Now Playing integration (Phase 2 + 3) */
@@ -590,6 +679,18 @@ void app_main(void)
                          now_playing_state_to_string(np_status.state),
                          (unsigned long)np_status.total_placed_events,
                          (unsigned long)np_status.total_removed_events);
+            }
+        }
+
+        /* Event reporter stats every minute (Phase 5) */
+        if (loop_count % 60 == 0) {
+            event_reporter_status_t er_status;
+            if (event_reporter_get_status(&er_status) == ESP_OK) {
+                ESP_LOGI(TAG, "Cloud: queued=%lu, sent=%lu, failed=%lu, heartbeats=%lu",
+                         (unsigned long)er_status.events_queued,
+                         (unsigned long)er_status.events_sent,
+                         (unsigned long)er_status.events_failed,
+                         (unsigned long)er_status.heartbeats_sent);
             }
         }
     }

@@ -160,6 +160,16 @@ esp_err_t wifi_get_ip_string(char *ip_str, size_t max_len);
 void wifi_set_auto_reconnect(bool enable);
 
 /**
+ * @brief Check if system time has been synchronized via SNTP
+ *
+ * Time synchronization is required for TLS certificate validation.
+ * SNTP sync starts automatically after Wi-Fi connects.
+ *
+ * @return true if time is synchronized, false otherwise
+ */
+bool wifi_is_time_synced(void);
+
+/**
  * @brief Deinitialize the Wi-Fi manager
  *
  * Disconnects and frees all resources.

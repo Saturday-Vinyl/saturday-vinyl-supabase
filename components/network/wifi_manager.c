@@ -15,11 +15,14 @@
 #include "esp_netif.h"
 #include "esp_event.h"
 #include "esp_timer.h"
+#include "esp_sntp.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
 #include "lwip/ip4_addr.h"
 #include <string.h>
+#include <time.h>
+#include <sys/time.h>
 
 static const char *TAG = "WIFI_MGR";
 
@@ -74,6 +77,7 @@ static void reset_reconnect_delay(void);
 static void dhcp_timeout_callback(void *arg);
 static void start_dhcp_timeout_timer(void);
 static void stop_dhcp_timeout_timer(void);
+static void start_sntp_sync(void);
 
 /*******************************************************************************
  * Initialization
@@ -519,6 +523,9 @@ static void ip_event_handler(void *arg, esp_event_base_t event_base,
         ESP_LOGI(TAG, "Connected to '%s' - IP: " IPSTR " (RSSI: %d dBm)",
                  s_wifi.ssid, IP2STR(&event->ip_info.ip), s_wifi.rssi);
 
+        /* Start SNTP time synchronization for TLS certificate validation */
+        start_sntp_sync();
+
         /* Post connected event with connection info */
         wifi_connection_info_t info;
         strlcpy(info.ssid, s_wifi.ssid, sizeof(info.ssid));
@@ -605,4 +612,80 @@ static void start_dhcp_timeout_timer(void)
 static void stop_dhcp_timeout_timer(void)
 {
     esp_timer_stop(s_wifi.dhcp_timeout_timer);
+}
+
+/*******************************************************************************
+ * SNTP Time Synchronization
+ ******************************************************************************/
+
+static bool s_sntp_initialized = false;
+static bool s_time_synced = false;
+
+/**
+ * @brief Callback when SNTP time is synchronized
+ */
+static void sntp_sync_callback(struct timeval *tv)
+{
+    s_time_synced = true;
+    time_t now = tv->tv_sec;
+    struct tm timeinfo;
+    localtime_r(&now, &timeinfo);
+    char strftime_buf[64];
+    strftime(strftime_buf, sizeof(strftime_buf), "%Y-%m-%d %H:%M:%S", &timeinfo);
+    ESP_LOGI(TAG, "SNTP time synchronized: %s UTC", strftime_buf);
+}
+
+/**
+ * @brief Initialize and start SNTP time synchronization
+ *
+ * Called after Wi-Fi connects to sync system time for TLS certificate validation.
+ */
+static void start_sntp_sync(void)
+{
+    if (s_sntp_initialized) {
+        /* Already initialized, just restart if needed */
+        if (esp_sntp_enabled()) {
+            return;
+        }
+        esp_sntp_restart();
+        return;
+    }
+
+    ESP_LOGI(TAG, "Initializing SNTP time sync...");
+
+    /* Set timezone to UTC (applications can override) */
+    setenv("TZ", "UTC0", 1);
+    tzset();
+
+    /* Configure SNTP */
+    esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
+    esp_sntp_setservername(0, "pool.ntp.org");
+    esp_sntp_setservername(1, "time.google.com");
+    esp_sntp_setservername(2, "time.cloudflare.com");
+    esp_sntp_set_time_sync_notification_cb(sntp_sync_callback);
+    esp_sntp_set_sync_mode(SNTP_SYNC_MODE_IMMED);
+
+    esp_sntp_init();
+    s_sntp_initialized = true;
+
+    ESP_LOGI(TAG, "SNTP initialized, waiting for time sync...");
+}
+
+/**
+ * @brief Stop SNTP synchronization
+ */
+static void stop_sntp_sync(void)
+{
+    if (s_sntp_initialized && esp_sntp_enabled()) {
+        esp_sntp_stop();
+        ESP_LOGD(TAG, "SNTP stopped");
+    }
+}
+
+/**
+ * @brief Check if time has been synchronized via SNTP
+ */
+bool wifi_is_time_synced(void)
+{
+    return s_time_synced;
 }

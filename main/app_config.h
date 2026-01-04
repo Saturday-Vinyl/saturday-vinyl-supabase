@@ -38,7 +38,7 @@
  ******************************************************************************/
 #define DEFAULT_RFID_BAUD_RATE          115200
 #define DEFAULT_POLL_INTERVAL_MS        500
-#define DEFAULT_RF_POWER_DBM            10
+#define DEFAULT_RF_POWER_DBM            5       /* Lower = shorter range (0-30 dBm) */
 #define DEFAULT_DEBOUNCE_PRESENT_MS     1000
 #define DEFAULT_DEBOUNCE_ABSENT_MS      2000
 
@@ -54,6 +54,27 @@
  ******************************************************************************/
 #define HEARTBEAT_INTERVAL_SEC          300     /* 5 minutes */
 #define EVENT_QUEUE_SIZE                100
+
+/*******************************************************************************
+ * Test Credentials (Phase 5 Testing)
+ *
+ * These are used for development/testing only. In production, credentials
+ * will be provisioned via BLE or Serial (Phase 6+).
+ *
+ * To enable: set USE_TEST_CREDENTIALS to 1 and fill in your values.
+ ******************************************************************************/
+#define USE_TEST_CREDENTIALS            1       /* Set to 1 to enable */
+
+#if USE_TEST_CREDENTIALS
+/* Wi-Fi Configuration */
+#define TEST_WIFI_SSID                  "Margarita IoT"
+#define TEST_WIFI_PASSWORD              "Omen371!"
+
+/* Supabase Configuration */
+#define TEST_SUPABASE_URL               "https://ddhcmhbwppiqrqmefynv.supabase.co"
+#define TEST_SUPABASE_ANON_KEY          "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRkaGNtaGJ3cHBpcXJxbWVmeW52Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTk5NTAwOTEsImV4cCI6MjA3NTUyNjA5MX0.NbS1ftfFlGOTtZZ76HIwgW5NZieZN9oOlMAOuAoLdD4"
+#define TEST_HUB_ID                     "SV-HUB-000001"
+#endif
 
 /*******************************************************************************
  * Saturday Vinyl EPC Prefix
