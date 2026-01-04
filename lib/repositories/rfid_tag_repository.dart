@@ -311,4 +311,75 @@ class RfidTagRepository {
       rethrow;
     }
   }
+
+  /// Create tag and immediately update to written status with roll association
+  ///
+  /// Used by roll-based write workflow to track tag position on roll
+  Future<RfidTag> createAndWriteTagForRoll({
+    required String epc,
+    required String? createdBy,
+    required String rollId,
+    required int rollPosition,
+    String? tid,
+  }) async {
+    try {
+      AppLogger.info(
+        'Creating and writing tag with EPC: $epc for roll: $rollId position: $rollPosition',
+      );
+
+      final data = {
+        'epc_identifier': epc.toUpperCase(),
+        'status': RfidTagStatus.written.value,
+        'created_by': createdBy,
+        'written_at': DateTime.now().toIso8601String(),
+        'roll_id': rollId,
+        'roll_position': rollPosition,
+        if (tid != null) 'tid': tid,
+      };
+
+      final response =
+          await _supabase.from('rfid_tags').insert(data).select().single();
+
+      final tag = RfidTag.fromJson(response);
+      AppLogger.info(
+        'Tag created for roll at position $rollPosition: ${tag.id}',
+      );
+      return tag;
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to create tag for roll', error, stackTrace);
+      rethrow;
+    }
+  }
+
+  /// Update an existing tag's roll association
+  ///
+  /// Used when an existing Saturday tag is detected during roll writing
+  Future<RfidTag> updateTagRollAssociation({
+    required String id,
+    required String rollId,
+    required int rollPosition,
+  }) async {
+    try {
+      AppLogger.info(
+        'Updating tag $id roll association: roll=$rollId, position=$rollPosition',
+      );
+
+      final response = await _supabase
+          .from('rfid_tags')
+          .update({
+            'roll_id': rollId,
+            'roll_position': rollPosition,
+          })
+          .eq('id', id)
+          .select()
+          .single();
+
+      final tag = RfidTag.fromJson(response);
+      AppLogger.info('Tag roll association updated: ${tag.formattedEpc}');
+      return tag;
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to update tag roll association', error, stackTrace);
+      rethrow;
+    }
+  }
 }

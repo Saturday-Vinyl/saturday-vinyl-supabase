@@ -14,6 +14,7 @@ import 'package:saturday_app/screens/production/qr_scan_screen.dart';
 import 'package:saturday_app/screens/production/unit_detail_screen.dart';
 import 'package:saturday_app/screens/settings/settings_screen.dart';
 import 'package:saturday_app/screens/tags/tag_list_screen.dart';
+import 'package:saturday_app/screens/rolls/roll_list_screen.dart';
 import 'package:saturday_app/screens/users/user_management_screen.dart';
 import 'package:saturday_app/services/keyboard_listener_service.dart';
 import 'package:saturday_app/services/qr_scanner_service.dart';
@@ -162,6 +163,8 @@ class _MainScaffoldState extends State<MainScaffold> {
         return const FilesScreen();
       case '/tags':
         return const TagListScreen();
+      case '/rolls':
+        return const RollListScreen();
       case '/settings':
         return const SettingsScreen();
       default:

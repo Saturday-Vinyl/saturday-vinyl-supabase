@@ -66,17 +66,17 @@ The YRM100 module has the following pin configuration:
 │  ┌───┐ ┌───┐ ┌───┐ ┌───┐ ┌───┐     │
 │  │ 1 │ │ 2 │ │ 3 │ │ 4 │ │ 5 │     │
 │  └───┘ └───┘ └───┘ └───┘ └───┘     │
-│  GND   VCC   TX    RX    EN        │
+│  GND   EN    RX    TX    VCC       │
 └─────────────────────────────────────┘
 ```
 
 | Pin | Name | Description |
 |-----|------|-------------|
 | 1 | GND | Ground |
-| 2 | VCC | Power supply (3.3V - 5V) |
-| 3 | TX | Serial transmit (module → host) |
-| 4 | RX | Serial receive (host → module) |
-| 5 | EN | Enable pin (active high) |
+| 2 | EN | Enable pin (active high, >1.5V to enable) |
+| 3 | RXD | Serial receive (host → module), TTL 3.3V |
+| 4 | TXD | Serial transmit (module → host), TTL 3.3V |
+| 5 | VCC | Power supply (3V - 5V DC) |
 
 ### Enable Pin (EN)
 

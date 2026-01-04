@@ -100,6 +100,12 @@ class SidebarNav extends ConsumerWidget {
                     route: '/tags',
                     isSelected: currentRoute == '/tags',
                   ),
+                  _buildNavItem(
+                    icon: Icons.receipt_long,
+                    label: 'Tag Rolls',
+                    route: '/rolls',
+                    isSelected: currentRoute == '/rolls',
+                  ),
                   if (isAdmin) ...[
                     const Divider(
                       color: SaturdayColors.secondaryGrey,

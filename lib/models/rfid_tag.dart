@@ -59,6 +59,8 @@ class RfidTag extends Equatable {
   final DateTime updatedAt;
   final DateTime? writtenAt; // When EPC was written to physical tag
   final String? createdBy; // User ID who created the tag
+  final String? rollId; // FK to rfid_tag_rolls if part of a roll
+  final int? rollPosition; // Position on the roll (1-indexed)
 
   const RfidTag({
     required this.id,
@@ -69,7 +71,12 @@ class RfidTag extends Equatable {
     required this.updatedAt,
     this.writtenAt,
     this.createdBy,
+    this.rollId,
+    this.rollPosition,
   });
+
+  /// Check if this tag is part of a roll
+  bool get isPartOfRoll => rollId != null;
 
   /// Check if this tag has the Saturday Vinyl EPC format
   ///
@@ -122,6 +129,8 @@ class RfidTag extends Equatable {
           ? DateTime.parse(json['written_at'] as String)
           : null,
       createdBy: json['created_by'] as String?,
+      rollId: json['roll_id'] as String?,
+      rollPosition: json['roll_position'] as int?,
     );
   }
 
@@ -136,6 +145,8 @@ class RfidTag extends Equatable {
       'updated_at': updatedAt.toIso8601String(),
       'written_at': writtenAt?.toIso8601String(),
       'created_by': createdBy,
+      'roll_id': rollId,
+      'roll_position': rollPosition,
     };
   }
 
@@ -146,6 +157,8 @@ class RfidTag extends Equatable {
       'tid': tid,
       'status': status.value,
       'created_by': createdBy,
+      'roll_id': rollId,
+      'roll_position': rollPosition,
     };
   }
 
@@ -159,6 +172,8 @@ class RfidTag extends Equatable {
     DateTime? updatedAt,
     DateTime? writtenAt,
     String? createdBy,
+    String? rollId,
+    int? rollPosition,
   }) {
     return RfidTag(
       id: id ?? this.id,
@@ -169,6 +184,8 @@ class RfidTag extends Equatable {
       updatedAt: updatedAt ?? this.updatedAt,
       writtenAt: writtenAt ?? this.writtenAt,
       createdBy: createdBy ?? this.createdBy,
+      rollId: rollId ?? this.rollId,
+      rollPosition: rollPosition ?? this.rollPosition,
     );
   }
 
@@ -182,6 +199,8 @@ class RfidTag extends Equatable {
         updatedAt,
         writtenAt,
         createdBy,
+        rollId,
+        rollPosition,
       ];
 
   @override
