@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:saturday_consumer_app/providers/supabase_provider.dart';
+import 'package:saturday_consumer_app/providers/intro_splash_provider.dart';
 import 'package:saturday_consumer_app/screens/auth/forgot_password_screen.dart';
 import 'package:saturday_consumer_app/screens/auth/login_screen.dart';
 import 'package:saturday_consumer_app/screens/auth/signup_screen.dart';
+import 'package:saturday_consumer_app/screens/intro/intro_splash_screen.dart';
 import 'package:saturday_consumer_app/screens/now_playing/now_playing_screen.dart';
 import 'package:saturday_consumer_app/screens/now_playing/set_now_playing_screen.dart';
 import 'package:saturday_consumer_app/screens/library/library_screen.dart';
@@ -22,6 +24,9 @@ import 'package:saturday_consumer_app/widgets/common/scaffold_with_nav.dart';
 /// Route paths for the app.
 class RoutePaths {
   RoutePaths._();
+
+  // Intro route
+  static const String introSplash = '/intro-splash';
 
   // Auth routes
   static const String login = '/login';
@@ -57,6 +62,7 @@ class RoutePaths {
 class RouteNames {
   RouteNames._();
 
+  static const String introSplash = 'intro-splash';
   static const String login = 'login';
   static const String signup = 'signup';
   static const String forgotPassword = 'forgot-password';
@@ -107,6 +113,13 @@ GoRouter createAppRouter(Ref ref) {
     ),
 
     routes: [
+      // Intro splash route (outside shell)
+      GoRoute(
+        path: RoutePaths.introSplash,
+        name: RouteNames.introSplash,
+        builder: (context, state) => const IntroSplashScreen(),
+      ),
+
       // Auth routes (outside shell)
       GoRoute(
         path: RoutePaths.login,
@@ -234,9 +247,20 @@ GoRouter createAppRouter(Ref ref) {
       ),
     ],
 
-    // Redirect logic for auth
+    // Redirect logic for auth and intro splash
     redirect: (context, state) {
-      final isAuthRoute = _authRoutes.contains(state.matchedLocation);
+      final matchedLocation = state.matchedLocation;
+      final isAuthRoute = _authRoutes.contains(matchedLocation);
+      final isIntroSplashRoute = matchedLocation == RoutePaths.introSplash;
+
+      // Check if intro splash should be shown
+      final shouldShowSplash = ref.read(introSplashNotifierProvider);
+
+      // If splash should be shown and we're not already on splash route,
+      // redirect to splash (but not from auth routes)
+      if (shouldShowSplash && !isIntroSplashRoute && !isAuthRoute) {
+        return RoutePaths.introSplash;
+      }
 
       // Get auth state synchronously from the service
       final supabaseService = ref.read(supabaseServiceProvider);

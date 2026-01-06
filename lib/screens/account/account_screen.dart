@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -5,6 +6,7 @@ import 'package:saturday_consumer_app/config/routes.dart';
 import 'package:saturday_consumer_app/config/styles.dart';
 import 'package:saturday_consumer_app/config/theme.dart';
 import 'package:saturday_consumer_app/providers/auth_provider.dart';
+import 'package:saturday_consumer_app/providers/intro_splash_provider.dart';
 import 'package:saturday_consumer_app/widgets/common/saturday_app_bar.dart';
 
 /// Account screen - user profile and settings.
@@ -148,6 +150,41 @@ class AccountScreen extends ConsumerWidget {
             // Sign out button
             if (ref.watch(currentSupabaseUserProvider) != null)
               _buildSignOutButton(context, ref),
+
+            // Debug section (only in debug mode)
+            if (kDebugMode) ...[
+              Spacing.sectionGap,
+              _buildSectionHeader(context, 'Debug'),
+              Spacing.itemGap,
+              _buildSettingsTile(
+                context,
+                icon: Icons.replay,
+                title: 'Reset Intro Splash',
+                subtitle: 'Show splash screen on next launch',
+                onTap: () async {
+                  await ref
+                      .read(introSplashNotifierProvider.notifier)
+                      .resetSplash();
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Splash reset. Restart app to see it.'),
+                      ),
+                    );
+                  }
+                },
+              ),
+              _buildSettingsTile(
+                context,
+                icon: Icons.play_arrow,
+                title: 'Show Intro Splash Now',
+                subtitle: 'Navigate to splash screen immediately',
+                onTap: () {
+                  // Navigate directly without resetting state to avoid redirect loops
+                  context.go(RoutePaths.introSplash);
+                },
+              ),
+            ],
           ],
         ),
       ),

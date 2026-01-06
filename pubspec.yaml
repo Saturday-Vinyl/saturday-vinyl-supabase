@@ -50,6 +50,12 @@ dependencies:
   # Local Storage
   shared_preferences: ^2.2.0
 
+  # App Info
+  package_info_plus: ^8.0.0
+
+  # SVG Support
+  flutter_svg: ^2.0.10
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

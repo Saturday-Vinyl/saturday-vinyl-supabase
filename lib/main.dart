@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:saturday_consumer_app/app.dart';
 import 'package:saturday_consumer_app/config/env_config.dart';
 import 'package:saturday_consumer_app/providers/library_view_provider.dart';
+import 'package:saturday_consumer_app/providers/intro_splash_provider.dart';
 import 'package:saturday_consumer_app/services/auth_service.dart';
 import 'package:saturday_consumer_app/services/supabase_service.dart';
 
@@ -33,11 +35,15 @@ void main() async {
   // Initialize SharedPreferences
   final sharedPreferences = await SharedPreferences.getInstance();
 
+  // Get package info for version tracking
+  final packageInfo = await PackageInfo.fromPlatform();
+
   // Run the app with Riverpod provider scope
   runApp(
     ProviderScope(
       overrides: [
         sharedPreferencesProvider.overrideWithValue(sharedPreferences),
+        packageInfoProvider.overrideWithValue(packageInfo),
       ],
       child: const SaturdayApp(),
     ),
