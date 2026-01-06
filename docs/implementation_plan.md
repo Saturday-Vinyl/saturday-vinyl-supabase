@@ -594,43 +594,65 @@ Two YRM100 module variants are supported with different wire colors:
 
 **Goal:** Enable factory provisioning via USB serial with Saturday Admin app.
 
+**Status:** Complete
+
 ### Tasks
 
 #### 6.1 Serial Protocol
-- [ ] Create `components/provisioning/serial_prov.c`
-- [ ] Define JSON protocol:
+- [x] Create `components/provisioning/serial_prov.c`
+- [x] Define JSON protocol:
   ```
   Hub → Host: {"status": "awaiting_provisioning", "version": "0.6.0"}
   Host → Hub: {"cmd": "provision", "data": {...}}
   Hub → Host: {"status": "success", "hub_id": "HUB-XXXX"}
   ```
-- [ ] Implement JSON parsing (use cJSON library)
+- [x] Implement JSON parsing (use cJSON library)
 - [ ] Test: Send commands via serial terminal
 
+**Implementation Notes:**
+- Uses UART0 (USB serial console) for communication
+- JSON messages terminated by newline
+- Periodic status messages every 2 seconds in provisioning mode
+- Commands: get_status, provision, test_wifi, test_rfid, test_supabase, test_all, factory_reset, reboot
+
 #### 6.2 Provisioning Commands
-- [ ] Implement `provision` command:
+- [x] Implement `provision` command:
   - Receive hub_id, supabase_url, supabase_key, device_secret
   - Store in NVS
   - Mark device as factory-provisioned
-- [ ] Implement `get_status` command:
+- [x] Implement `get_status` command:
   - Return current provisioning state
   - Return firmware version
-- [ ] Implement `factory_reset` command:
+- [x] Implement `factory_reset` command:
   - Clear all NVS data
   - Reboot device
 - [ ] Test: Provision device via serial
 
+**Implementation Notes:**
+- Added test commands: test_wifi, test_rfid, test_supabase, test_all
+- Wi-Fi test with 15s timeout, RFID scan for 5s
+- Supabase test sends heartbeat to verify connectivity
+
 #### 6.3 Provisioning State
-- [ ] Add provisioning state to device state machine
-- [ ] On boot, check if factory-provisioned
-- [ ] If not provisioned, enter serial provisioning mode
-- [ ] LED shows appropriate state (white pulsing)
+- [x] Add provisioning state to device state machine
+- [x] On boot, check if factory-provisioned
+- [x] If not provisioned, enter serial provisioning mode
+- [x] LED shows appropriate state (white pulsing)
 - [ ] Test: Boot unprovisioned device, verify state
 
+**Implementation Notes:**
+- `config_is_provisioned()` / `config_set_provisioned()` in config_store
+- main.c checks provisioning state on boot
+- Blocks in provisioning mode until device is provisioned
+
 #### 6.4 Integration with Admin App
-- [ ] Document serial protocol for Admin app team
+- [x] Document serial protocol for Admin app team
 - [ ] Test end-to-end with Admin app (or mock script)
 - [ ] Verify device registers in Supabase after provisioning
+
+**Implementation Notes:**
+- Protocol documented in `docs/service_mode_protocol.md`
+- Includes workflow, commands, responses, error codes, and examples
 
 ### Deliverables
 - Factory provisioning works via USB serial

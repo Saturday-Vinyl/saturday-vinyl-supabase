@@ -3,7 +3,7 @@
  * @brief Saturday Vinyl Hub firmware entry point
  *
  * This is the main entry point for the Saturday Hub firmware.
- * It initializes all subsystems and demonstrates hardware functionality.
+ * It initializes all subsystems and manages the device lifecycle.
  *
  * Phase 1: Hardware Bring-Up
  * - RGB LED with PWM patterns
@@ -30,6 +30,13 @@
  * - Now Playing events sent to Supabase
  * - Event queue with offline support
  * - Periodic hub heartbeat
+ *
+ * Phase 6: Service Mode
+ * - Saturday Service Mode Protocol for factory provisioning and servicing
+ * - Fresh devices (no unit_id): Auto-enter service mode
+ * - Provisioned devices: 10-second boot window for enter_service_mode command
+ * - Commands: get_status, get_manifest, provision, test_wifi, test_rfid, test_cloud,
+ *             customer_reset, factory_reset, exit_service_mode, reboot
  */
 
 #include <stdio.h>
@@ -40,7 +47,9 @@
 #include "esp_system.h"
 #include "esp_chip_info.h"
 #include "esp_event.h"
+#include "esp_timer.h"
 #include "nvs_flash.h"
+#include "driver/usb_serial_jtag.h"
 
 #include "app_config.h"
 #include "led_manager.h"
@@ -53,6 +62,7 @@
 #include "http_client.h"
 #include "supabase_client.h"
 #include "event_reporter.h"
+#include "serial_prov.h"
 
 static const char *TAG = "SV_HUB";
 
@@ -430,7 +440,7 @@ void app_main(void)
 
     ESP_LOGI(TAG, "===========================================");
     ESP_LOGI(TAG, "  Saturday Vinyl Hub Firmware v%s", FIRMWARE_VERSION);
-    ESP_LOGI(TAG, "  Phase 5: Supabase Integration");
+    ESP_LOGI(TAG, "  Phase 6: Service Mode");
     ESP_LOGI(TAG, "===========================================");
 
     /* Log chip info */
@@ -525,6 +535,7 @@ void app_main(void)
 
     /*
      * Initialize Supabase Client (Phase 5)
+     * Must be before serial provisioning check so we can check if configured.
      */
     ESP_LOGI(TAG, "Initializing Supabase client...");
     ret = supabase_init();
@@ -535,6 +546,113 @@ void app_main(void)
             ESP_LOGI(TAG, "Supabase client initialized with stored config");
         } else {
             ESP_LOGI(TAG, "Supabase client initialized (awaiting configuration)");
+        }
+    }
+
+    /*
+     * Initialize Service Mode (Phase 6)
+     * Required for both service mode and boot window command listening
+     */
+    ESP_LOGI(TAG, "Initializing service mode...");
+    ret = serial_prov_init();
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Service mode init failed: %s", esp_err_to_name(ret));
+    } else {
+        ESP_LOGI(TAG, "Service mode initialized");
+    }
+
+    /*
+     * Check if device has a unit_id (the core provisioning identifier).
+     *
+     * Fresh device (no unit_id): Auto-enter service mode and wait for the
+     * Saturday Admin app to provision it via USB serial.
+     *
+     * Provisioned device (has unit_id): Offer a 5-second boot window for the
+     * Admin app to send enter_service_mode command. This allows technicians
+     * to service previously provisioned devices (e.g., returned for repair).
+     * If no command received, continue with normal operation.
+     */
+    if (!config_has_unit_id()) {
+        /* Fresh device - auto-enter service mode */
+        ESP_LOGW(TAG, "Device not provisioned (no unit_id) - entering service mode");
+        ESP_LOGI(TAG, "===========================================");
+        ESP_LOGI(TAG, "  SERVICE MODE (Fresh Device)");
+        ESP_LOGI(TAG, "  Connect Saturday Admin app via USB");
+        ESP_LOGI(TAG, "  Awaiting provisioning commands...");
+        ESP_LOGI(TAG, "===========================================");
+
+        /* Start service mode - will send periodic status beacons */
+        serial_prov_start();
+
+        /* Wait for exit_service_mode command or provisioning completion */
+        while (!serial_prov_is_complete()) {
+            vTaskDelay(pdMS_TO_TICKS(1000));
+        }
+
+        ESP_LOGI(TAG, "Service mode complete - continuing with startup");
+        serial_prov_stop();
+    } else {
+        /* Provisioned device - offer 10-second boot window for service mode entry */
+        char unit_id[32] = {0};
+        config_get_unit_id(unit_id, sizeof(unit_id));
+        ESP_LOGI(TAG, "Device provisioned: %s", unit_id);
+        ESP_LOGI(TAG, "Service mode boot window: 10 seconds...");
+
+        /* Start listening for enter_service_mode command during boot window.
+         * The serial_prov_init() already installed the USB Serial JTAG driver,
+         * so we need to temporarily process commands to check for service mode entry. */
+        int64_t window_start = esp_timer_get_time();
+        const int64_t BOOT_WINDOW_MS = 10000;  /* 10 second window */
+        bool entered_service_mode = false;
+        uint8_t byte;
+
+        /* Simple command buffer for boot window */
+        char cmd_buffer[256] = {0};
+        size_t cmd_len = 0;
+
+        while ((esp_timer_get_time() - window_start) < (BOOT_WINDOW_MS * 1000)) {
+            /* Check for incoming command */
+            int len = usb_serial_jtag_read_bytes(&byte, 1, pdMS_TO_TICKS(100));
+
+            if (len > 0) {
+                if (byte == '\n' || byte == '\r') {
+                    if (cmd_len > 0) {
+                        cmd_buffer[cmd_len] = '\0';
+                        ESP_LOGI(TAG, "Boot window received: %s", cmd_buffer);
+
+                        /* Check if it's enter_service_mode command */
+                        if (strstr(cmd_buffer, "enter_service_mode") != NULL) {
+                            ESP_LOGI(TAG, "Service mode requested during boot window");
+                            entered_service_mode = true;
+                            break;
+                        }
+                        cmd_len = 0;
+                    }
+                } else if (cmd_len < sizeof(cmd_buffer) - 1) {
+                    cmd_buffer[cmd_len++] = (char)byte;
+                }
+            }
+        }
+
+        if (entered_service_mode) {
+            ESP_LOGI(TAG, "===========================================");
+            ESP_LOGI(TAG, "  SERVICE MODE (Provisioned Device)");
+            ESP_LOGI(TAG, "  Connect Saturday Admin app via USB");
+            ESP_LOGI(TAG, "  Device: %s", unit_id);
+            ESP_LOGI(TAG, "===========================================");
+
+            /* Start service mode */
+            serial_prov_start();
+
+            /* Wait for exit_service_mode command */
+            while (!serial_prov_is_complete()) {
+                vTaskDelay(pdMS_TO_TICKS(1000));
+            }
+
+            ESP_LOGI(TAG, "Service mode complete - continuing with startup");
+            serial_prov_stop();
+        } else {
+            ESP_LOGI(TAG, "Boot window elapsed - continuing with normal operation");
         }
     }
 
@@ -560,11 +678,11 @@ void app_main(void)
         supabase_config_t sb_config = {0};
         strncpy(sb_config.url, TEST_SUPABASE_URL, sizeof(sb_config.url) - 1);
         strncpy(sb_config.anon_key, TEST_SUPABASE_ANON_KEY, sizeof(sb_config.anon_key) - 1);
-        strncpy(sb_config.hub_id, TEST_HUB_ID, sizeof(sb_config.hub_id) - 1);
+        strncpy(sb_config.unit_id, TEST_UNIT_ID, sizeof(sb_config.unit_id) - 1);
 
         ret = supabase_set_config(&sb_config);
         if (ret == ESP_OK) {
-            ESP_LOGI(TAG, "Test Supabase config stored for hub '%s'", TEST_HUB_ID);
+            ESP_LOGI(TAG, "Test Supabase config stored for unit '%s'", TEST_UNIT_ID);
         } else {
             ESP_LOGE(TAG, "Failed to store Supabase config: %s", esp_err_to_name(ret));
         }

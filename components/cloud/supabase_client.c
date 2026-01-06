@@ -34,7 +34,7 @@ extern const char supabase_ca_pem_end[] asm("_binary_supabase_ca_pem_end");
 #define NVS_KEY_URL             "url"
 #define NVS_KEY_ANON_KEY        "anon_key"
 #define NVS_KEY_DEVICE_SECRET   "dev_secret"
-#define NVS_KEY_HUB_ID          "hub_id"
+#define NVS_KEY_UNIT_ID         "unit_id"
 
 /*******************************************************************************
  * Constants
@@ -153,17 +153,17 @@ static esp_err_t load_config_from_nvs(void)
         s_state.config.device_secret[0] = '\0';
     }
 
-    /* Read hub ID (optional) */
-    len = sizeof(s_state.config.hub_id);
-    if (nvs_get_str(handle, NVS_KEY_HUB_ID, s_state.config.hub_id, &len) != ESP_OK) {
-        s_state.config.hub_id[0] = '\0';
+    /* Read unit ID (optional) */
+    len = sizeof(s_state.config.unit_id);
+    if (nvs_get_str(handle, NVS_KEY_UNIT_ID, s_state.config.unit_id, &len) != ESP_OK) {
+        s_state.config.unit_id[0] = '\0';
     }
 
     nvs_close(handle);
 
     s_state.configured = true;
-    ESP_LOGI(TAG, "Loaded config from NVS (hub_id=%s)",
-             s_state.config.hub_id[0] ? s_state.config.hub_id : "not set");
+    ESP_LOGI(TAG, "Loaded config from NVS (unit_id=%s)",
+             s_state.config.unit_id[0] ? s_state.config.unit_id : "not set");
     return ESP_OK;
 }
 
@@ -190,8 +190,8 @@ static esp_err_t save_config_to_nvs(const supabase_config_t *config)
         if (err != ESP_OK) goto cleanup;
     }
 
-    if (config->hub_id[0]) {
-        err = nvs_set_str(handle, NVS_KEY_HUB_ID, config->hub_id);
+    if (config->unit_id[0]) {
+        err = nvs_set_str(handle, NVS_KEY_UNIT_ID, config->unit_id);
         if (err != ESP_OK) goto cleanup;
     }
 
@@ -283,8 +283,8 @@ esp_err_t supabase_set_config(const supabase_config_t *config)
     memcpy(&s_state.config, config, sizeof(supabase_config_t));
     s_state.configured = true;
 
-    ESP_LOGI(TAG, "Supabase config saved (hub_id=%s)",
-             config->hub_id[0] ? config->hub_id : "not set");
+    ESP_LOGI(TAG, "Supabase config saved (unit_id=%s)",
+             config->unit_id[0] ? config->unit_id : "not set");
     return ESP_OK;
 }
 
@@ -301,7 +301,7 @@ esp_err_t supabase_clear_config(void)
     nvs_erase_key(handle, NVS_KEY_URL);
     nvs_erase_key(handle, NVS_KEY_ANON_KEY);
     nvs_erase_key(handle, NVS_KEY_DEVICE_SECRET);
-    nvs_erase_key(handle, NVS_KEY_HUB_ID);
+    nvs_erase_key(handle, NVS_KEY_UNIT_ID);
 
     err = nvs_commit(handle);
     nvs_close(handle);
@@ -429,18 +429,18 @@ void supabase_response_free(supabase_response_t *response)
     }
 }
 
-esp_err_t supabase_get_hub_id(char *hub_id, size_t max_len)
+esp_err_t supabase_get_unit_id(char *unit_id, size_t max_len)
 {
-    if (hub_id == NULL || max_len == 0) {
+    if (unit_id == NULL || max_len == 0) {
         return ESP_ERR_INVALID_ARG;
     }
 
-    if (!s_state.configured || s_state.config.hub_id[0] == '\0') {
+    if (!s_state.configured || s_state.config.unit_id[0] == '\0') {
         return ESP_ERR_NOT_FOUND;
     }
 
-    strncpy(hub_id, s_state.config.hub_id, max_len - 1);
-    hub_id[max_len - 1] = '\0';
+    strncpy(unit_id, s_state.config.unit_id, max_len - 1);
+    unit_id[max_len - 1] = '\0';
     return ESP_OK;
 }
 

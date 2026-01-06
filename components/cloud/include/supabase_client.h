@@ -39,9 +39,9 @@ extern "C" {
 #define SUPABASE_DEVICE_SECRET_MAX_LEN  64
 
 /**
- * @brief Maximum length for hub ID
+ * @brief Maximum length for unit ID
  */
-#define SUPABASE_HUB_ID_MAX_LEN     32
+#define SUPABASE_UNIT_ID_MAX_LEN    32
 
 /**
  * @brief Supabase configuration structure
@@ -50,7 +50,7 @@ typedef struct {
     char url[SUPABASE_URL_MAX_LEN];                     /**< Supabase project URL */
     char anon_key[SUPABASE_ANON_KEY_MAX_LEN];           /**< Supabase anon/public key */
     char device_secret[SUPABASE_DEVICE_SECRET_MAX_LEN]; /**< Device-specific secret */
-    char hub_id[SUPABASE_HUB_ID_MAX_LEN];               /**< Unique hub identifier */
+    char unit_id[SUPABASE_UNIT_ID_MAX_LEN];             /**< Unique unit identifier */
 } supabase_config_t;
 
 /**
@@ -143,13 +143,13 @@ esp_err_t supabase_post(const char *table, const char *json_body,
 void supabase_response_free(supabase_response_t *response);
 
 /**
- * @brief Get the hub ID
+ * @brief Get the unit ID
  *
- * @param hub_id Output buffer
+ * @param unit_id Output buffer
  * @param max_len Buffer size
  * @return ESP_OK on success, ESP_ERR_NOT_FOUND if not configured
  */
-esp_err_t supabase_get_hub_id(char *hub_id, size_t max_len);
+esp_err_t supabase_get_unit_id(char *unit_id, size_t max_len);
 
 /**
  * @brief Test Supabase connectivity

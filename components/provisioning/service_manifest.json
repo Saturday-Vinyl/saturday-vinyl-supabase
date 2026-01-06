@@ -1,0 +1,48 @@
+{
+  "manifest_version": "1.0",
+  "device_type": "hub",
+  "device_name": "Saturday Vinyl Hub",
+  "firmware_id": "550e8400-e29b-41d4-a716-446655440000",
+  "firmware_version": "0.6.0",
+  "capabilities": {
+    "wifi": true,
+    "bluetooth": true,
+    "thread": false,
+    "cloud": true,
+    "rfid": true,
+    "audio": false,
+    "display": false,
+    "battery": false,
+    "button": true
+  },
+  "provisioning_fields": {
+    "required": ["unit_id", "cloud_url", "cloud_anon_key"],
+    "optional": ["cloud_device_secret"]
+  },
+  "supported_tests": ["wifi", "cloud", "rfid"],
+  "status_fields": [
+    "device_type",
+    "firmware_version",
+    "mac_address",
+    "unit_id",
+    "cloud_configured",
+    "cloud_url",
+    "wifi_configured",
+    "wifi_connected",
+    "wifi_ssid",
+    "wifi_rssi",
+    "ip_address",
+    "free_heap",
+    "uptime_ms",
+    "last_tests"
+  ],
+  "custom_commands": [],
+  "led_patterns": {
+    "service_awaiting": {"color": "white", "pattern": "pulse"},
+    "processing": {"color": "yellow", "pattern": "pulse"},
+    "testing": {"color": "yellow", "pattern": "blink_fast"},
+    "success": {"color": "green", "pattern": "flash"},
+    "error": {"color": "red", "pattern": "flash"},
+    "resetting": {"color": "red", "pattern": "blink_fast"}
+  }
+}

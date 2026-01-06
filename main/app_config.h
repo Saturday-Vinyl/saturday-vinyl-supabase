@@ -6,13 +6,8 @@
 #ifndef APP_CONFIG_H
 #define APP_CONFIG_H
 
-/*******************************************************************************
- * Firmware Version
- ******************************************************************************/
-#define FIRMWARE_VERSION_MAJOR  0
-#define FIRMWARE_VERSION_MINOR  1
-#define FIRMWARE_VERSION_PATCH  0
-#define FIRMWARE_VERSION        "0.1.0"
+/* Firmware version is defined in config_store.h for component access */
+#include "config_store.h"
 
 /*******************************************************************************
  * Hardware Pin Definitions
@@ -63,7 +58,7 @@
  *
  * To enable: set USE_TEST_CREDENTIALS to 1 and fill in your values.
  ******************************************************************************/
-#define USE_TEST_CREDENTIALS            1       /* Set to 1 to enable */
+#define USE_TEST_CREDENTIALS            0       /* Set to 1 to enable for testing */
 
 #if USE_TEST_CREDENTIALS
 /* Wi-Fi Configuration */
@@ -73,7 +68,7 @@
 /* Supabase Configuration */
 #define TEST_SUPABASE_URL               "https://ddhcmhbwppiqrqmefynv.supabase.co"
 #define TEST_SUPABASE_ANON_KEY          "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRkaGNtaGJ3cHBpcXJxbWVmeW52Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTk5NTAwOTEsImV4cCI6MjA3NTUyNjA5MX0.NbS1ftfFlGOTtZZ76HIwgW5NZieZN9oOlMAOuAoLdD4"
-#define TEST_HUB_ID                     "SV-HUB-000001"
+#define TEST_UNIT_ID                    "SV-HUB-000001"
 #endif
 
 /*******************************************************************************

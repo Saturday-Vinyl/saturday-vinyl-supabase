@@ -205,8 +205,8 @@ static void format_timestamp(int64_t timestamp_us, char *buf, size_t buf_len)
  */
 static int format_now_playing_json(const queued_event_t *event, char *buf, size_t buf_len)
 {
-    char hub_id[SUPABASE_HUB_ID_MAX_LEN] = "HUB-UNKNOWN";
-    supabase_get_hub_id(hub_id, sizeof(hub_id));
+    char unit_id[SUPABASE_UNIT_ID_MAX_LEN] = "UNIT-UNKNOWN";
+    supabase_get_unit_id(unit_id, sizeof(unit_id));
 
     char epc_str[25];
     rfid_epc_to_hex_string(event->epc, event->epc_len, epc_str, sizeof(epc_str));
@@ -219,15 +219,15 @@ static int format_now_playing_json(const queued_event_t *event, char *buf, size_
     int len;
     if (event->type == QUEUED_EVENT_NOW_PLAYING_REMOVED) {
         len = snprintf(buf, buf_len,
-            "{\"hub_id\":\"%s\",\"epc\":\"%s\",\"event_type\":\"%s\","
+            "{\"unit_id\":\"%s\",\"epc\":\"%s\",\"event_type\":\"%s\","
             "\"rssi\":%d,\"duration_ms\":%lu,\"timestamp\":\"%s\"}",
-            hub_id, epc_str, event_type, event->rssi,
+            unit_id, epc_str, event_type, event->rssi,
             (unsigned long)event->duration_ms, timestamp);
     } else {
         len = snprintf(buf, buf_len,
-            "{\"hub_id\":\"%s\",\"epc\":\"%s\",\"event_type\":\"%s\","
+            "{\"unit_id\":\"%s\",\"epc\":\"%s\",\"event_type\":\"%s\","
             "\"rssi\":%d,\"timestamp\":\"%s\"}",
-            hub_id, epc_str, event_type, event->rssi, timestamp);
+            unit_id, epc_str, event_type, event->rssi, timestamp);
     }
 
     return len;
@@ -238,8 +238,8 @@ static int format_now_playing_json(const queued_event_t *event, char *buf, size_
  */
 static int format_heartbeat_json(char *buf, size_t buf_len)
 {
-    char hub_id[SUPABASE_HUB_ID_MAX_LEN] = "HUB-UNKNOWN";
-    supabase_get_hub_id(hub_id, sizeof(hub_id));
+    char unit_id[SUPABASE_UNIT_ID_MAX_LEN] = "UNIT-UNKNOWN";
+    supabase_get_unit_id(unit_id, sizeof(unit_id));
 
     char timestamp[32];
     format_timestamp(esp_timer_get_time(), timestamp, sizeof(timestamp));
@@ -257,10 +257,10 @@ static int format_heartbeat_json(char *buf, size_t buf_len)
     uint32_t uptime_sec = (uint32_t)(esp_timer_get_time() / 1000000);
 
     int len = snprintf(buf, buf_len,
-        "{\"hub_id\":\"%s\",\"firmware_version\":\"0.5.0\","
+        "{\"unit_id\":\"%s\",\"firmware_version\":\"0.6.0\","
         "\"wifi_rssi\":%d,\"uptime_sec\":%lu,\"free_heap\":%lu,"
         "\"events_queued\":%u,\"timestamp\":\"%s\"}",
-        hub_id, wifi_rssi, (unsigned long)uptime_sec,
+        unit_id, wifi_rssi, (unsigned long)uptime_sec,
         (unsigned long)esp_get_free_heap_size(),
         s_state.queue.count, timestamp);
 

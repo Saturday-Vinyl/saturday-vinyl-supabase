@@ -29,6 +29,9 @@ static const char *TAG = "CONFIG";
 #define NVS_KEY_WIFI_SSID       "ssid"
 #define NVS_KEY_WIFI_PASSWORD   "password"
 
+/* NVS keys for provisioning state */
+#define NVS_KEY_PROVISIONED     "provisioned"
+
 /* Default values */
 #define DEFAULT_POLL_INTERVAL_MS        500
 #define DEFAULT_RF_POWER_DBM            15  /* YRM100 minimum is 15 dBm */
@@ -64,8 +67,45 @@ esp_err_t config_init(void)
 
 bool config_is_provisioned(void)
 {
-    /* TODO: Check NVS for provisioned flag in Phase 6 */
-    return false;
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE_CONFIG, NVS_READONLY, &handle);
+    if (err != ESP_OK) {
+        return false;
+    }
+
+    uint8_t provisioned = 0;
+    err = nvs_get_u8(handle, NVS_KEY_PROVISIONED, &provisioned);
+    nvs_close(handle);
+
+    return (err == ESP_OK && provisioned == 1);
+}
+
+esp_err_t config_set_provisioned(bool provisioned)
+{
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE_CONFIG, NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to open NVS for provisioned flag: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    err = nvs_set_u8(handle, NVS_KEY_PROVISIONED, provisioned ? 1 : 0);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to set provisioned flag: %s", esp_err_to_name(err));
+        nvs_close(handle);
+        return err;
+    }
+
+    err = nvs_commit(handle);
+    nvs_close(handle);
+
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to commit provisioned flag: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    ESP_LOGI(TAG, "Device marked as %s", provisioned ? "provisioned" : "unprovisioned");
+    return ESP_OK;
 }
 
 bool config_has_wifi(void)
@@ -328,10 +368,78 @@ cleanup:
     return err;
 }
 
-esp_err_t config_get_hub_id(char *hub_id, size_t max_len)
+bool config_has_unit_id(void)
 {
-    /* TODO: Implement in Phase 6 */
-    return ESP_ERR_NOT_FOUND;
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE_CONFIG, NVS_READONLY, &handle);
+    if (err != ESP_OK) {
+        return false;
+    }
+
+    size_t len = 0;
+    err = nvs_get_str(handle, "unit_id", NULL, &len);
+    nvs_close(handle);
+
+    return (err == ESP_OK && len > 1);
+}
+
+esp_err_t config_get_unit_id(char *unit_id, size_t max_len)
+{
+    if (unit_id == NULL || max_len < 2) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE_CONFIG, NVS_READONLY, &handle);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        return ESP_ERR_NOT_FOUND;
+    } else if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to open NVS for unit_id: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    size_t len = max_len;
+    err = nvs_get_str(handle, "unit_id", unit_id, &len);
+    nvs_close(handle);
+
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        return ESP_ERR_NOT_FOUND;
+    } else if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to read unit_id: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    return ESP_OK;
+}
+
+esp_err_t config_set_unit_id(const char *unit_id)
+{
+    if (unit_id == NULL || unit_id[0] == '\0') {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE_CONFIG, NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to open NVS for unit_id: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    err = nvs_set_str(handle, "unit_id", unit_id);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to write unit_id: %s", esp_err_to_name(err));
+        nvs_close(handle);
+        return err;
+    }
+
+    err = nvs_commit(handle);
+    nvs_close(handle);
+
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "Unit ID stored: %s", unit_id);
+    }
+
+    return err;
 }
 
 esp_err_t config_factory_reset(void)
@@ -354,5 +462,38 @@ esp_err_t config_factory_reset(void)
 
     s_initialized = false;
     ESP_LOGI(TAG, "Factory reset complete");
+    return ESP_OK;
+}
+
+esp_err_t config_customer_reset(void)
+{
+    ESP_LOGI(TAG, "Customer reset - clearing user data, preserving factory config");
+
+    esp_err_t err;
+
+    /* Clear Wi-Fi credentials */
+    err = config_clear_wifi();
+    if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
+        ESP_LOGW(TAG, "Failed to clear Wi-Fi: %s", esp_err_to_name(err));
+    }
+
+    /* Clear provisioned flag */
+    err = config_set_provisioned(false);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to clear provisioned flag: %s", esp_err_to_name(err));
+    }
+
+    /* Clear RFID config (return to defaults) */
+    nvs_handle_t handle;
+    err = nvs_open(NVS_NAMESPACE_RFID, NVS_READWRITE, &handle);
+    if (err == ESP_OK) {
+        nvs_erase_all(handle);
+        nvs_commit(handle);
+        nvs_close(handle);
+    }
+
+    /* Note: Supabase config (sv_supabase namespace) is preserved */
+
+    ESP_LOGI(TAG, "Customer reset complete - device ready for BLE provisioning");
     return ESP_OK;
 }

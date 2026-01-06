@@ -16,6 +16,17 @@
 extern "C" {
 #endif
 
+/*******************************************************************************
+ * Firmware Identification
+ ******************************************************************************/
+#define FIRMWARE_VERSION_MAJOR  0
+#define FIRMWARE_VERSION_MINOR  6
+#define FIRMWARE_VERSION_PATCH  0
+#define FIRMWARE_VERSION        "0.6.0"
+
+/** UUID matching the firmware_versions table in the backend database */
+#define FIRMWARE_ID             "550e8400-e29b-41d4-a716-446655440000"
+
 /**
  * @brief RFID configuration structure
  */
@@ -39,6 +50,14 @@ esp_err_t config_init(void);
  * @return true if provisioned, false otherwise
  */
 bool config_is_provisioned(void);
+
+/**
+ * @brief Set the factory provisioned flag
+ *
+ * @param provisioned true to mark as provisioned, false to clear
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t config_set_provisioned(bool provisioned);
 
 /**
  * @brief Check if Wi-Fi credentials are stored
@@ -92,20 +111,55 @@ esp_err_t config_get_rfid(rfid_config_t *config);
 esp_err_t config_set_rfid(const rfid_config_t *config);
 
 /**
- * @brief Get hub ID
+ * @brief Check if unit ID (serial number) is stored
  *
- * @param hub_id Buffer for hub ID
- * @param max_len Buffer length
- * @return ESP_OK on success, error code otherwise
+ * The unit_id is the core provisioning identifier. A device is considered
+ * "provisioned" if it has a unit_id stored.
+ *
+ * @return true if unit_id exists, false otherwise
  */
-esp_err_t config_get_hub_id(char *hub_id, size_t max_len);
+bool config_has_unit_id(void);
 
 /**
- * @brief Erase all configuration (factory reset)
+ * @brief Get unit ID (serial number)
+ *
+ * @param unit_id Buffer for unit ID
+ * @param max_len Buffer length
+ * @return ESP_OK on success, ESP_ERR_NOT_FOUND if not set
+ */
+esp_err_t config_get_unit_id(char *unit_id, size_t max_len);
+
+/**
+ * @brief Set unit ID (serial number)
+ *
+ * This is the primary provisioning identifier. Once set, the device
+ * is considered provisioned.
+ *
+ * @param unit_id Unit serial number (e.g., "SV-HUB-000001")
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t config_set_unit_id(const char *unit_id);
+
+/**
+ * @brief Erase all configuration (full factory reset)
+ *
+ * Clears ALL NVS data including Supabase configuration.
+ * Device will need to be completely re-provisioned.
  *
  * @return ESP_OK on success, error code otherwise
  */
 esp_err_t config_factory_reset(void);
+
+/**
+ * @brief Soft reset for customer handoff
+ *
+ * Clears user data (Wi-Fi, provisioned flag) but preserves
+ * factory configuration (Supabase URL, anon key, unit ID, device secret).
+ * This prepares the device for customer BLE provisioning.
+ *
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t config_customer_reset(void);
 
 #ifdef __cplusplus
 }

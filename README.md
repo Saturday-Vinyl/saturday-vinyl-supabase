@@ -186,17 +186,35 @@ The project uses `sdkconfig.defaults` to set sensible defaults. Key settings:
 - **NimBLE:** Enabled for BLE provisioning
 - **Watchdog:** 30-second timeout
 
+## LED States
+
+The onboard WS2812 RGB LED provides visual feedback for device state:
+
+| State | LED Color | Pattern | Meaning |
+|-------|-----------|---------|---------|
+| Awaiting Provisioning | White | Pulsing | Waiting for Admin app connection |
+| Provisioning | Yellow | Pulsing | Receiving/storing credentials |
+| Test Running | Blue | Fast blink | Running validation test |
+| Test Passed | Green | Flash 500ms | Individual test passed |
+| Test Failed | Red | Flash 500ms | Individual test failed |
+| All Tests Passed | Green | Solid | Ready for factory reset |
+| Factory Reset | Red | Fast blink | Clearing data, preparing for reboot |
+| Normal Operation | Cyan | Pulsing | Connected and operational |
+| Wi-Fi Connecting | Yellow | Pulse | Attempting to connect |
+| Wi-Fi Connected | Cyan | Flash, then dim green | Successfully connected |
+| Wi-Fi Reconnecting | Orange | Slow blink | Lost connection, retrying |
+| Wi-Fi Failed | Red | Slow blink | Bad credentials or network not found |
+| Tag Detected | Green | Flash | Saturday RFID tag confirmed |
+| Tag Removed | Cyan | Flash | Tag no longer present |
+| Idle | Green (dim) | Solid | System ready, no activity |
+
 ## Current Status
 
-**Phase 4: Wi-Fi Connectivity** - Complete
+**Phase 6: Serial Provisioning** - Complete
 
-All Wi-Fi connectivity functionality has been implemented:
-- Wi-Fi station mode with event-based connection management
-- Auto-reconnect with exponential backoff (1s to 60s max)
-- Wi-Fi credential storage in NVS
-- HTTPS client with TLS certificate bundle
-- LED feedback for connection states
-- Internet connectivity testing
+Recent phases implemented:
+- **Phase 5:** Supabase integration with event queuing, heartbeats, and offline resilience
+- **Phase 6:** Serial provisioning protocol for factory setup via Saturday Admin app
 
 ### Phase Checklist
 
@@ -205,8 +223,8 @@ All Wi-Fi connectivity functionality has been implemented:
 - [x] Phase 2: RFID Detection
 - [x] Phase 3: Now Playing Logic
 - [x] Phase 4: Wi-Fi Connectivity
-- [ ] Phase 5: Supabase Integration
-- [ ] Phase 6: Serial Provisioning
+- [x] Phase 5: Supabase Integration
+- [x] Phase 6: Serial Provisioning
 - [ ] Phase 7: BLE Provisioning
 - [ ] Phase 8: Thread Border Router
 - [ ] Phase 9: CoAP Server

@@ -74,5 +74,10 @@ CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 # Power management (disable for now, enable if battery operation needed)
 CONFIG_PM_ENABLE=n
 
-# Serial console
-CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+# Serial console - Use USB Serial/JTAG for ESP32-C6 DevKitC
+# This enables stdin/stdout over the USB connection
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# VFS configuration for non-blocking stdin reads
+CONFIG_VFS_SUPPORT_IO=y
+CONFIG_VFS_SUPPORT_SELECT=y
