@@ -243,20 +243,55 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
   }
 
   Widget _buildActionButtons(BuildContext context, LibraryAlbum libraryAlbum) {
+    final tagsAsync = ref.watch(tagsForAlbumProvider(libraryAlbum.id));
+    final hasTag = tagsAsync.valueOrNull?.isNotEmpty ?? false;
+
     return Row(
       children: [
         Expanded(
           child: ElevatedButton.icon(
             onPressed: () => _setAsNowPlaying(libraryAlbum),
             icon: const Icon(Icons.play_circle_outline),
-            label: const Text('Set as Now Playing'),
+            label: const Text('Now Playing'),
           ),
         ),
         const SizedBox(width: Spacing.md),
-        OutlinedButton.icon(
-          onPressed: () => _associateTag(libraryAlbum),
-          icon: const Icon(Icons.nfc),
-          label: const Text('Associate Tag'),
+        Expanded(
+          child: hasTag
+              ? Container(
+                  padding: const EdgeInsets.symmetric(
+                    vertical: Spacing.sm,
+                  ),
+                  decoration: BoxDecoration(
+                    color: SaturdayColors.success.withValues(alpha: 0.1),
+                    borderRadius: AppRadius.smallRadius,
+                    border: Border.all(
+                      color: SaturdayColors.success.withValues(alpha: 0.3),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.nfc,
+                        size: 18,
+                        color: SaturdayColors.success,
+                      ),
+                      const SizedBox(width: Spacing.xs),
+                      Text(
+                        'Tracked',
+                        style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                              color: SaturdayColors.success,
+                            ),
+                      ),
+                    ],
+                  ),
+                )
+              : OutlinedButton.icon(
+                  onPressed: () => _associateTag(libraryAlbum),
+                  icon: const Icon(Icons.nfc),
+                  label: const Text('Associate Tag'),
+                ),
         ),
       ],
     );
@@ -390,74 +425,50 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _buildSectionHeader(context, 'Associated Tags'),
+        _buildSectionHeader(context, 'Associated Tag'),
         const SizedBox(height: Spacing.sm),
         tagsAsync.when(
           data: (tags) {
             if (tags.isEmpty) {
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'No tags associated',
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: SaturdayColors.secondary,
-                          fontStyle: FontStyle.italic,
-                        ),
-                  ),
-                  const SizedBox(height: Spacing.sm),
-                  OutlinedButton.icon(
-                    onPressed: () => _associateTag(libraryAlbum),
-                    icon: const Icon(Icons.add),
-                    label: const Text('Associate Tag'),
-                  ),
-                ],
+              return Text(
+                'No tag associated',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: SaturdayColors.secondary,
+                      fontStyle: FontStyle.italic,
+                    ),
               );
             }
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                ...tags.map((tag) => Padding(
-                      padding: const EdgeInsets.only(bottom: Spacing.sm),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: Spacing.md,
-                          vertical: Spacing.sm,
-                        ),
-                        decoration: BoxDecoration(
-                          color: SaturdayColors.success.withValues(alpha: 0.1),
-                          borderRadius: AppRadius.smallRadius,
-                          border: Border.all(
-                            color: SaturdayColors.success.withValues(alpha: 0.3),
-                          ),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.nfc,
-                              size: 16,
-                              color: SaturdayColors.success,
-                            ),
-                            const SizedBox(width: Spacing.sm),
-                            Text(
-                              EpcValidator.formatEpcForDisplay(tag.epcIdentifier),
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .bodySmall
-                                  ?.copyWith(fontFamily: 'monospace'),
-                            ),
-                          ],
-                        ),
-                      ),
-                    )),
-                const SizedBox(height: Spacing.sm),
-                OutlinedButton.icon(
-                  onPressed: () => _associateTag(libraryAlbum),
-                  icon: const Icon(Icons.add),
-                  label: const Text('Associate Another Tag'),
+            final tag = tags.first;
+            return Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: Spacing.md,
+                vertical: Spacing.sm,
+              ),
+              decoration: BoxDecoration(
+                color: SaturdayColors.success.withValues(alpha: 0.1),
+                borderRadius: AppRadius.smallRadius,
+                border: Border.all(
+                  color: SaturdayColors.success.withValues(alpha: 0.3),
                 ),
-              ],
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.nfc,
+                    size: 16,
+                    color: SaturdayColors.success,
+                  ),
+                  const SizedBox(width: Spacing.sm),
+                  Text(
+                    EpcValidator.formatEpcForDisplay(tag.epcIdentifier),
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodySmall
+                        ?.copyWith(fontFamily: 'monospace'),
+                  ),
+                ],
+              ),
             );
           },
           loading: () => const Center(

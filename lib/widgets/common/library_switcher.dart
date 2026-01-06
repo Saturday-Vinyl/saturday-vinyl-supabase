@@ -13,10 +13,8 @@ class LibrarySwitcherButton extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final currentLibrary = ref.watch(currentLibraryProvider);
-    final librariesAsync = ref.watch(userLibrariesProvider);
 
     final libraryName = currentLibrary?.name ?? 'Library';
-    final hasMultipleLibraries = (librariesAsync.valueOrNull?.length ?? 0) > 1;
 
     return GestureDetector(
       onTap: () => _showLibrarySwitcher(context),
@@ -30,10 +28,12 @@ class LibrarySwitcherButton extends ConsumerWidget {
               overflow: TextOverflow.ellipsis,
             ),
           ),
-          if (hasMultipleLibraries) ...[
-            const SizedBox(width: 4),
-            const Icon(Icons.arrow_drop_down, size: 24),
-          ],
+          const SizedBox(width: 4),
+          Icon(
+            Icons.keyboard_arrow_down,
+            size: 20,
+            color: SaturdayColors.secondary,
+          ),
         ],
       ),
     );

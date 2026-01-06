@@ -62,14 +62,14 @@ class EpcValidator {
 
   /// Extracts the EPC from a Saturday QR code URL.
   ///
-  /// Expected URL format: https://saturdayvinyl.com/tags/{epc}
+  /// Expected URL format: https://app.saturdayvinyl.com/tags/{epc}
   /// Returns null if the URL doesn't match the expected format.
   static String? extractEpcFromUrl(String url) {
     try {
       final uri = Uri.parse(url);
 
       // Check for valid Saturday domains
-      final validDomains = ['saturdayvinyl.com', 'www.saturdayvinyl.com'];
+      final validDomains = ['app.saturdayvinyl.com'];
       if (!validDomains.contains(uri.host)) {
         return null;
       }

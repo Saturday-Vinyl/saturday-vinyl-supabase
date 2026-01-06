@@ -3,7 +3,7 @@ import 'package:saturday_consumer_app/repositories/base_repository.dart';
 
 /// Repository for tag-related database operations.
 class TagRepository extends BaseRepository {
-  static const _tableName = 'tags';
+  static const _tableName = 'rfid_tags';
 
   /// Gets a tag by ID.
   Future<Tag?> getTag(String tagId) async {
@@ -18,11 +18,13 @@ class TagRepository extends BaseRepository {
   }
 
   /// Gets a tag by its EPC identifier.
+  ///
+  /// Uses case-insensitive matching since EPCs may be stored in different cases.
   Future<Tag?> getTagByEpc(String epc) async {
     final response = await client
         .from(_tableName)
         .select()
-        .eq('epc_identifier', epc)
+        .ilike('epc_identifier', epc)
         .maybeSingle();
 
     if (response == null) return null;
@@ -31,43 +33,32 @@ class TagRepository extends BaseRepository {
 
   /// Associates a tag with a library album.
   ///
-  /// Creates the tag if it doesn't exist.
+  /// Tags must be pre-created in the admin app before they can be associated.
+  /// Throws [StateError] if the tag doesn't exist in the database.
   Future<Tag> associateTag(
     String epc,
     String libraryAlbumId,
     String userId,
   ) async {
     final existing = await getTagByEpc(epc);
-    final now = DateTime.now().toIso8601String();
 
-    if (existing != null) {
-      // Update existing tag
-      final response = await client
-          .from(_tableName)
-          .update({
-            'library_album_id': libraryAlbumId,
-            'associated_at': now,
-            'associated_by': userId,
-            'status': TagStatus.active.name,
-          })
-          .eq('id', existing.id)
-          .select()
-          .single();
-
-      return Tag.fromJson(response);
+    if (existing == null) {
+      throw StateError(
+        'Tag not found. This tag has not been registered in the system.',
+      );
     }
 
-    // Create new tag
+    final now = DateTime.now().toIso8601String();
+
     final response = await client
         .from(_tableName)
-        .insert({
-          'epc_identifier': epc,
+        .update({
           'library_album_id': libraryAlbumId,
-          'status': TagStatus.active.name,
           'associated_at': now,
           'associated_by': userId,
-          'created_at': now,
+          'status': TagStatus.active.name,
         })
+        .eq('id', existing.id)
         .select()
         .single();
 
@@ -91,12 +82,14 @@ class TagRepository extends BaseRepository {
   }
 
   /// Gets all tags associated with a library album.
+  ///
+  /// Returns all non-retired tags that are linked to this album.
   Future<List<Tag>> getTagsForLibraryAlbum(String libraryAlbumId) async {
     final response = await client
         .from(_tableName)
         .select()
         .eq('library_album_id', libraryAlbumId)
-        .eq('status', TagStatus.active.name);
+        .neq('status', TagStatus.retired.name);
 
     return (response as List).map((row) => Tag.fromJson(row)).toList();
   }
@@ -109,10 +102,12 @@ class TagRepository extends BaseRepository {
   }
 
   /// Updates the last seen timestamp for a tag by EPC.
+  ///
+  /// Uses case-insensitive matching for consistency with other EPC lookups.
   Future<void> updateLastSeenByEpc(String epc) async {
     await client.from(_tableName).update({
       'last_seen_at': DateTime.now().toIso8601String(),
-    }).eq('epc_identifier', epc);
+    }).ilike('epc_identifier', epc);
   }
 
   /// Retires a tag so it's no longer active.

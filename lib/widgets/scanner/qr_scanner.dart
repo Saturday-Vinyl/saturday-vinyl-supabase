@@ -12,8 +12,10 @@ class QrScanner extends StatefulWidget {
     super.key,
     required this.onDetect,
     this.onError,
+    this.onScanningResumed,
     this.showFlashToggle = true,
     this.scanningMessage = 'Point your camera at the QR code',
+    this.shouldContinueScanning = false,
   });
 
   /// Callback when a QR code is detected.
@@ -22,11 +24,18 @@ class QrScanner extends StatefulWidget {
   /// Callback for scanner errors.
   final void Function(String error)? onError;
 
+  /// Callback when scanning resumes after shouldContinueScanning was set.
+  final VoidCallback? onScanningResumed;
+
   /// Whether to show the flash toggle button.
   final bool showFlashToggle;
 
   /// Message to display below the scanning frame.
   final String scanningMessage;
+
+  /// When true, resets the scanner to continue scanning after a detection.
+  /// Use this when the detected code was invalid and you want to keep scanning.
+  final bool shouldContinueScanning;
 
   @override
   State<QrScanner> createState() => _QrScannerState();
@@ -40,6 +49,21 @@ class _QrScannerState extends State<QrScanner> {
   );
 
   bool _hasDetected = false;
+
+  @override
+  void didUpdateWidget(QrScanner oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Resume scanning when shouldContinueScanning transitions to true
+    if (widget.shouldContinueScanning && !oldWidget.shouldContinueScanning && _hasDetected) {
+      _resumeScanning();
+    }
+  }
+
+  void _resumeScanning() {
+    setState(() => _hasDetected = false);
+    _controller.start();
+    widget.onScanningResumed?.call();
+  }
 
   @override
   void dispose() {

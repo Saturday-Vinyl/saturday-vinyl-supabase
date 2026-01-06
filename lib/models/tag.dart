@@ -2,13 +2,19 @@ import 'package:equatable/equatable.dart';
 
 /// Status of a tag in the system.
 enum TagStatus {
+  /// Tag has been written with an EPC but not yet associated with an album.
+  written,
+
+  /// Tag is actively associated with an album.
   active,
+
+  /// Tag has been retired and is no longer in use.
   retired;
 
   static TagStatus fromString(String value) {
     return TagStatus.values.firstWhere(
       (status) => status.name == value,
-      orElse: () => TagStatus.active,
+      orElse: () => TagStatus.written,
     );
   }
 }

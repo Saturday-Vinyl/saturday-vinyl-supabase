@@ -1,0 +1,1 @@
+We are working on a consumer-facing flutter app for ios and android that is used to manage a user's vinyl record collection and connec to an ecosystem of embedded devices built by our company, Saturday. Take a look at @docs/DEVELOPERS_GUIDE.md for more information about the app.

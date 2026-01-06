@@ -31,6 +31,9 @@ class TagAssociationState {
   final Tag? existingTag;
   final bool isAssociating;
   final bool isComplete;
+  /// Whether scanning should continue after the current error.
+  /// True for recoverable errors like "not a Saturday tag".
+  final bool shouldContinueScanning;
 
   const TagAssociationState({
     this.isLoading = false,
@@ -39,6 +42,7 @@ class TagAssociationState {
     this.existingTag,
     this.isAssociating = false,
     this.isComplete = false,
+    this.shouldContinueScanning = false,
   });
 
   TagAssociationState copyWith({
@@ -51,6 +55,7 @@ class TagAssociationState {
     bool clearExistingTag = false,
     bool? isAssociating,
     bool? isComplete,
+    bool? shouldContinueScanning,
   }) {
     return TagAssociationState(
       isLoading: isLoading ?? this.isLoading,
@@ -60,6 +65,7 @@ class TagAssociationState {
           clearExistingTag ? null : (existingTag ?? this.existingTag),
       isAssociating: isAssociating ?? this.isAssociating,
       isComplete: isComplete ?? this.isComplete,
+      shouldContinueScanning: shouldContinueScanning ?? this.shouldContinueScanning,
     );
   }
 }
@@ -81,14 +87,18 @@ class TagAssociationNotifier extends StateNotifier<TagAssociationState> {
       case SaturdayTagResult(:final epc):
         await _checkExistingTag(epc);
       case NonSaturdayQrResult():
+        // Don't auto-resume scanning - user must dismiss error first
         state = state.copyWith(
           isLoading: false,
           error: 'This is not a Saturday tag',
+          shouldContinueScanning: false,
         );
       case InvalidQrResult(:final message):
+        // Don't auto-resume scanning - user must dismiss error first
         state = state.copyWith(
           isLoading: false,
           error: message,
+          shouldContinueScanning: false,
         );
     }
   }
@@ -99,13 +109,17 @@ class TagAssociationNotifier extends StateNotifier<TagAssociationState> {
       final tagRepo = _ref.read(tagRepositoryProvider);
       final existingTag = await tagRepo.getTagByEpc(epc);
 
-      if (existingTag != null && existingTag.status == TagStatus.active) {
+      // Check if tag exists AND is actually associated with another album
+      if (existingTag != null && existingTag.isAssociated) {
+        // Tag is already associated - block reassignment
         state = state.copyWith(
           isLoading: false,
-          scannedEpc: epc,
-          existingTag: existingTag,
+          error: 'This tag is already associated with another album. '
+              'Please remove the tag from that album first before reassigning it.',
+          shouldContinueScanning: false,
         );
       } else {
+        // Tag doesn't exist or exists but is not associated - allow association
         state = state.copyWith(
           isLoading: false,
           scannedEpc: epc,
@@ -116,6 +130,7 @@ class TagAssociationNotifier extends StateNotifier<TagAssociationState> {
       state = state.copyWith(
         isLoading: false,
         error: 'Failed to check tag: $e',
+        shouldContinueScanning: false,
       );
     }
   }
@@ -170,9 +185,14 @@ class TagAssociationNotifier extends StateNotifier<TagAssociationState> {
     state = const TagAssociationState();
   }
 
-  /// Clear just the error.
+  /// Clear the error and resume scanning.
   void clearError() {
-    state = state.copyWith(clearError: true);
+    state = state.copyWith(clearError: true, shouldContinueScanning: true);
+  }
+
+  /// Acknowledge that scanning has resumed after an error.
+  void acknowledgeContinueScanning() {
+    state = state.copyWith(shouldContinueScanning: false);
   }
 }
 

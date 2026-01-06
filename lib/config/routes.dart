@@ -166,10 +166,11 @@ GoRouter createAppRouter(Ref ref) {
               child: LibraryScreen(),
             ),
             routes: [
-              // Album detail (nested under library)
+              // Album detail (nested under library, uses root navigator for fullscreen)
               GoRoute(
                 path: RoutePaths.albumDetails,
                 name: RouteNames.albumDetails,
+                parentNavigatorKey: rootNavigatorKey,
                 builder: (context, state) {
                   final albumId = state.pathParameters['id']!;
                   return AlbumDetailScreen(libraryAlbumId: albumId);
@@ -193,10 +194,11 @@ GoRouter createAppRouter(Ref ref) {
                 parentNavigatorKey: rootNavigatorKey,
                 builder: (context, state) => const ConfirmAlbumScreen(),
               ),
-              // Tag association
+              // Tag association (uses root navigator for fullscreen camera)
               GoRoute(
                 path: RoutePaths.tagAssociation,
                 name: RouteNames.tagAssociation,
+                parentNavigatorKey: rootNavigatorKey,
                 builder: (context, state) {
                   final albumId = state.pathParameters['id']!;
                   return TagAssociationScreen(libraryAlbumId: albumId);

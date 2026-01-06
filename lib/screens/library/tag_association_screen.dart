@@ -31,7 +31,12 @@ class _TagAssociationScreenState extends ConsumerState<TagAssociationScreen> {
   }
 
   void _onQrDetected(String code) {
-    ref.read(tagAssociationProvider.notifier).processQrCode(code);
+    // Defer state update to avoid rebuilding during frame
+    Future.microtask(() {
+      if (mounted) {
+        ref.read(tagAssociationProvider.notifier).processQrCode(code);
+      }
+    });
   }
 
   Future<void> _confirmAssociation() async {
@@ -59,6 +64,15 @@ class _TagAssociationScreenState extends ConsumerState<TagAssociationScreen> {
     // Note: Can't call reset on scanner because it's re-rendered
   }
 
+  void _onScanningResumed() {
+    // Defer state update to avoid rebuilding during frame
+    Future.microtask(() {
+      if (mounted) {
+        ref.read(tagAssociationProvider.notifier).acknowledgeContinueScanning();
+      }
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(tagAssociationProvider);
@@ -83,6 +97,8 @@ class _TagAssociationScreenState extends ConsumerState<TagAssociationScreen> {
         QrScanner(
           onDetect: _onQrDetected,
           scanningMessage: 'Scan the QR code on your Saturday tag',
+          shouldContinueScanning: state.shouldContinueScanning,
+          onScanningResumed: _onScanningResumed,
         ),
 
         // Error message overlay
@@ -109,8 +125,8 @@ class _TagAssociationScreenState extends ConsumerState<TagAssociationScreen> {
                     IconButton(
                       icon: const Icon(Icons.close, color: Colors.white),
                       onPressed: () {
+                        // Clear error and resume scanning
                         ref.read(tagAssociationProvider.notifier).clearError();
-                        _resetAndScanAgain();
                       },
                     ),
                   ],
@@ -187,32 +203,6 @@ class _TagAssociationScreenState extends ConsumerState<TagAssociationScreen> {
             ),
             const SizedBox(height: Spacing.xl),
 
-            // Warning if already associated
-            if (state.existingTag != null) ...[
-              Container(
-                padding: const EdgeInsets.all(Spacing.md),
-                decoration: BoxDecoration(
-                  color: SaturdayColors.warning.withValues(alpha: 0.1),
-                  borderRadius: AppRadius.mediumRadius,
-                  border: Border.all(
-                    color: SaturdayColors.warning.withValues(alpha: 0.5),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.warning_amber, color: SaturdayColors.warning),
-                    const SizedBox(width: Spacing.sm),
-                    Expanded(
-                      child: Text(
-                        'This tag is already associated with another album. Continuing will move it to this album.',
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: Spacing.lg),
-            ],
 
             // Album info
             albumAsync.when(
