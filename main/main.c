@@ -37,6 +37,12 @@
  * - Provisioned devices: 10-second boot window for enter_service_mode command
  * - Commands: get_status, get_manifest, provision, test_wifi, test_rfid, test_cloud,
  *             customer_reset, factory_reset, exit_service_mode, reboot
+ *
+ * Phase 7: BLE Provisioning
+ * - Consumer Wi-Fi provisioning via BLE using Saturday mobile app
+ * - Long press (3-5s) enters BLE provisioning mode
+ * - BLE GATT service for credential exchange
+ * - Auto-starts for factory-provisioned devices without Wi-Fi
  */
 
 #include <stdio.h>
@@ -63,6 +69,7 @@
 #include "supabase_client.h"
 #include "event_reporter.h"
 #include "serial_prov.h"
+#include "ble_prov.h"
 
 static const char *TAG = "SV_HUB";
 
@@ -74,6 +81,9 @@ static bool s_test_connectivity_pending = false;
 
 /* Track if a Saturday tag was detected in the current poll cycle */
 static bool s_saturday_tag_detected_this_poll = false;
+
+/* Track if BLE provisioning mode was requested via button */
+static bool s_ble_prov_requested = false;
 
 /*******************************************************************************
  * Button Callback
@@ -100,9 +110,9 @@ static void on_button_press(button_press_t press_type)
             break;
 
         case BUTTON_PRESS_LONG:
-            ESP_LOGI(TAG, "Long press detected - entering provisioning mode (demo)");
-            /* Blue slow blink indicates provisioning mode */
-            led_set_state(LED_COLOR_BLUE, LED_PATTERN_BLINK_SLOW, 1000);
+            ESP_LOGI(TAG, "Long press detected - requesting BLE provisioning mode");
+            /* Set flag to trigger BLE provisioning from main loop */
+            s_ble_prov_requested = true;
             break;
 
         case BUTTON_PRESS_FACTORY:
@@ -440,7 +450,7 @@ void app_main(void)
 
     ESP_LOGI(TAG, "===========================================");
     ESP_LOGI(TAG, "  Saturday Vinyl Hub Firmware v%s", FIRMWARE_VERSION);
-    ESP_LOGI(TAG, "  Phase 6: Service Mode");
+    ESP_LOGI(TAG, "  Phase 7: BLE Provisioning");
     ESP_LOGI(TAG, "===========================================");
 
     /* Log chip info */
@@ -701,11 +711,55 @@ void app_main(void)
     }
 
     /*
+     * Initialize BLE Provisioning (Phase 7)
+     * Must be initialized before checking Wi-Fi, as we may need it if no Wi-Fi configured
+     */
+    ESP_LOGI(TAG, "Initializing BLE provisioning...");
+    ret = ble_prov_init(NULL);  /* Use defaults */
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "BLE provisioning init failed: %s", esp_err_to_name(ret));
+    } else {
+        ESP_LOGI(TAG, "BLE provisioning initialized");
+    }
+
+    /*
      * Initialize Wi-Fi (Phase 4)
      */
     ret = start_wifi();
     if (ret != ESP_OK && ret != ESP_ERR_NOT_FOUND) {
         ESP_LOGW(TAG, "Wi-Fi initialization issue - continuing without Wi-Fi");
+    }
+
+    /*
+     * BLE Provisioning Mode (Phase 7)
+     * If device is factory-provisioned (has unit_id) but has no Wi-Fi credentials,
+     * automatically enter BLE provisioning mode for consumer setup.
+     */
+    if (config_has_unit_id() && !config_has_wifi()) {
+        ESP_LOGI(TAG, "===========================================");
+        ESP_LOGI(TAG, "  BLE PROVISIONING MODE");
+        ESP_LOGI(TAG, "  Device needs Wi-Fi configuration");
+        ESP_LOGI(TAG, "  Open Saturday app to set up your Hub");
+        ESP_LOGI(TAG, "===========================================");
+
+        ret = ble_prov_start();
+        if (ret == ESP_OK) {
+            /* Wait for provisioning to complete or timeout */
+            while (!ble_prov_is_complete() && ble_prov_is_active()) {
+                vTaskDelay(pdMS_TO_TICKS(1000));
+
+                /* Allow factory reset button during BLE provisioning */
+                /* Button callback sets s_ble_prov_requested which we ignore here */
+            }
+
+            if (ble_prov_is_complete()) {
+                ESP_LOGI(TAG, "BLE provisioning completed successfully");
+            } else {
+                ESP_LOGW(TAG, "BLE provisioning timed out or was stopped");
+            }
+        } else {
+            ESP_LOGE(TAG, "Failed to start BLE provisioning: %s", esp_err_to_name(ret));
+        }
     }
 
     /*
@@ -752,6 +806,31 @@ void app_main(void)
                 led_flash(LED_COLOR_GREEN, 200);
             } else {
                 ESP_LOGW(TAG, "Internet connectivity test failed");
+            }
+        }
+
+        /*
+         * Handle BLE provisioning request (triggered by button long press).
+         * This runs in the main task context for safety.
+         */
+        if (s_ble_prov_requested) {
+            s_ble_prov_requested = false;
+
+            /* Only enter BLE provisioning if not already active */
+            if (!ble_prov_is_active()) {
+                ESP_LOGI(TAG, "===========================================");
+                ESP_LOGI(TAG, "  BLE PROVISIONING MODE (Button Triggered)");
+                ESP_LOGI(TAG, "  Open Saturday app to configure Wi-Fi");
+                ESP_LOGI(TAG, "===========================================");
+
+                ret = ble_prov_start();
+                if (ret != ESP_OK) {
+                    ESP_LOGE(TAG, "Failed to start BLE provisioning: %s", esp_err_to_name(ret));
+                    led_flash(LED_COLOR_RED, 500);
+                }
+                /* BLE provisioning will run in background and update LED state */
+            } else {
+                ESP_LOGW(TAG, "BLE provisioning already active");
             }
         }
 

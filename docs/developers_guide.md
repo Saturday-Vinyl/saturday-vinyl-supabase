@@ -749,33 +749,41 @@ Hub → Host: {"status": "provisioned", "hub_id": "HUB-XXXX"}
 
 ### Consumer Provisioning (BLE)
 
+> **Full Protocol Specification:** See [ble_provisioning_protocol.md](ble_provisioning_protocol.md) for the
+> complete BLE provisioning protocol specification, including iOS/Android/Flutter code examples.
+
 #### BLE Service
 
 | Service | UUID |
 |---------|------|
-| Saturday Provisioning | `5356xxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` |
+| Saturday Provisioning | `53560000-0001-1000-8000-00805f9b34fb` |
 
 | Characteristic | UUID | Properties | Description |
 |----------------|------|------------|-------------|
-| Status | `...0001` | Read, Notify | Current provisioning state |
-| WiFi SSID | `...0002` | Write | Wi-Fi network name |
-| WiFi Password | `...0003` | Write | Wi-Fi password |
-| User Token | `...0004` | Write | User authentication token |
-| Command | `...0005` | Write | Control commands |
+| Device Info | `53560001-...` | Read | JSON device metadata |
+| Status | `53560002-...` | Read, Notify | Single-byte status code |
+| Command | `53560003-...` | Write | Control commands |
+| Response | `53560004-...` | Read, Notify | JSON response messages |
+| WiFi SSID | `53560010-...` | Write | Wi-Fi network name |
+| WiFi Password | `53560011-...` | Write | Wi-Fi password |
+| Thread Dataset | `53560020-...` | Write | Thread network credentials |
+| User Token | `53560030-...` | Write | User authentication token |
 
 #### Consumer Provisioning Flow
 
 ```
-1. User opens Saturday app, selects "Add Hub"
-2. App scans for BLE devices with Saturday service
-3. User selects their hub
-4. App connects via BLE
-5. App sends Wi-Fi credentials
-6. App sends user authentication token
-7. Hub attempts Wi-Fi connection
-8. Hub reports success/failure via BLE
-9. Hub registers itself to user's account via Supabase
-10. App shows hub as connected
+1. User long-presses button (3-5s) OR device boots without Wi-Fi
+2. Hub starts BLE advertising as "Saturday Hub XXXX"
+3. User opens Saturday app, selects "Add Hub"
+4. App scans for BLE devices with Saturday service UUID
+5. User selects their hub, app connects via BLE
+6. App reads Device Info to determine capabilities
+7. App subscribes to Status and Response characteristics
+8. App writes Wi-Fi SSID and Password
+9. App writes CONNECT command (0x01)
+10. Hub attempts Wi-Fi connection, sends status notifications
+11. On success, hub stores credentials and exits provisioning
+12. App shows hub as connected
 ```
 
 ---

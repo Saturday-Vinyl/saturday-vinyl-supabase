@@ -20,9 +20,9 @@ extern "C" {
  * Firmware Identification
  ******************************************************************************/
 #define FIRMWARE_VERSION_MAJOR  0
-#define FIRMWARE_VERSION_MINOR  6
+#define FIRMWARE_VERSION_MINOR  7
 #define FIRMWARE_VERSION_PATCH  0
-#define FIRMWARE_VERSION        "0.6.0"
+#define FIRMWARE_VERSION        "0.7.0"
 
 /** UUID matching the firmware_versions table in the backend database */
 #define FIRMWARE_ID             "550e8400-e29b-41d4-a716-446655440000"
