@@ -17,6 +17,9 @@ import 'package:saturday_consumer_app/screens/library/confirm_album_screen.dart'
 import 'package:saturday_consumer_app/screens/library/tag_association_screen.dart';
 import 'package:saturday_consumer_app/screens/library/create_library_screen.dart';
 import 'package:saturday_consumer_app/screens/account/account_screen.dart';
+import 'package:saturday_consumer_app/screens/account/device_list_screen.dart';
+import 'package:saturday_consumer_app/screens/account/device_detail_screen.dart';
+import 'package:saturday_consumer_app/screens/account/device_setup_screen.dart';
 import 'package:saturday_consumer_app/screens/onboarding/quick_start_screen.dart';
 import 'package:saturday_consumer_app/screens/onboarding/add_album_intro_screen.dart';
 import 'package:saturday_consumer_app/widgets/common/scaffold_with_nav.dart';
@@ -46,7 +49,9 @@ class RoutePaths {
   static const String addAlbumConfirm = 'add/confirm';
   static const String tagAssociation = 'album/:id/tag';
   static const String createLibrary = 'create';
-  static const String deviceSetup = 'device-setup';
+  static const String deviceList = 'devices';
+  static const String deviceDetail = 'devices/:id';
+  static const String deviceSetup = 'devices/setup';
   static const String settings = 'settings';
   static const String search = '/search';
 
@@ -76,6 +81,8 @@ class RouteNames {
   static const String addAlbumConfirm = 'add-album-confirm';
   static const String tagAssociation = 'tag-association';
   static const String createLibrary = 'create-library';
+  static const String deviceList = 'device-list';
+  static const String deviceDetail = 'device-detail';
   static const String deviceSetup = 'device-setup';
   static const String settings = 'settings';
   static const String search = 'search';
@@ -233,6 +240,32 @@ GoRouter createAppRouter(Ref ref) {
             pageBuilder: (context, state) => const NoTransitionPage(
               child: AccountScreen(),
             ),
+            routes: [
+              // Device list
+              GoRoute(
+                path: RoutePaths.deviceList,
+                name: RouteNames.deviceList,
+                builder: (context, state) => const DeviceListScreen(),
+              ),
+              // Device setup (uses root navigator for fullscreen)
+              // NOTE: Must come before deviceDetail to avoid :id matching "setup"
+              GoRoute(
+                path: RoutePaths.deviceSetup,
+                name: RouteNames.deviceSetup,
+                parentNavigatorKey: rootNavigatorKey,
+                builder: (context, state) => const DeviceSetupScreen(),
+              ),
+              // Device detail
+              GoRoute(
+                path: RoutePaths.deviceDetail,
+                name: RouteNames.deviceDetail,
+                parentNavigatorKey: rootNavigatorKey,
+                builder: (context, state) {
+                  final deviceId = state.pathParameters['id']!;
+                  return DeviceDetailScreen(deviceId: deviceId);
+                },
+              ),
+            ],
           ),
         ],
       ),

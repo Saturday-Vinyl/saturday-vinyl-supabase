@@ -6,8 +6,10 @@ import 'package:saturday_consumer_app/config/routes.dart';
 import 'package:saturday_consumer_app/config/styles.dart';
 import 'package:saturday_consumer_app/config/theme.dart';
 import 'package:saturday_consumer_app/providers/auth_provider.dart';
+import 'package:saturday_consumer_app/providers/device_provider.dart';
 import 'package:saturday_consumer_app/providers/intro_splash_provider.dart';
 import 'package:saturday_consumer_app/widgets/common/saturday_app_bar.dart';
+import 'package:saturday_consumer_app/widgets/devices/devices.dart';
 
 /// Account screen - user profile and settings.
 ///
@@ -41,24 +43,7 @@ class AccountScreen extends ConsumerWidget {
             // Devices section
             _buildSectionHeader(context, 'Devices'),
             Spacing.itemGap,
-            _buildSettingsTile(
-              context,
-              icon: Icons.speaker_group,
-              title: 'My Devices',
-              subtitle: 'No devices connected',
-              onTap: () {
-                // TODO: Navigate to device management
-              },
-            ),
-            _buildSettingsTile(
-              context,
-              icon: Icons.add_circle_outline,
-              title: 'Add Device',
-              subtitle: 'Connect a Saturday turntable or speaker',
-              onTap: () {
-                // TODO: Start device setup
-              },
-            ),
+            _buildDevicesSection(context, ref),
 
             Spacing.sectionGap,
 
@@ -314,6 +299,55 @@ class AccountScreen extends ConsumerWidget {
         trailing: const Icon(Icons.chevron_right),
         onTap: onTap,
       ),
+    );
+  }
+
+  Widget _buildDevicesSection(BuildContext context, WidgetRef ref) {
+    final devicesAsync = ref.watch(userDevicesProvider);
+
+    return devicesAsync.when(
+      data: (devices) {
+        final hubCount = devices.where((d) => d.isHub).length;
+        final crateCount = devices.where((d) => d.isCrate).length;
+        final onlineCount = devices.where((d) => d.isOnline).length;
+
+        return Column(
+          children: [
+            // Device summary card
+            DeviceMiniCard(
+              hubCount: hubCount,
+              crateCount: crateCount,
+              onlineCount: onlineCount,
+              onTap: () => context.pushNamed(RouteNames.deviceList),
+            ),
+            const SizedBox(height: 8),
+            // Add device button
+            _buildSettingsTile(
+              context,
+              icon: Icons.add_circle_outline,
+              title: 'Add Device',
+              subtitle: 'Connect a Saturday Hub or Crate',
+              onTap: () => context.pushNamed(RouteNames.deviceSetup),
+            ),
+          ],
+        );
+      },
+      loading: () => const Padding(
+        padding: EdgeInsets.all(16),
+        child: Center(child: CircularProgressIndicator()),
+      ),
+      error: (error, stack) {
+        // Log the error for debugging
+        debugPrint('Device loading error: $error');
+        debugPrint('Stack trace: $stack');
+        return _buildSettingsTile(
+          context,
+          icon: Icons.error_outline,
+          title: 'My Devices',
+          subtitle: 'Tap to retry',
+          onTap: () => ref.invalidate(userDevicesProvider),
+        );
+      },
     );
   }
 }

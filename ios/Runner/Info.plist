@@ -48,6 +48,11 @@
 	<!-- Camera permission for barcode scanning -->
 	<key>NSCameraUsageDescription</key>
 	<string>Saturday needs camera access to scan album barcodes and capture album covers.</string>
+	<!-- Bluetooth permissions for device provisioning -->
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Saturday needs Bluetooth to discover and set up your Saturday Hub and Crate devices.</string>
+	<key>NSBluetoothPeripheralUsageDescription</key>
+	<string>Saturday needs Bluetooth to discover and set up your Saturday Hub and Crate devices.</string>
 	<!-- URL Schemes for OAuth callbacks -->
 	<key>CFBundleURLTypes</key>
 	<array>

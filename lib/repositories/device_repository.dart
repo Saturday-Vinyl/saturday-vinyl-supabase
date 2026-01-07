@@ -3,7 +3,7 @@ import 'package:saturday_consumer_app/repositories/base_repository.dart';
 
 /// Repository for device-related database operations.
 class DeviceRepository extends BaseRepository {
-  static const _tableName = 'devices';
+  static const _tableName = 'consumer_devices';
 
   /// Gets all devices owned by a user.
   Future<List<Device>> getUserDevices(String userId) async {
