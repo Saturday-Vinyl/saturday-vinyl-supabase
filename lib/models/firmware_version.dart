@@ -1,6 +1,8 @@
 import 'package:equatable/equatable.dart';
 
 /// Firmware version for a device type
+/// Note: Provisioning manifests are now embedded in the firmware binary
+/// and retrieved via the get_manifest command in Service Mode.
 class FirmwareVersion extends Equatable {
   final String id; // UUID
   final String deviceTypeId; // Foreign key

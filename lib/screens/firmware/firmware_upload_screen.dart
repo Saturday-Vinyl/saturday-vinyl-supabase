@@ -318,7 +318,7 @@ class _FirmwareUploadScreenState extends ConsumerState<FirmwareUploadScreen> {
         binaryFilename: _selectedFileName!,
         isProductionReady: _isProductionReady,
         createdAt: DateTime.now(),
-        createdBy: currentUser?.id,
+        createdBy: currentUser?.authUserId,
       );
 
       // Simulate progress for better UX

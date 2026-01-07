@@ -7,12 +7,14 @@ import 'package:saturday_app/providers/firmware_provider.dart';
 import 'package:saturday_app/providers/device_type_provider.dart';
 import 'package:saturday_app/providers/auth_provider.dart';
 import 'package:saturday_app/screens/firmware/firmware_edit_screen.dart';
+import 'package:saturday_app/screens/firmware/manifest_editor_screen.dart';
 import 'package:saturday_app/screens/device_types/device_type_detail_screen.dart';
 import 'package:saturday_app/services/storage_service.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 /// Screen for viewing firmware version details
 class FirmwareDetailScreen extends ConsumerWidget {
+  /// Initial firmware data (used as fallback and for ID)
   final FirmwareVersion firmware;
 
   const FirmwareDetailScreen({
@@ -23,25 +25,30 @@ class FirmwareDetailScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final canManage = ref.watch(currentUserProvider).value != null;
-    final deviceTypeAsync = ref.watch(deviceTypeProvider(firmware.deviceTypeId));
+
+    // Watch the provider to get live updates
+    final firmwareAsync = ref.watch(firmwareVersionProvider(firmware.id));
+    final currentFirmware = firmwareAsync.valueOrNull ?? firmware;
+
+    final deviceTypeAsync = ref.watch(deviceTypeProvider(currentFirmware.deviceTypeId));
 
     return Scaffold(
       appBar: AppBar(
-        title: Text('Firmware v${firmware.version}'),
+        title: Text('Firmware v${currentFirmware.version}'),
         actions: [
           if (canManage)
             IconButton(
               icon: const Icon(Icons.edit),
-              onPressed: () => _navigateToEdit(context, ref),
+              onPressed: () => _navigateToEdit(context, ref, currentFirmware),
               tooltip: 'Edit',
             ),
           if (canManage)
             PopupMenuButton<String>(
               onSelected: (value) {
                 if (value == 'toggle_production') {
-                  _toggleProductionReady(context, ref);
+                  _toggleProductionReady(context, ref, currentFirmware);
                 } else if (value == 'delete') {
-                  _handleDelete(context, ref);
+                  _handleDelete(context, ref, currentFirmware);
                 }
               },
               itemBuilder: (context) => [
@@ -50,14 +57,14 @@ class FirmwareDetailScreen extends ConsumerWidget {
                   child: Row(
                     children: [
                       Icon(
-                        firmware.isProductionReady
+                        currentFirmware.isProductionReady
                             ? Icons.remove_circle_outline
                             : Icons.check_circle_outline,
                         size: 20,
                       ),
                       const SizedBox(width: 8),
                       Text(
-                        firmware.isProductionReady
+                        currentFirmware.isProductionReady
                             ? 'Mark as Testing'
                             : 'Mark as Production',
                       ),
@@ -85,25 +92,25 @@ class FirmwareDetailScreen extends ConsumerWidget {
             // Production Ready Status Banner
             Container(
               padding: const EdgeInsets.all(16),
-              color: firmware.isProductionReady
+              color: currentFirmware.isProductionReady
                   ? SaturdayColors.success.withValues(alpha: 0.1)
                   : SaturdayColors.secondaryGrey.withValues(alpha: 0.1),
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Icon(
-                    firmware.isProductionReady
+                    currentFirmware.isProductionReady
                         ? Icons.check_circle
                         : Icons.build_circle,
-                    color: firmware.isProductionReady
+                    color: currentFirmware.isProductionReady
                         ? SaturdayColors.success
                         : SaturdayColors.secondaryGrey,
                   ),
                   const SizedBox(width: 8),
                   Text(
-                    firmware.isProductionReady ? 'Production Ready' : 'Testing',
+                    currentFirmware.isProductionReady ? 'Production Ready' : 'Testing',
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          color: firmware.isProductionReady
+                          color: currentFirmware.isProductionReady
                               ? SaturdayColors.success
                               : SaturdayColors.secondaryGrey,
                           fontWeight: FontWeight.w600,
@@ -119,7 +126,7 @@ class FirmwareDetailScreen extends ConsumerWidget {
               child: Column(
                 children: [
                   Text(
-                    'v${firmware.version}',
+                    'v${currentFirmware.version}',
                     style: Theme.of(context).textTheme.displaySmall?.copyWith(
                           fontWeight: FontWeight.bold,
                           color: SaturdayColors.primaryDark,
@@ -157,7 +164,7 @@ class FirmwareDetailScreen extends ConsumerWidget {
                     ),
                     loading: () => const CircularProgressIndicator(),
                     error: (_, __) => Text(
-                      'Device Type: ${firmware.deviceTypeId}',
+                      'Device Type: ${currentFirmware.deviceTypeId}',
                       style: Theme.of(context).textTheme.bodyMedium,
                     ),
                   ),
@@ -166,14 +173,14 @@ class FirmwareDetailScreen extends ConsumerWidget {
             ),
 
             // Release Notes
-            if (firmware.releaseNotes != null) ...[
+            if (currentFirmware.releaseNotes != null) ...[
               _Section(
                 title: 'Release Notes',
                 children: [
                   Padding(
                     padding: const EdgeInsets.all(16),
                     child: Text(
-                      firmware.releaseNotes!,
+                      currentFirmware.releaseNotes!,
                       style: Theme.of(context).textTheme.bodyLarge,
                     ),
                   ),
@@ -187,13 +194,13 @@ class FirmwareDetailScreen extends ConsumerWidget {
               children: [
                 _InfoRow(
                   label: 'Filename',
-                  value: firmware.binaryFilename,
+                  value: currentFirmware.binaryFilename,
                   icon: Icons.insert_drive_file,
                 ),
-                if (firmware.binarySize != null)
+                if (currentFirmware.binarySize != null)
                   _InfoRow(
                     label: 'File Size',
-                    value: StorageService.formatFileSize(firmware.binarySize!),
+                    value: StorageService.formatFileSize(currentFirmware.binarySize!),
                     icon: Icons.data_usage,
                   ),
                 Padding(
@@ -201,7 +208,7 @@ class FirmwareDetailScreen extends ConsumerWidget {
                   child: SizedBox(
                     width: double.infinity,
                     child: ElevatedButton.icon(
-                      onPressed: () => _downloadBinary(context),
+                      onPressed: () => _downloadBinary(context, currentFirmware),
                       icon: const Icon(Icons.download),
                       label: const Text('Download Binary'),
                       style: ElevatedButton.styleFrom(
@@ -215,19 +222,30 @@ class FirmwareDetailScreen extends ConsumerWidget {
               ],
             ),
 
+            // Manifest Builder (Developer Tool)
+            _Section(
+              title: 'Manifest Builder',
+              children: [
+                _ManifestBuilderCard(
+                  canManage: canManage,
+                  onOpenBuilder: () => _openManifestBuilder(context, currentFirmware),
+                ),
+              ],
+            ),
+
             // Upload Information
             _Section(
               title: 'Upload Information',
               children: [
                 _InfoRow(
                   label: 'Upload Date',
-                  value: _formatDate(firmware.createdAt),
+                  value: _formatDate(currentFirmware.createdAt),
                   icon: Icons.calendar_today,
                 ),
-                if (firmware.createdBy != null)
+                if (currentFirmware.createdBy != null)
                   _InfoRow(
                     label: 'Uploaded By',
-                    value: firmware.createdBy!,
+                    value: currentFirmware.createdBy!,
                     icon: Icons.person,
                   ),
               ],
@@ -241,17 +259,17 @@ class FirmwareDetailScreen extends ConsumerWidget {
     );
   }
 
-  void _navigateToEdit(BuildContext context, WidgetRef ref) async {
+  void _navigateToEdit(BuildContext context, WidgetRef ref, FirmwareVersion fw) async {
     final result = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
-        builder: (context) => FirmwareEditScreen(firmware: firmware),
+        builder: (context) => FirmwareEditScreen(firmware: fw),
       ),
     );
 
     if (result == true) {
       // Refresh firmware data
-      ref.invalidate(firmwareVersionProvider(firmware.id));
+      ref.invalidate(firmwareVersionProvider(fw.id));
     }
   }
 
@@ -264,8 +282,8 @@ class FirmwareDetailScreen extends ConsumerWidget {
     );
   }
 
-  void _toggleProductionReady(BuildContext context, WidgetRef ref) async {
-    final newStatus = !firmware.isProductionReady;
+  void _toggleProductionReady(BuildContext context, WidgetRef ref, FirmwareVersion fw) async {
+    final newStatus = !fw.isProductionReady;
     final action = newStatus ? 'production ready' : 'testing';
 
     final confirmed = await showDialog<bool>(
@@ -273,7 +291,7 @@ class FirmwareDetailScreen extends ConsumerWidget {
       builder: (context) => AlertDialog(
         title: Text('Mark as ${newStatus ? 'Production' : 'Testing'}?'),
         content: Text(
-          'Are you sure you want to mark firmware v${firmware.version} as $action?',
+          'Are you sure you want to mark firmware v${fw.version} as $action?',
         ),
         actions: [
           TextButton(
@@ -292,7 +310,7 @@ class FirmwareDetailScreen extends ConsumerWidget {
 
     try {
       final management = ref.read(firmwareManagementProvider);
-      await management.toggleProductionReady(firmware.id, newStatus);
+      await management.toggleProductionReady(fw.id, newStatus);
 
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -317,14 +335,14 @@ class FirmwareDetailScreen extends ConsumerWidget {
     }
   }
 
-  void _handleDelete(BuildContext context, WidgetRef ref) async {
+  void _handleDelete(BuildContext context, WidgetRef ref, FirmwareVersion fw) async {
     // TODO: Check if units are using this firmware (Prompt 25)
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Delete Firmware'),
         content: Text(
-          'Are you sure you want to delete firmware v${firmware.version}?\n\n'
+          'Are you sure you want to delete firmware v${fw.version}?\n\n'
           'This will also delete the binary file from storage and cannot be undone.',
         ),
         actions: [
@@ -347,7 +365,7 @@ class FirmwareDetailScreen extends ConsumerWidget {
 
     try {
       final management = ref.read(firmwareManagementProvider);
-      await management.deleteFirmware(firmware.id);
+      await management.deleteFirmware(fw.id);
 
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -368,9 +386,9 @@ class FirmwareDetailScreen extends ConsumerWidget {
     }
   }
 
-  void _downloadBinary(BuildContext context) async {
+  void _downloadBinary(BuildContext context, FirmwareVersion fw) async {
     try {
-      final uri = Uri.parse(firmware.binaryUrl);
+      final uri = Uri.parse(fw.binaryUrl);
       if (await canLaunchUrl(uri)) {
         await launchUrl(uri, mode: LaunchMode.externalApplication);
       } else {
@@ -393,6 +411,19 @@ class FirmwareDetailScreen extends ConsumerWidget {
         );
       }
     }
+  }
+
+  void _openManifestBuilder(BuildContext context, FirmwareVersion fw) {
+    // Open the manifest builder as a developer tool
+    // This generates JSON to embed in firmware, not stored in DB
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ManifestEditorScreen(
+          firmwareVersion: fw.version,
+        ),
+      ),
+    );
   }
 
   String _formatDate(DateTime date) {
@@ -495,5 +526,83 @@ class _InfoRow extends StatelessWidget {
     }
 
     return row;
+  }
+}
+
+/// Card widget for manifest builder developer tool
+class _ManifestBuilderCard extends StatelessWidget {
+  final bool canManage;
+  final VoidCallback onOpenBuilder;
+
+  const _ManifestBuilderCard({
+    required this.canManage,
+    required this.onOpenBuilder,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: SaturdayColors.info.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: SaturdayColors.info.withValues(alpha: 0.3),
+              ),
+            ),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.code,
+                  color: SaturdayColors.info,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Manifest Builder',
+                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                              fontWeight: FontWeight.w600,
+                            ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Use this developer tool to generate manifest JSON for embedding in firmware. '
+                        'The manifest is retrieved from devices via the get_manifest command in Service Mode.',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: SaturdayColors.secondaryGrey,
+                            ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (canManage) ...[
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: onOpenBuilder,
+                icon: const Icon(Icons.build),
+                label: const Text('Open Manifest Builder'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: SaturdayColors.info,
+                  foregroundColor: Colors.white,
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
   }
 }

@@ -18,7 +18,7 @@ class DeviceTypeDetailScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final canManage = ref.watch(currentUserProvider) != null;
+    final canManage = ref.watch(currentUserProvider).value != null;
 
     return Scaffold(
       appBar: AppBar(

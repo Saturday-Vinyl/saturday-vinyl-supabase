@@ -1,8 +1,10 @@
 import 'dart:io';
+import 'package:path_provider/path_provider.dart';
 import 'package:saturday_app/models/firmware_version.dart';
 import 'package:saturday_app/services/storage_service.dart';
 import 'package:saturday_app/services/supabase_service.dart';
 import 'package:saturday_app/utils/app_logger.dart';
+import 'package:http/http.dart' as http;
 
 /// Repository for managing firmware versions
 class FirmwareRepository {
@@ -230,6 +232,39 @@ class FirmwareRepository {
       return firmware;
     } catch (error, stackTrace) {
       AppLogger.error('Failed to fetch latest production firmware', error, stackTrace);
+      rethrow;
+    }
+  }
+
+  /// Download firmware binary to a temporary directory
+  ///
+  /// Returns the local file path to the downloaded binary
+  Future<File> downloadFirmwareBinary(String firmwareId) async {
+    try {
+      AppLogger.info('Downloading firmware binary: $firmwareId');
+
+      // Get firmware version to get the binary URL
+      final firmware = await getFirmwareVersion(firmwareId);
+      if (firmware == null) {
+        throw Exception('Firmware version not found: $firmwareId');
+      }
+
+      // Download the file
+      final response = await http.get(Uri.parse(firmware.binaryUrl));
+      if (response.statusCode != 200) {
+        throw Exception('Failed to download firmware: HTTP ${response.statusCode}');
+      }
+
+      // Save to temp directory
+      final tempDir = await getTemporaryDirectory();
+      final localPath = '${tempDir.path}/firmware_${firmwareId}_${firmware.binaryFilename}';
+      final file = File(localPath);
+      await file.writeAsBytes(response.bodyBytes);
+
+      AppLogger.info('Firmware downloaded to: $localPath');
+      return file;
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to download firmware binary', error, stackTrace);
       rethrow;
     }
   }

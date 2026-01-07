@@ -11,8 +11,11 @@ import 'package:saturday_app/models/unit_step_completion.dart';
 import 'package:saturday_app/providers/production_unit_provider.dart';
 import 'package:saturday_app/providers/product_provider.dart';
 import 'package:saturday_app/providers/unit_timer_provider.dart';
+import 'package:saturday_app/models/step_type.dart';
+import 'package:saturday_app/providers/firmware_provider.dart';
 import 'package:saturday_app/screens/production/complete_step_screen.dart';
 import 'package:saturday_app/screens/production/firmware_flash_screen.dart';
+import 'package:saturday_app/screens/production/firmware_provisioning_screen.dart';
 import 'package:saturday_app/services/qr_service.dart';
 import 'package:saturday_app/services/supabase_service.dart';
 import 'package:saturday_app/utils/app_logger.dart';
@@ -38,22 +41,35 @@ class UnitDetailScreen extends ConsumerStatefulWidget {
 class _UnitDetailScreenState extends ConsumerState<UnitDetailScreen> {
   bool _isRegeneratingQR = false;
   Timer? _timerUpdateTimer;
+  bool _hasActiveTimers = false;
 
   @override
   void initState() {
     super.initState();
-    // Start a timer to refresh active timers every second for countdown
-    _timerUpdateTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) {
-        ref.invalidate(activeUnitTimersWithDetailsProvider(widget.unitId));
-      }
-    });
+    // Timer will be started/stopped based on whether there are active timers
   }
 
   @override
   void dispose() {
     _timerUpdateTimer?.cancel();
     super.dispose();
+  }
+
+  /// Start or stop the countdown refresh timer based on active timers
+  void _updateTimerPolling(bool hasActiveTimers) {
+    if (hasActiveTimers && _timerUpdateTimer == null) {
+      // Start polling when we have active timers
+      _timerUpdateTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (mounted) {
+          ref.invalidate(activeUnitTimersWithDetailsProvider(widget.unitId));
+        }
+      });
+    } else if (!hasActiveTimers && _timerUpdateTimer != null) {
+      // Stop polling when no active timers
+      _timerUpdateTimer?.cancel();
+      _timerUpdateTimer = null;
+    }
+    _hasActiveTimers = hasActiveTimers;
   }
 
   @override
@@ -190,6 +206,11 @@ class _UnitDetailScreenState extends ConsumerState<UnitDetailScreen> {
 
                     return activeTimersAsync.when(
                       data: (activeTimers) {
+                        // Update timer polling based on whether we have active timers
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          _updateTimerPolling(activeTimers.isNotEmpty);
+                        });
+
                         if (activeTimers.isEmpty) {
                           return const SizedBox.shrink();
                         }
@@ -593,8 +614,68 @@ class _UnitDetailScreenState extends ConsumerState<UnitDetailScreen> {
 
     if (unit == null) return;
 
-    // Check if this is a firmware provisioning step
-    if (step.isFirmwareStep()) {
+    // Check if this is a firmware provisioning step (new flow)
+    if (step.stepType.isFirmwareProvisioning && step.firmwareVersionId != null) {
+      // Get the firmware version
+      final firmwareAsync = await ref.read(
+        firmwareVersionProvider(step.firmwareVersionId!).future,
+      );
+
+      if (firmwareAsync == null) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Firmware version not found'),
+              backgroundColor: SaturdayColors.error,
+            ),
+          );
+        }
+        return;
+      }
+
+      // Navigate to firmware provisioning screen
+      final result = await Navigator.push<bool>(
+        context,
+        MaterialPageRoute(
+          builder: (context) => FirmwareProvisioningScreen(
+            unit: unit,
+            step: step,
+            firmware: firmwareAsync,
+          ),
+        ),
+      );
+
+      // If provisioning was successful, refresh the UI
+      if (result == true && context.mounted) {
+        ref.invalidate(unitByIdProvider(widget.unitId));
+        ref.invalidate(unitStepCompletionsProvider(widget.unitId));
+
+        // Check if unit is fully complete
+        final stepsAsync = ref.read(unitStepsProvider(widget.unitId));
+        final completionsAsync = ref.read(unitStepCompletionsProvider(widget.unitId));
+
+        final isUnitComplete = stepsAsync.value != null &&
+            completionsAsync.value != null &&
+            stepsAsync.value!.length == completionsAsync.value!.length;
+
+        // Show confirmation dialog
+        await showDialog(
+          context: context,
+          builder: (context) => CompletionConfirmation(
+            isUnitComplete: isUnitComplete,
+            onPrintLabel: () {
+              Navigator.of(context).pop();
+              _printLabel(context, ref);
+            },
+            onClose: () => Navigator.of(context).pop(),
+          ),
+        );
+      }
+      return;
+    }
+
+    // Check if this is a legacy firmware flash step (name-based check for legacy steps)
+    if (step.name.toLowerCase().contains('firmware') && !step.isFirmwareProvisioningStep) {
       // Navigate to firmware flash screen instead
       final result = await Navigator.push<bool>(
         context,

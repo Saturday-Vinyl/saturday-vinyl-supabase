@@ -7,7 +7,10 @@ enum StepType {
   cncMilling('cnc_milling'),
 
   /// Laser cutting/engraving step
-  laserCutting('laser_cutting');
+  laserCutting('laser_cutting'),
+
+  /// Firmware provisioning step (flash and provision ESP32 devices)
+  firmwareProvisioning('firmware_provisioning');
 
   const StepType(this.value);
 
@@ -23,6 +26,8 @@ enum StepType {
         return StepType.cncMilling;
       case 'laser_cutting':
         return StepType.laserCutting;
+      case 'firmware_provisioning':
+        return StepType.firmwareProvisioning;
       default:
         throw ArgumentError('Unknown step type: $value');
     }
@@ -37,13 +42,16 @@ enum StepType {
         return 'CNC Milling';
       case StepType.laserCutting:
         return 'Laser Cutting/Engraving';
+      case StepType.firmwareProvisioning:
+        return 'Firmware Provisioning';
     }
   }
 
-  /// Get machine type for gCode filtering (null for general steps)
+  /// Get machine type for gCode filtering (null for general and firmware steps)
   String? get machineType {
     switch (this) {
       case StepType.general:
+      case StepType.firmwareProvisioning:
         return null;
       case StepType.cncMilling:
         return 'cnc';
@@ -52,9 +60,14 @@ enum StepType {
     }
   }
 
-  /// Check if this step type uses machine control
+  /// Check if this step type uses machine control (CNC/Laser)
   bool get requiresMachine {
-    return this != StepType.general;
+    return this == StepType.cncMilling || this == StepType.laserCutting;
+  }
+
+  /// Check if this step type requires serial port connection
+  bool get requiresSerialPort {
+    return this == StepType.firmwareProvisioning;
   }
 
   /// Check if this is a CNC step
@@ -65,5 +78,10 @@ enum StepType {
   /// Check if this is a Laser step
   bool get isLaser {
     return this == StepType.laserCutting;
+  }
+
+  /// Check if this is a Firmware Provisioning step
+  bool get isFirmwareProvisioning {
+    return this == StepType.firmwareProvisioning;
   }
 }

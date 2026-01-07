@@ -89,6 +89,7 @@ class DeviceTypeRepository {
         'capabilities': deviceType.capabilities,
         'spec_url': deviceType.specUrl,
         'current_firmware_version': deviceType.currentFirmwareVersion,
+        'chip_type': deviceType.chipType,
         'is_active': deviceType.isActive,
         'created_at': now.toIso8601String(),
         'updated_at': now.toIso8601String(),
@@ -101,6 +102,7 @@ class DeviceTypeRepository {
         capabilities: deviceType.capabilities,
         specUrl: deviceType.specUrl,
         currentFirmwareVersion: deviceType.currentFirmwareVersion,
+        chipType: deviceType.chipType,
         isActive: deviceType.isActive,
         createdAt: now,
         updatedAt: now,
@@ -127,6 +129,7 @@ class DeviceTypeRepository {
         'capabilities': deviceType.capabilities,
         'spec_url': deviceType.specUrl,
         'current_firmware_version': deviceType.currentFirmwareVersion,
+        'chip_type': deviceType.chipType,
         'is_active': deviceType.isActive,
         'updated_at': now.toIso8601String(),
       }).eq('id', deviceType.id);

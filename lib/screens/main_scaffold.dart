@@ -16,6 +16,7 @@ import 'package:saturday_app/screens/settings/settings_screen.dart';
 import 'package:saturday_app/screens/tags/tag_list_screen.dart';
 import 'package:saturday_app/screens/rolls/roll_list_screen.dart';
 import 'package:saturday_app/screens/users/user_management_screen.dart';
+import 'package:saturday_app/screens/service_mode/service_mode_screen.dart';
 import 'package:saturday_app/services/keyboard_listener_service.dart';
 import 'package:saturday_app/services/qr_scanner_service.dart';
 import 'package:saturday_app/utils/app_logger.dart';
@@ -159,6 +160,8 @@ class _MainScaffoldState extends State<MainScaffold> {
         return const ProductionUnitsScreen();
       case '/firmware':
         return const FirmwareListScreen();
+      case '/service-mode':
+        return ServiceModeScreen();
       case '/files':
         return const FilesScreen();
       case '/tags':

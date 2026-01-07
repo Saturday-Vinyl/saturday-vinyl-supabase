@@ -27,8 +27,19 @@ class _DeviceTypeFormScreenState extends ConsumerState<DeviceTypeFormScreen> {
   final _specUrlController = TextEditingController();
 
   List<String> _selectedCapabilities = [];
+  String? _selectedChipType;
   bool _isActive = true;
   bool _isLoading = false;
+
+  // Available ESP32 chip types for firmware provisioning
+  static const List<String> _chipTypes = [
+    'esp32',
+    'esp32s2',
+    'esp32s3',
+    'esp32c3',
+    'esp32c6',
+    'esp32h2',
+  ];
 
   @override
   void initState() {
@@ -40,6 +51,7 @@ class _DeviceTypeFormScreenState extends ConsumerState<DeviceTypeFormScreen> {
           widget.deviceType!.currentFirmwareVersion ?? '';
       _specUrlController.text = widget.deviceType!.specUrl ?? '';
       _selectedCapabilities = List.from(widget.deviceType!.capabilities);
+      _selectedChipType = widget.deviceType!.chipType;
       _isActive = widget.deviceType!.isActive;
     }
   }
@@ -113,6 +125,39 @@ class _DeviceTypeFormScreenState extends ConsumerState<DeviceTypeFormScreen> {
                   hintText: 'Link to datasheet or docs',
                 ),
                 keyboardType: TextInputType.url,
+              ),
+              const SizedBox(height: 16),
+
+              // Chip Type (for firmware provisioning)
+              DropdownButtonFormField<String>(
+                value: _selectedChipType,
+                decoration: const InputDecoration(
+                  labelText: 'ESP32 Chip Type (Optional)',
+                  hintText: 'Select chip type for firmware flashing',
+                  prefixIcon: Icon(Icons.memory),
+                ),
+                items: [
+                  const DropdownMenuItem<String>(
+                    value: null,
+                    child: Text('-- None --'),
+                  ),
+                  ..._chipTypes.map((type) => DropdownMenuItem<String>(
+                        value: type,
+                        child: Text(type.toUpperCase()),
+                      )),
+                ],
+                onChanged: (value) {
+                  setState(() {
+                    _selectedChipType = value;
+                  });
+                },
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Set chip type if this device uses an ESP32 microcontroller for firmware provisioning',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: SaturdayColors.secondaryGrey,
+                    ),
               ),
               const SizedBox(height: 24),
 
@@ -211,6 +256,7 @@ class _DeviceTypeFormScreenState extends ConsumerState<DeviceTypeFormScreen> {
               ? null
               : _specUrlController.text.trim(),
           capabilities: _selectedCapabilities,
+          chipType: _selectedChipType,
           isActive: _isActive,
         );
 
@@ -240,6 +286,7 @@ class _DeviceTypeFormScreenState extends ConsumerState<DeviceTypeFormScreen> {
               ? null
               : _specUrlController.text.trim(),
           capabilities: _selectedCapabilities,
+          chipType: _selectedChipType,
           isActive: _isActive,
           createdAt: DateTime.now(),
           updatedAt: DateTime.now(),

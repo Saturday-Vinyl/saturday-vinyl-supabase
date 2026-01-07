@@ -109,6 +109,7 @@ class ProductionStepRepository {
         'qr_size': step.qrSize,
         'qr_power_percent': step.qrPowerPercent,
         'qr_speed_mm_min': step.qrSpeedMmMin,
+        'firmware_version_id': step.firmwareVersionId,
         'created_at': now.toIso8601String(),
         'updated_at': now.toIso8601String(),
       });
@@ -129,6 +130,7 @@ class ProductionStepRepository {
         qrSize: step.qrSize,
         qrPowerPercent: step.qrPowerPercent,
         qrSpeedMmMin: step.qrSpeedMmMin,
+        firmwareVersionId: step.firmwareVersionId,
         createdAt: now,
         updatedAt: now,
       );
@@ -198,6 +200,7 @@ class ProductionStepRepository {
         'qr_size': step.qrSize,
         'qr_power_percent': step.qrPowerPercent,
         'qr_speed_mm_min': step.qrSpeedMmMin,
+        'firmware_version_id': step.firmwareVersionId,
         'updated_at': now.toIso8601String(),
       }).eq('id', step.id);
 

@@ -40,7 +40,7 @@ class _FirmwareListScreenState extends ConsumerState<FirmwareListScreen> {
     final firmwareAsync = _selectedDeviceTypeId != null
         ? ref.watch(firmwareVersionsByDeviceTypeProvider(_selectedDeviceTypeId!))
         : ref.watch(firmwareVersionsProvider);
-    final canManage = ref.watch(currentUserProvider) != null;
+    final canManage = ref.watch(currentUserProvider).value != null;
 
     return Scaffold(
       appBar: AppBar(

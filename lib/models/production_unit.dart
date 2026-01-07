@@ -12,6 +12,7 @@ class ProductionUnit extends Equatable {
   final String? customerName; // Cached customer name
   final String? currentOwnerId;
   final String qrCodeUrl;
+  final String? macAddress; // MAC address captured during firmware provisioning
   final DateTime? productionStartedAt;
   final DateTime? productionCompletedAt;
   final bool isCompleted;
@@ -29,6 +30,7 @@ class ProductionUnit extends Equatable {
     this.customerName,
     this.currentOwnerId,
     required this.qrCodeUrl,
+    this.macAddress,
     this.productionStartedAt,
     this.productionCompletedAt,
     required this.isCompleted,
@@ -62,6 +64,7 @@ class ProductionUnit extends Equatable {
       customerName: json['customer_name'] as String?,
       currentOwnerId: json['current_owner_id'] as String?,
       qrCodeUrl: json['qr_code_url'] as String,
+      macAddress: json['mac_address'] as String?,
       productionStartedAt: json['production_started_at'] != null
           ? DateTime.parse(json['production_started_at'] as String)
           : null,
@@ -87,6 +90,7 @@ class ProductionUnit extends Equatable {
       'customer_name': customerName,
       'current_owner_id': currentOwnerId,
       'qr_code_url': qrCodeUrl,
+      'mac_address': macAddress,
       'production_started_at': productionStartedAt?.toIso8601String(),
       'production_completed_at': productionCompletedAt?.toIso8601String(),
       'is_completed': isCompleted,
@@ -107,6 +111,7 @@ class ProductionUnit extends Equatable {
     String? customerName,
     String? currentOwnerId,
     String? qrCodeUrl,
+    String? macAddress,
     DateTime? productionStartedAt,
     DateTime? productionCompletedAt,
     bool? isCompleted,
@@ -124,6 +129,7 @@ class ProductionUnit extends Equatable {
       customerName: customerName ?? this.customerName,
       currentOwnerId: currentOwnerId ?? this.currentOwnerId,
       qrCodeUrl: qrCodeUrl ?? this.qrCodeUrl,
+      macAddress: macAddress ?? this.macAddress,
       productionStartedAt: productionStartedAt ?? this.productionStartedAt,
       productionCompletedAt:
           productionCompletedAt ?? this.productionCompletedAt,
@@ -145,6 +151,7 @@ class ProductionUnit extends Equatable {
         customerName,
         currentOwnerId,
         qrCodeUrl,
+        macAddress,
         productionStartedAt,
         productionCompletedAt,
         isCompleted,

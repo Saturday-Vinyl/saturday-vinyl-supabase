@@ -3,6 +3,8 @@ import 'package:saturday_app/models/step_type.dart';
 import 'package:saturday_app/models/step_gcode_file.dart';
 
 /// ProductionStep model representing a step in the production workflow for a product
+/// Note: Provisioning manifests are now embedded in the firmware binary
+/// and retrieved via the get_manifest command in Service Mode.
 class ProductionStep extends Equatable {
   final String id; // UUID
   final String productId; // Foreign key to Product
@@ -23,6 +25,9 @@ class ProductionStep extends Equatable {
   final double? qrSize; // Size of QR code (mm)
   final int? qrPowerPercent; // Laser power percentage (0-100)
   final int? qrSpeedMmMin; // Laser speed (mm/min)
+
+  // Firmware provisioning parameters
+  final String? firmwareVersionId; // FK to firmware_versions (specifies which firmware to flash)
 
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -46,6 +51,7 @@ class ProductionStep extends Equatable {
     this.qrSize,
     this.qrPowerPercent,
     this.qrSpeedMmMin,
+    this.firmwareVersionId,
     required this.createdAt,
     required this.updatedAt,
     this.gcodeFiles,
@@ -83,15 +89,7 @@ class ProductionStep extends Equatable {
   }
 
   /// Check if this is a firmware provisioning step
-  /// Returns true if the step name or description contains "firmware"
-  bool isFirmwareStep() {
-    final nameLower = name.toLowerCase();
-    final descLower = description?.toLowerCase() ?? '';
-    return nameLower.contains('firmware') ||
-           nameLower.contains('flash') && nameLower.contains('device') ||
-           descLower.contains('firmware provisioning') ||
-           descLower.contains('flash firmware');
-  }
+  bool get isFirmwareProvisioningStep => stepType.isFirmwareProvisioning;
 
   /// Create ProductionStep from JSON
   factory ProductionStep.fromJson(Map<String, dynamic> json) {
@@ -127,6 +125,7 @@ class ProductionStep extends Equatable {
           : null,
       qrPowerPercent: json['qr_power_percent'] as int?,
       qrSpeedMmMin: json['qr_speed_mm_min'] as int?,
+      firmwareVersionId: json['firmware_version_id'] as String?,
       createdAt: DateTime.parse(json['created_at'] as String),
       updatedAt: DateTime.parse(json['updated_at'] as String),
       gcodeFiles: gcodeFiles,
@@ -151,6 +150,7 @@ class ProductionStep extends Equatable {
       'qr_size': qrSize,
       'qr_power_percent': qrPowerPercent,
       'qr_speed_mm_min': qrSpeedMmMin,
+      'firmware_version_id': firmwareVersionId,
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt.toIso8601String(),
     };
@@ -173,6 +173,7 @@ class ProductionStep extends Equatable {
     double? qrSize,
     int? qrPowerPercent,
     int? qrSpeedMmMin,
+    String? firmwareVersionId,
     DateTime? createdAt,
     DateTime? updatedAt,
     List<StepGCodeFile>? gcodeFiles,
@@ -193,6 +194,7 @@ class ProductionStep extends Equatable {
       qrSize: qrSize ?? this.qrSize,
       qrPowerPercent: qrPowerPercent ?? this.qrPowerPercent,
       qrSpeedMmMin: qrSpeedMmMin ?? this.qrSpeedMmMin,
+      firmwareVersionId: firmwareVersionId ?? this.firmwareVersionId,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       gcodeFiles: gcodeFiles ?? this.gcodeFiles,
@@ -216,6 +218,7 @@ class ProductionStep extends Equatable {
         qrSize,
         qrPowerPercent,
         qrSpeedMmMin,
+        firmwareVersionId,
         createdAt,
         updatedAt,
         gcodeFiles,

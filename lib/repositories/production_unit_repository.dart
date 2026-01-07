@@ -366,6 +366,50 @@ class ProductionUnitRepository {
     }
   }
 
+  /// Update MAC address for a production unit
+  ///
+  /// Typically called during firmware provisioning to capture the device MAC
+  Future<void> updateMacAddress(String unitId, String macAddress) async {
+    try {
+      AppLogger.info('Updating MAC address for unit $unitId: $macAddress');
+
+      await _supabase
+          .from('production_units')
+          .update({'mac_address': macAddress})
+          .eq('id', unitId);
+
+      AppLogger.info('MAC address updated successfully');
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to update MAC address', error, stackTrace);
+      rethrow;
+    }
+  }
+
+  /// Get a unit by its MAC address
+  Future<ProductionUnit?> getUnitByMacAddress(String macAddress) async {
+    try {
+      AppLogger.info('Fetching unit by MAC address: $macAddress');
+
+      final response = await _supabase
+          .from('production_units')
+          .select()
+          .eq('mac_address', macAddress)
+          .maybeSingle();
+
+      if (response == null) {
+        AppLogger.info('No unit found with MAC address: $macAddress');
+        return null;
+      }
+
+      final unit = ProductionUnit.fromJson(response);
+      AppLogger.info('Found unit: ${unit.unitId}');
+      return unit;
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to fetch unit by MAC address', error, stackTrace);
+      rethrow;
+    }
+  }
+
   /// Delete a production unit (and its QR code from storage)
   Future<void> deleteUnit(String unitId) async {
     try {
@@ -555,6 +599,112 @@ class ProductionUnitRepository {
         error,
         stackTrace,
       );
+      rethrow;
+    }
+  }
+
+  /// Get units without MAC address (for fresh device assignment)
+  ///
+  /// Returns units that haven't been provisioned yet (no MAC address recorded)
+  /// Optionally filtered by product ID
+  Future<List<ProductionUnit>> getUnitsWithoutMacAddress({
+    String? productId,
+  }) async {
+    try {
+      AppLogger.info('Fetching units without MAC address');
+
+      var query = _supabase
+          .from('production_units')
+          .select()
+          .isFilter('mac_address', null)
+          .eq('is_completed', false);
+
+      if (productId != null) {
+        query = query.eq('product_id', productId);
+      }
+
+      final response = await query
+          .order('created_at', ascending: false)
+          .limit(100);
+
+      final units = (response as List)
+          .map((json) => ProductionUnit.fromJson(json))
+          .toList();
+
+      AppLogger.info('Found ${units.length} units without MAC address');
+      return units;
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to fetch units without MAC address', error, stackTrace);
+      rethrow;
+    }
+  }
+
+  /// Get a unit by its serial number (unit_id field like "SV-HUB-000001")
+  ///
+  /// Used to look up a unit from a device's reported unit_id
+  Future<ProductionUnit?> getUnitBySerialNumber(String serialNumber) async {
+    try {
+      AppLogger.info('Fetching unit by serial number: $serialNumber');
+
+      final response = await _supabase
+          .from('production_units')
+          .select()
+          .eq('unit_id', serialNumber)
+          .maybeSingle();
+
+      if (response == null) {
+        AppLogger.info('No unit found with serial number: $serialNumber');
+        return null;
+      }
+
+      final unit = ProductionUnit.fromJson(response);
+      AppLogger.info('Found unit: ${unit.unitId}');
+      return unit;
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to fetch unit by serial number', error, stackTrace);
+      rethrow;
+    }
+  }
+
+  /// Get units by device type
+  ///
+  /// Returns units whose product uses the specified device type
+  Future<List<ProductionUnit>> getUnitsByDeviceType(String deviceTypeId) async {
+    try {
+      AppLogger.info('Fetching units by device type: $deviceTypeId');
+
+      // Get products that use this device type
+      final productDeviceTypesResponse = await _supabase
+          .from('product_device_types')
+          .select('product_id')
+          .eq('device_type_id', deviceTypeId);
+
+      final productIds = (productDeviceTypesResponse as List)
+          .map((row) => row['product_id'] as String)
+          .toList();
+
+      if (productIds.isEmpty) {
+        AppLogger.info('No products use device type: $deviceTypeId');
+        return [];
+      }
+
+      // Get units for these products
+      final response = await _supabase
+          .from('production_units')
+          .select()
+          .inFilter('product_id', productIds)
+          .eq('is_completed', false)
+          .order('created_at', ascending: false)
+          .limit(100);
+
+      final units = (response as List)
+          .map((json) => ProductionUnit.fromJson(json))
+          .toList();
+
+      AppLogger.info('Found ${units.length} units with device type: $deviceTypeId');
+      return units;
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to fetch units by device type', error, stackTrace);
       rethrow;
     }
   }

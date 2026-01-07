@@ -8,6 +8,7 @@ class DeviceType extends Equatable {
   final List<String> capabilities; // e.g., ["BLE", "WiFi", "Thread", "RFID"]
   final String? specUrl; // URL to datasheet or specifications
   final String? currentFirmwareVersion;
+  final String? chipType; // ESP32 chip type: esp32, esp32s2, esp32s3, esp32c3, esp32c6, esp32h2
   final bool isActive;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -19,6 +20,7 @@ class DeviceType extends Equatable {
     required this.capabilities,
     this.specUrl,
     this.currentFirmwareVersion,
+    this.chipType,
     required this.isActive,
     required this.createdAt,
     required this.updatedAt,
@@ -40,6 +42,7 @@ class DeviceType extends Equatable {
           : [],
       specUrl: json['spec_url'] as String?,
       currentFirmwareVersion: json['current_firmware_version'] as String?,
+      chipType: json['chip_type'] as String?,
       isActive: json['is_active'] as bool? ?? true,
       createdAt: DateTime.parse(json['created_at'] as String),
       updatedAt: DateTime.parse(json['updated_at'] as String),
@@ -55,6 +58,7 @@ class DeviceType extends Equatable {
       'capabilities': capabilities,
       'spec_url': specUrl,
       'current_firmware_version': currentFirmwareVersion,
+      'chip_type': chipType,
       'is_active': isActive,
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt.toIso8601String(),
@@ -69,6 +73,7 @@ class DeviceType extends Equatable {
     List<String>? capabilities,
     String? specUrl,
     String? currentFirmwareVersion,
+    String? chipType,
     bool? isActive,
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -81,6 +86,7 @@ class DeviceType extends Equatable {
       specUrl: specUrl ?? this.specUrl,
       currentFirmwareVersion:
           currentFirmwareVersion ?? this.currentFirmwareVersion,
+      chipType: chipType ?? this.chipType,
       isActive: isActive ?? this.isActive,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
@@ -98,6 +104,7 @@ class DeviceType extends Equatable {
         capabilities,
         specUrl,
         currentFirmwareVersion,
+        chipType,
         isActive,
         createdAt,
         updatedAt,
@@ -113,6 +120,7 @@ class DeviceType extends Equatable {
 class DeviceCapabilities {
   static const String bluetooth = 'bluetooth';
   static const String wifi = 'wifi';
+  static const String thread = 'thread';
   static const String nfc = 'nfc';
   static const String camera = 'camera';
   static const String barcode = 'barcode_scanner';
@@ -126,6 +134,7 @@ class DeviceCapabilities {
   static List<String> get all => [
         bluetooth,
         wifi,
+        thread,
         nfc,
         camera,
         barcode,
@@ -143,6 +152,8 @@ class DeviceCapabilities {
         return 'Bluetooth';
       case wifi:
         return 'Wi-Fi';
+      case thread:
+        return 'Thread';
       case nfc:
         return 'NFC';
       case camera:

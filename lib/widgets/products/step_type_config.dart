@@ -106,6 +106,8 @@ class _StepTypeConfigState extends ConsumerState<StepTypeConfig> {
         return 'CNC milling machine operation';
       case StepType.laserCutting:
         return 'Laser cutting/engraving operation';
+      case StepType.firmwareProvisioning:
+        return 'Flash and provision ESP32 device firmware';
     }
   }
 

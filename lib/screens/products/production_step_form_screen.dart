@@ -12,6 +12,7 @@ import 'package:saturday_app/providers/production_step_provider.dart';
 import 'package:saturday_app/providers/step_label_provider.dart';
 import 'package:saturday_app/providers/step_timer_provider.dart';
 import 'package:saturday_app/widgets/common/app_button.dart';
+import 'package:saturday_app/widgets/products/firmware_provisioning_config.dart';
 import 'package:saturday_app/widgets/products/step_file_selector.dart';
 import 'package:saturday_app/widgets/products/step_type_config.dart';
 
@@ -64,6 +65,9 @@ class _ProductionStepFormScreenState
   List<Map<String, TextEditingController>> _timerControllers = [];
   bool _isLoadingTimers = false;
 
+  // Firmware provisioning parameters
+  String? _selectedFirmwareVersionId;
+
   @override
   void initState() {
     super.initState();
@@ -101,6 +105,9 @@ class _ProductionStepFormScreenState
 
       // Load existing timers
       _loadExistingTimers();
+
+      // Load firmware provisioning data
+      _selectedFirmwareVersionId = widget.step!.firmwareVersionId;
     }
   }
 
@@ -249,6 +256,7 @@ class _ProductionStepFormScreenState
     });
   }
 
+
   @override
   Widget build(BuildContext context) {
     final isEditing = widget.step != null;
@@ -328,6 +336,10 @@ class _ProductionStepFormScreenState
                 onStepTypeChanged: (type) {
                   setState(() {
                     _stepType = type;
+                    // Clear firmware provisioning data when switching away from firmware type
+                    if (!type.isFirmwareProvisioning) {
+                      _selectedFirmwareVersionId = null;
+                    }
                   });
                 },
                 selectedGCodeFileIds: _selectedGCodeFileIds,
@@ -348,6 +360,20 @@ class _ProductionStepFormScreenState
                 qrPowerController: _qrPowerController,
                 qrSpeedController: _qrSpeedController,
               ),
+
+              // Firmware Provisioning Configuration (for firmware steps)
+              if (_stepType.isFirmwareProvisioning) ...[
+                const SizedBox(height: 24),
+                FirmwareProvisioningConfig(
+                  deviceTypeId: null, // Product doesn't have deviceTypeId - firmware versions show all available
+                  selectedFirmwareVersionId: _selectedFirmwareVersionId,
+                  onFirmwareVersionChanged: (id) {
+                    setState(() {
+                      _selectedFirmwareVersionId = id;
+                    });
+                  },
+                ),
+              ],
 
               const SizedBox(height: 24),
 
@@ -743,6 +769,9 @@ class _ProductionStepFormScreenState
           qrSize: qrSize,
           qrPowerPercent: qrPowerPercent,
           qrSpeedMmMin: qrSpeedMmMin,
+          firmwareVersionId: _stepType.isFirmwareProvisioning
+              ? _selectedFirmwareVersionId
+              : null,
         );
 
         await management.updateStep(
@@ -817,6 +846,9 @@ class _ProductionStepFormScreenState
           qrSize: qrSize,
           qrPowerPercent: qrPowerPercent,
           qrSpeedMmMin: qrSpeedMmMin,
+          firmwareVersionId: _stepType.isFirmwareProvisioning
+              ? _selectedFirmwareVersionId
+              : null,
           createdAt: DateTime.now(),
           updatedAt: DateTime.now(),
         );

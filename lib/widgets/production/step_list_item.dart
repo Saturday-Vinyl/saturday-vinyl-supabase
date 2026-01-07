@@ -52,14 +52,14 @@ class StepListItem extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: isCompleted
                       ? SaturdayColors.success
-                      : step.isFirmwareStep()
+                      : step.isFirmwareProvisioningStep
                           ? SaturdayColors.info.withValues(alpha: 0.1)
                           : SaturdayColors.light,
                   shape: BoxShape.circle,
                   border: Border.all(
                     color: isCompleted
                         ? SaturdayColors.success
-                        : step.isFirmwareStep()
+                        : step.isFirmwareProvisioningStep
                             ? SaturdayColors.info
                             : SaturdayColors.secondaryGrey,
                     width: 2,
@@ -72,7 +72,7 @@ class StepListItem extends StatelessWidget {
                           size: 18,
                           color: Colors.white,
                         )
-                      : step.isFirmwareStep()
+                      : step.isFirmwareProvisioningStep
                           ? Icon(
                               Icons.memory,
                               size: 18,

@@ -32,7 +32,7 @@ class _DeviceTypeListScreenState extends ConsumerState<DeviceTypeListScreen> {
   @override
   Widget build(BuildContext context) {
     final deviceTypesAsync = ref.watch(deviceTypesProvider);
-    final canManage = ref.watch(currentUserProvider) != null;
+    final canManage = ref.watch(currentUserProvider).value != null;
 
     return Scaffold(
       appBar: AppBar(

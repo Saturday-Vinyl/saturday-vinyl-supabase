@@ -89,6 +89,12 @@ class SidebarNav extends ConsumerWidget {
                     isSelected: currentRoute == '/firmware',
                   ),
                   _buildNavItem(
+                    icon: Icons.build,
+                    label: 'Service Mode',
+                    route: '/service-mode',
+                    isSelected: currentRoute == '/service-mode',
+                  ),
+                  _buildNavItem(
                     icon: Icons.folder,
                     label: 'Files',
                     route: '/files',
