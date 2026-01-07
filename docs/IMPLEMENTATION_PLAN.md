@@ -1589,6 +1589,64 @@ Tasks are ordered by dependency - complete them sequentially within each phase, 
 
 ---
 
+### Task 8.4: Dynamic Island & Live Activities (iOS)
+
+**Objective**: Display flip timer in iOS Dynamic Island and Lock Screen using Live Activities.
+
+**Context**: Users should see the flip timer countdown without opening the app. Live Activities show real-time updates on the Lock Screen and Dynamic Island (iPhone 14 Pro+).
+
+**Requirements**:
+1. Add `live_activities` Flutter plugin to dependencies
+
+2. Create iOS Widget Extension in Xcode:
+   - Add new Widget Extension target
+   - Enable `NSSupportsLiveActivities` in Info.plist
+   - Set minimum deployment to iOS 16.1
+
+3. Create SwiftUI views for Live Activity:
+   - **Lock Screen widget**: Album art, title, artist, progress bar, elapsed/remaining time
+   - **Dynamic Island compact**: Album art thumbnail + remaining time
+   - **Dynamic Island expanded**: Full timer with album info and flip warning
+
+4. Create `lib/services/live_activity_service.dart`:
+   - `startFlipTimerActivity(album, startedAt, totalDuration)`
+   - `updateFlipTimerActivity(elapsed, remaining, isNearFlip)`
+   - `stopFlipTimerActivity()`
+   - Platform check (iOS 16.1+ only)
+
+5. Integrate with Now Playing provider:
+   - Start Live Activity when album is set as Now Playing
+   - Update activity periodically (every 30 seconds or on state change)
+   - End activity when Now Playing is cleared
+   - Update when side is switched
+
+6. Create ActivityAttributes model (Swift):
+   - Static: albumTitle, artist, albumArtUrl, totalDuration
+   - Dynamic: elapsedSeconds, isNearFlip, isOvertime
+
+7. Handle edge cases:
+   - App killed while activity running (activity persists)
+   - Multiple activities not allowed (end previous before starting new)
+   - Graceful degradation on older iOS versions
+
+**Acceptance Criteria**:
+- [ ] Live Activity appears on Lock Screen when Now Playing is set
+- [ ] Dynamic Island shows timer on supported devices
+- [ ] Timer updates reflect actual elapsed time
+- [ ] "Flip Soon" warning displays when approaching flip time
+- [ ] Activity ends when Now Playing is cleared
+- [ ] Side switch restarts activity with new duration
+- [ ] No crashes on iOS versions without Live Activity support
+- [ ] Works when app is backgrounded or killed
+
+**Reference Files**:
+- [live_activities Flutter plugin](https://pub.dev/packages/live_activities)
+- [Flutter Live Activities GitHub](https://github.com/istornz/flutter_live_activities)
+- `lib/providers/now_playing_provider.dart`
+- `lib/widgets/now_playing/flip_timer.dart`
+
+---
+
 ## Phase 9: Testing and Quality
 
 ### Task 9.1: Unit Tests - Models and Utils
@@ -1730,7 +1788,8 @@ Phase 7 (Polish) - After Phases 4-6
 Phase 8 (Real-Time) - After Phase 7
 ├── 8.1 Real-Time Now Playing
 ├── 8.2 Real-Time Device Status
-└── 8.3 Real-Time Locations
+├── 8.3 Real-Time Locations
+└── 8.4 Dynamic Island/Live Activities (iOS)
 
 Phase 9 (Testing) - Ongoing, finalize after Phase 8
 ├── 9.1 Model/Util Tests
@@ -1752,9 +1811,9 @@ Phase 9 (Testing) - Ongoing, finalize after Phase 8
 | Phase 5: Now Playing | 4 | Medium |
 | Phase 6: Account/Devices | 4 | High |
 | Phase 7: Polish | 6 | Medium |
-| Phase 8: Real-Time | 3 | Medium |
+| Phase 8: Real-Time | 4 | Medium |
 | Phase 9: Testing | 4 | Medium |
-| **Total** | **37** | |
+| **Total** | **38** | |
 
 ---
 

@@ -3,7 +3,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:saturday_consumer_app/models/library_album.dart';
 import 'package:saturday_consumer_app/models/track.dart';
 import 'package:saturday_consumer_app/providers/auth_provider.dart';
+import 'package:saturday_consumer_app/providers/library_view_provider.dart';
 import 'package:saturday_consumer_app/providers/repository_providers.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+/// Keys for persisting Now Playing state.
+const String _nowPlayingAlbumIdKey = 'now_playing_album_id';
+const String _nowPlayingStartedAtKey = 'now_playing_started_at';
+const String _nowPlayingCurrentSideKey = 'now_playing_current_side';
 
 /// Represents the current state of Now Playing.
 class NowPlayingState extends Equatable {
@@ -134,9 +141,71 @@ class NowPlayingState extends Equatable {
 
 /// StateNotifier for managing Now Playing state.
 class NowPlayingNotifier extends StateNotifier<NowPlayingState> {
-  NowPlayingNotifier(this._ref) : super(const NowPlayingState());
+  NowPlayingNotifier(this._ref, this._prefs) : super(const NowPlayingState()) {
+    _restoreState();
+  }
 
   final Ref _ref;
+  final SharedPreferences _prefs;
+
+  /// Restore persisted state on initialization.
+  Future<void> _restoreState() async {
+    final albumId = _prefs.getString(_nowPlayingAlbumIdKey);
+    final startedAtMillis = _prefs.getInt(_nowPlayingStartedAtKey);
+    final currentSide = _prefs.getString(_nowPlayingCurrentSideKey) ?? 'A';
+
+    if (albumId == null || startedAtMillis == null) {
+      return; // No persisted state
+    }
+
+    state = state.copyWith(isLoading: true);
+
+    try {
+      // Fetch the album from the repository
+      final albumRepo = _ref.read(albumRepositoryProvider);
+      final album = await albumRepo.getLibraryAlbum(albumId);
+
+      if (album != null) {
+        final startedAt = DateTime.fromMillisecondsSinceEpoch(startedAtMillis);
+        state = state.copyWith(
+          isLoading: false,
+          currentAlbum: album,
+          startedAt: startedAt,
+          currentSide: currentSide,
+        );
+      } else {
+        // Album no longer exists, clear persisted state
+        await _clearPersistedState();
+        state = state.copyWith(isLoading: false);
+      }
+    } catch (e) {
+      // Failed to restore, clear state
+      await _clearPersistedState();
+      state = state.copyWith(isLoading: false);
+    }
+  }
+
+  /// Persist the current state to SharedPreferences.
+  Future<void> _persistState() async {
+    final album = state.currentAlbum;
+    final startedAt = state.startedAt;
+
+    if (album != null && startedAt != null) {
+      await _prefs.setString(_nowPlayingAlbumIdKey, album.id);
+      await _prefs.setInt(
+          _nowPlayingStartedAtKey, startedAt.millisecondsSinceEpoch);
+      await _prefs.setString(_nowPlayingCurrentSideKey, state.currentSide);
+    } else {
+      await _clearPersistedState();
+    }
+  }
+
+  /// Clear persisted state from SharedPreferences.
+  Future<void> _clearPersistedState() async {
+    await _prefs.remove(_nowPlayingAlbumIdKey);
+    await _prefs.remove(_nowPlayingStartedAtKey);
+    await _prefs.remove(_nowPlayingCurrentSideKey);
+  }
 
   /// Set an album as now playing.
   Future<void> setNowPlaying(LibraryAlbum album) async {
@@ -163,6 +232,9 @@ class NowPlayingNotifier extends StateNotifier<NowPlayingState> {
         startedAt: DateTime.now(),
         currentSide: 'A',
       );
+
+      // Persist the state so timer survives app restarts
+      await _persistState();
     } catch (e) {
       state = state.copyWith(
         isLoading: false,
@@ -172,26 +244,29 @@ class NowPlayingNotifier extends StateNotifier<NowPlayingState> {
   }
 
   /// Clear the now playing state.
-  void clearNowPlaying() {
+  Future<void> clearNowPlaying() async {
     state = state.copyWith(clearAlbum: true);
+    await _clearPersistedState();
   }
 
   /// Switch the current side (A to B or B to A).
-  void toggleSide() {
+  Future<void> toggleSide() async {
     final newSide = state.currentSide == 'A' ? 'B' : 'A';
     state = state.copyWith(
       currentSide: newSide,
       startedAt: DateTime.now(), // Reset timer when switching sides
     );
+    await _persistState();
   }
 
   /// Set the current side explicitly.
-  void setSide(String side) {
+  Future<void> setSide(String side) async {
     if (side == 'A' || side == 'B') {
       state = state.copyWith(
         currentSide: side,
         startedAt: DateTime.now(),
       );
+      await _persistState();
     }
   }
 
@@ -204,7 +279,8 @@ class NowPlayingNotifier extends StateNotifier<NowPlayingState> {
 /// Provider for the Now Playing state notifier.
 final nowPlayingProvider =
     StateNotifierProvider<NowPlayingNotifier, NowPlayingState>((ref) {
-  return NowPlayingNotifier(ref);
+  final prefs = ref.watch(sharedPreferencesProvider);
+  return NowPlayingNotifier(ref, prefs);
 });
 
 /// Provider for just the currently playing album.
