@@ -6,6 +6,9 @@ import 'package:saturday_consumer_app/config/styles.dart';
 import 'package:saturday_consumer_app/config/theme.dart';
 import 'package:saturday_consumer_app/models/device.dart';
 import 'package:saturday_consumer_app/providers/device_provider.dart';
+import 'package:saturday_consumer_app/widgets/common/empty_state.dart';
+import 'package:saturday_consumer_app/widgets/common/error_display.dart';
+import 'package:saturday_consumer_app/widgets/common/loading_indicator.dart';
 import 'package:saturday_consumer_app/widgets/devices/devices.dart';
 
 /// Screen displaying the user's devices with status indicators.
@@ -29,8 +32,13 @@ class DeviceListScreen extends ConsumerWidget {
       ),
       body: devicesAsync.when(
         data: (devices) => _buildDeviceList(context, ref, devices),
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (error, stack) => _buildError(context, ref, error),
+        loading: () => const LoadingIndicator.medium(
+          message: 'Loading devices...',
+        ),
+        error: (error, stack) => ErrorDisplay.fullScreen(
+          message: error.toString(),
+          onRetry: () => ref.invalidate(userDevicesProvider),
+        ),
       ),
     );
   }
@@ -204,74 +212,8 @@ class DeviceListScreen extends ConsumerWidget {
   }
 
   Widget _buildEmptyState(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: Spacing.pagePadding,
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.devices,
-              size: 80,
-              color: SaturdayColors.secondary,
-            ),
-            const SizedBox(height: 24),
-            Text(
-              'No Devices Yet',
-              style: Theme.of(context).textTheme.headlineSmall,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Add your Saturday Hub or Crate to get started.',
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: SaturdayColors.secondary,
-                  ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 32),
-            ElevatedButton.icon(
-              onPressed: () => context.pushNamed(RouteNames.deviceSetup),
-              icon: const Icon(Icons.add),
-              label: const Text('Add Device'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildError(BuildContext context, WidgetRef ref, Object error) {
-    return Center(
-      child: Padding(
-        padding: Spacing.pagePadding,
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.error_outline,
-              size: 64,
-              color: SaturdayColors.error,
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'Failed to load devices',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              error.toString(),
-              style: Theme.of(context).textTheme.bodySmall,
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 24),
-            OutlinedButton.icon(
-              onPressed: () => ref.invalidate(userDevicesProvider),
-              icon: const Icon(Icons.refresh),
-              label: const Text('Retry'),
-            ),
-          ],
-        ),
-      ),
+    return EmptyState.noDevices(
+      onAddDevice: () => context.pushNamed(RouteNames.deviceSetup),
     );
   }
 

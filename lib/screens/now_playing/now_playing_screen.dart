@@ -6,6 +6,7 @@ import 'package:saturday_consumer_app/config/styles.dart';
 import 'package:saturday_consumer_app/config/theme.dart';
 import 'package:saturday_consumer_app/models/library_album.dart';
 import 'package:saturday_consumer_app/providers/now_playing_provider.dart';
+import 'package:saturday_consumer_app/widgets/common/loading_indicator.dart';
 import 'package:saturday_consumer_app/widgets/common/saturday_app_bar.dart';
 import 'package:saturday_consumer_app/widgets/now_playing/album_art_hero.dart';
 import 'package:saturday_consumer_app/widgets/now_playing/flip_timer.dart';
@@ -201,9 +202,7 @@ class NowPlayingScreen extends ConsumerWidget {
                 }
                 return _buildRecentlyPlayedList(context, albums);
               },
-              loading: () => const Center(
-                child: CircularProgressIndicator(),
-              ),
+              loading: () => const LoadingIndicator.small(),
               error: (error, _) => Center(
                 child: Text(
                   'Failed to load history',

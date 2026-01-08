@@ -22,6 +22,7 @@ import 'package:saturday_consumer_app/screens/account/device_detail_screen.dart'
 import 'package:saturday_consumer_app/screens/account/device_setup_screen.dart';
 import 'package:saturday_consumer_app/screens/onboarding/quick_start_screen.dart';
 import 'package:saturday_consumer_app/screens/onboarding/add_album_intro_screen.dart';
+import 'package:saturday_consumer_app/screens/search/search_screen.dart';
 import 'package:saturday_consumer_app/widgets/common/scaffold_with_nav.dart';
 
 /// Route paths for the app.
@@ -274,9 +275,7 @@ GoRouter createAppRouter(Ref ref) {
       GoRoute(
         path: RoutePaths.search,
         name: RouteNames.search,
-        builder: (context, state) => const Scaffold(
-          body: Center(child: Text('Search - Coming Soon')),
-        ),
+        builder: (context, state) => const SearchScreen(),
       ),
     ],
 

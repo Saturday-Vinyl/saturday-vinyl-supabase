@@ -9,6 +9,10 @@ import 'package:saturday_consumer_app/providers/library_filter_provider.dart';
 import 'package:saturday_consumer_app/providers/library_provider.dart';
 import 'package:saturday_consumer_app/providers/library_view_provider.dart';
 import 'package:saturday_consumer_app/screens/onboarding/quick_start_screen.dart';
+import 'package:saturday_consumer_app/screens/tablet/tablet_home_screen.dart';
+import 'package:saturday_consumer_app/widgets/common/empty_state.dart';
+import 'package:saturday_consumer_app/widgets/common/error_display.dart';
+import 'package:saturday_consumer_app/widgets/common/loading_indicator.dart';
 import 'package:saturday_consumer_app/widgets/common/saturday_app_bar.dart';
 import 'package:saturday_consumer_app/widgets/library/album_grid.dart';
 import 'package:saturday_consumer_app/widgets/library/album_list.dart';
@@ -50,8 +54,8 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
           showLibrarySwitcher: true,
           showSearch: true,
         ),
-        body: const Center(
-          child: CircularProgressIndicator(),
+        body: const LoadingIndicator.medium(
+          message: 'Loading your libraries...',
         ),
       ),
       error: (error, stack) => Scaffold(
@@ -59,7 +63,10 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
           showLibrarySwitcher: true,
           showSearch: true,
         ),
-        body: _buildErrorState(context, ref, error.toString()),
+        body: ErrorDisplay.fullScreen(
+          message: error.toString(),
+          onRetry: () => ref.invalidate(userLibrariesProvider),
+        ),
       ),
     );
   }
@@ -300,8 +307,11 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
   }
 
   /// Handle album tap - navigate to album detail.
+  ///
+  /// On tablets in landscape, this opens the album in the detail panel.
+  /// On phones or tablets in portrait, navigates to the full detail screen.
   void _onAlbumTap(BuildContext context, LibraryAlbum album) {
-    context.push('/library/album/${album.id}');
+    handleAlbumTap(context, ref, album.id);
   }
 
   /// Handle album long-press - show quick actions menu.
@@ -315,56 +325,16 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
 
   /// Build the loading state.
   Widget _buildLoadingState() {
-    return const Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          CircularProgressIndicator(),
-          SizedBox(height: Spacing.lg),
-          Text('Loading your library...'),
-        ],
-      ),
+    return const LoadingIndicator.medium(
+      message: 'Loading your library...',
     );
   }
 
   /// Build the error state.
   Widget _buildErrorState(BuildContext context, WidgetRef ref, String error) {
-    return Center(
-      child: Padding(
-        padding: Spacing.pagePadding,
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.error_outline,
-              size: 64,
-              color: SaturdayColors.error,
-            ),
-            const SizedBox(height: Spacing.lg),
-            Text(
-              'Failed to load library',
-              style: Theme.of(context).textTheme.headlineSmall,
-            ),
-            const SizedBox(height: Spacing.sm),
-            Text(
-              error,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: SaturdayColors.secondary,
-                fontSize: 14,
-              ),
-            ),
-            const SizedBox(height: Spacing.xl),
-            ElevatedButton.icon(
-              onPressed: () {
-                ref.invalidate(libraryAlbumsProvider);
-              },
-              icon: const Icon(Icons.refresh),
-              label: const Text('Try Again'),
-            ),
-          ],
-        ),
-      ),
+    return ErrorDisplay.fullScreen(
+      message: error,
+      onRetry: () => ref.invalidate(libraryAlbumsProvider),
     );
   }
 
@@ -377,75 +347,17 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
 
   /// Build the empty state when no albums in library.
   Widget _buildEmptyState(BuildContext context) {
-    return Center(
-      child: SingleChildScrollView(
-        padding: Spacing.pagePadding,
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.album_outlined,
-              size: 80,
-              color: SaturdayColors.secondary,
-            ),
-            const SizedBox(height: Spacing.xl),
-            Text(
-              'Your library is empty',
-              style: Theme.of(context).textTheme.headlineSmall,
-            ),
-            const SizedBox(height: Spacing.sm),
-            Text(
-              'Tap the + button to add your first album',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: SaturdayColors.secondary,
-                fontSize: 14,
-              ),
-            ),
-          ],
-        ),
-      ),
+    return EmptyState.library(
+      onAddAlbum: () => _showAddAlbumMenu(context),
     );
   }
 
   /// Build the state when filters return no results.
   Widget _buildNoResultsState(BuildContext context, WidgetRef ref) {
-    return Center(
-      child: SingleChildScrollView(
-        padding: Spacing.pagePadding,
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.filter_list_off,
-              size: 80,
-              color: SaturdayColors.secondary,
-            ),
-            const SizedBox(height: Spacing.xl),
-            Text(
-              'No matching albums',
-              style: Theme.of(context).textTheme.headlineSmall,
-            ),
-            const SizedBox(height: Spacing.sm),
-            Text(
-              'Try adjusting your filters to\nsee more results',
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: SaturdayColors.secondary,
-                fontSize: 14,
-              ),
-            ),
-            const SizedBox(height: Spacing.xxl),
-            ElevatedButton.icon(
-              onPressed: () {
-                ref.read(libraryFilterProvider.notifier).clearFilters();
-              },
-              icon: const Icon(Icons.clear_all),
-              label: const Text('Clear Filters'),
-            ),
-          ],
-        ),
-      ),
+    return EmptyState.noFilterResults(
+      onClearFilters: () {
+        ref.read(libraryFilterProvider.notifier).clearFilters();
+      },
     );
   }
 }

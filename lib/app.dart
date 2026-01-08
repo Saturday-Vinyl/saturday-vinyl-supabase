@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:saturday_consumer_app/config/routes.dart';
 import 'package:saturday_consumer_app/config/theme.dart';
+import 'package:saturday_consumer_app/utils/deep_link_handler.dart';
 
 /// The root widget for the Saturday Consumer App.
 class SaturdayApp extends ConsumerStatefulWidget {
@@ -42,6 +43,9 @@ class _SaturdayAppState extends ConsumerState<SaturdayApp> {
   @override
   Widget build(BuildContext context) {
     final router = ref.watch(appRouterProvider);
+
+    // Connect the deep link handler to the router.
+    DeepLinkHandler.instance.setRouter(router);
 
     return MaterialApp.router(
       title: 'Saturday',

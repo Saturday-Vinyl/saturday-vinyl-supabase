@@ -50,6 +50,13 @@ dependencies:
   # Local Storage
   shared_preferences: ^2.2.0
 
+  # Local Notifications
+  flutter_local_notifications: ^18.0.0
+  timezone: ^0.10.0
+
+  # Deep Linking
+  app_links: ^6.0.0
+
   # App Info
   package_info_plus: ^8.0.0
 

@@ -7,6 +7,8 @@ PODS:
   - flutter_blue_plus_darwin (0.0.2):
     - Flutter
     - FlutterMacOS
+  - flutter_local_notifications (0.0.1):
+    - Flutter
   - mobile_scanner (7.0.0):
     - Flutter
     - FlutterMacOS
@@ -29,6 +31,7 @@ DEPENDENCIES:
   - camera_avfoundation (from `.symlinks/plugins/camera_avfoundation/ios`)
   - Flutter (from `Flutter`)
   - flutter_blue_plus_darwin (from `.symlinks/plugins/flutter_blue_plus_darwin/darwin`)
+  - flutter_local_notifications (from `.symlinks/plugins/flutter_local_notifications/ios`)
   - mobile_scanner (from `.symlinks/plugins/mobile_scanner/darwin`)
   - package_info_plus (from `.symlinks/plugins/package_info_plus/ios`)
   - path_provider_foundation (from `.symlinks/plugins/path_provider_foundation/darwin`)
@@ -45,6 +48,8 @@ EXTERNAL SOURCES:
     :path: Flutter
   flutter_blue_plus_darwin:
     :path: ".symlinks/plugins/flutter_blue_plus_darwin/darwin"
+  flutter_local_notifications:
+    :path: ".symlinks/plugins/flutter_local_notifications/ios"
   mobile_scanner:
     :path: ".symlinks/plugins/mobile_scanner/darwin"
   package_info_plus:
@@ -63,6 +68,7 @@ SPEC CHECKSUMS:
   camera_avfoundation: 5675ca25298b6f81fa0a325188e7df62cc217741
   Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
   flutter_blue_plus_darwin: 20a08bfeaa0f7804d524858d3d8744bcc1b6dbc3
+  flutter_local_notifications: 395056b3175ba4f08480a7c5de30cd36d69827e4
   mobile_scanner: 9157936403f5a0644ca3779a38ff8404c5434a93
   package_info_plus: af8e2ca6888548050f16fa2f1938db7b5a5df499
   path_provider_foundation: bb55f6dbba17d0dccd6737fe6f7f34fbd0376880

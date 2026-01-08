@@ -8,6 +8,7 @@ import 'package:saturday_consumer_app/config/theme.dart';
 import 'package:saturday_consumer_app/models/library_album.dart';
 import 'package:saturday_consumer_app/providers/album_provider.dart';
 import 'package:saturday_consumer_app/providers/library_provider.dart';
+import 'package:saturday_consumer_app/providers/repository_providers.dart';
 import 'package:saturday_consumer_app/providers/now_playing_provider.dart';
 import 'package:saturday_consumer_app/providers/tag_provider.dart';
 import 'package:saturday_consumer_app/utils/epc_validator.dart';
@@ -630,10 +631,9 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
             child: const Text('Cancel'),
           ),
           TextButton(
-            onPressed: () {
+            onPressed: () async {
               Navigator.pop(context);
-              // TODO: Remove album via repository
-              this.context.pop();
+              await _removeAlbum(libraryAlbum);
             },
             style: TextButton.styleFrom(
               foregroundColor: SaturdayColors.error,
@@ -643,5 +643,37 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
         ],
       ),
     );
+  }
+
+  Future<void> _removeAlbum(LibraryAlbum libraryAlbum) async {
+    try {
+      final albumRepo = ref.read(albumRepositoryProvider);
+      await albumRepo.removeAlbumFromLibrary(libraryAlbum.id);
+
+      // Invalidate the library albums provider to refresh the list
+      ref.invalidate(libraryAlbumsProvider);
+      ref.invalidate(allLibraryAlbumsProvider);
+      ref.invalidate(libraryAlbumCountProvider);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '"${libraryAlbum.album?.title}" removed from library',
+            ),
+          ),
+        );
+        context.pop();
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to remove album: $e'),
+            backgroundColor: SaturdayColors.error,
+          ),
+        );
+      }
+    }
   }
 }

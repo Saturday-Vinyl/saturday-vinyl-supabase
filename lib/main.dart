@@ -7,7 +7,9 @@ import 'package:saturday_consumer_app/config/env_config.dart';
 import 'package:saturday_consumer_app/providers/library_view_provider.dart';
 import 'package:saturday_consumer_app/providers/intro_splash_provider.dart';
 import 'package:saturday_consumer_app/services/auth_service.dart';
+import 'package:saturday_consumer_app/services/notification_service.dart';
 import 'package:saturday_consumer_app/services/supabase_service.dart';
+import 'package:saturday_consumer_app/utils/deep_link_handler.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -31,6 +33,15 @@ void main() async {
 
   // Initialize AuthService (depends on Supabase being initialized)
   AuthService.initialize();
+
+  // Initialize timezone data (required for scheduled notifications)
+  await initializeTimezone();
+
+  // Initialize notification service
+  await NotificationService.instance.initialize();
+
+  // Initialize deep link handler
+  await DeepLinkHandler.instance.initialize();
 
   // Initialize SharedPreferences
   final sharedPreferences = await SharedPreferences.getInstance();
