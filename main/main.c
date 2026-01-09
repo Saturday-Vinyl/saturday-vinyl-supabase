@@ -43,6 +43,12 @@
  * - Long press (3-5s) enters BLE provisioning mode
  * - BLE GATT service for credential exchange
  * - Auto-starts for factory-provisioned devices without Wi-Fi
+ *
+ * Phase 8: Thread Border Router
+ * - Thread mesh network for crate communication
+ * - Auto-generates network credentials on first boot
+ * - Credentials stored in NVS for persistence
+ * - LED feedback for Thread network state
  */
 
 #include <stdio.h>
@@ -70,6 +76,8 @@
 #include "event_reporter.h"
 #include "serial_prov.h"
 #include "ble_prov.h"
+#include "thread_br.h"  /* Conditionally enabled in sdkconfig */
+#include "esp_vfs_eventfd.h"
 
 static const char *TAG = "SV_HUB";
 
@@ -84,6 +92,11 @@ static bool s_saturday_tag_detected_this_poll = false;
 
 /* Track if BLE provisioning mode was requested via button */
 static bool s_ble_prov_requested = false;
+
+#if defined(CONFIG_OPENTHREAD_ENABLED) && CONFIG_OPENTHREAD_ENABLED
+/* Track Thread BR state for LED updates */
+static bool s_thread_running = false;
+#endif
 
 /*******************************************************************************
  * Button Callback
@@ -440,6 +453,108 @@ static esp_err_t start_wifi(void)
     return ESP_ERR_NOT_FOUND;
 }
 
+#if defined(CONFIG_OPENTHREAD_ENABLED) && CONFIG_OPENTHREAD_ENABLED
+/*******************************************************************************
+ * Thread Border Router Event Handler (Phase 8)
+ ******************************************************************************/
+
+/**
+ * @brief Handler for Thread BR events
+ *
+ * Updates LED to reflect Thread network state.
+ */
+static void on_thread_br_event(void *handler_args, esp_event_base_t base,
+                                int32_t event_id, void *event_data)
+{
+    switch (event_id) {
+        case THREAD_BR_EVENT_STARTED:
+            ESP_LOGI(TAG, "Thread Border Router started");
+            /* Show cyan pulse while forming network */
+            led_set_state(LED_COLOR_CYAN, LED_PATTERN_PULSE, 1500);
+            break;
+
+        case THREAD_BR_EVENT_ATTACHED:
+            s_thread_running = true;
+            ESP_LOGI(TAG, "Thread network attached");
+            /* Flash cyan to indicate success */
+            led_flash(LED_COLOR_CYAN, 300);
+            /* Return to normal state */
+            if (s_wifi_connected) {
+                led_set_state(LED_COLOR_GREEN, LED_PATTERN_SOLID, 0);
+                led_set_brightness(16);
+            }
+            break;
+
+        case THREAD_BR_EVENT_DETACHED:
+            s_thread_running = false;
+            ESP_LOGW(TAG, "Thread network detached");
+            break;
+
+        case THREAD_BR_EVENT_ROLE_CHANGED: {
+            thread_br_state_t *state = (thread_br_state_t *)event_data;
+            ESP_LOGI(TAG, "Thread role: %s", thread_br_state_to_string(*state));
+            break;
+        }
+
+        case THREAD_BR_EVENT_DEVICE_JOINED:
+            ESP_LOGI(TAG, "Thread device joined the network");
+            led_flash(LED_COLOR_CYAN, 200);
+            break;
+
+        case THREAD_BR_EVENT_DEVICE_LEFT:
+            ESP_LOGI(TAG, "Thread device left the network");
+            break;
+
+        case THREAD_BR_EVENT_STOPPED:
+            s_thread_running = false;
+            ESP_LOGI(TAG, "Thread Border Router stopped");
+            break;
+
+        default:
+            break;
+    }
+}
+
+/**
+ * @brief Initialize and start Thread Border Router
+ *
+ * Initializes OpenThread stack and starts the border router.
+ * Network credentials are generated on first boot if not present.
+ */
+static esp_err_t start_thread_br(void)
+{
+    ESP_LOGI(TAG, "Initializing Thread Border Router...");
+
+    /* Show cyan pulse while starting */
+    led_set_state(LED_COLOR_CYAN, LED_PATTERN_PULSE, 1500);
+
+    /* Initialize Thread BR */
+    esp_err_t ret = thread_br_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Thread BR init failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    /* Register for Thread BR events */
+    ret = esp_event_handler_register(THREAD_BR_EVENTS, ESP_EVENT_ANY_ID,
+                                      on_thread_br_event, NULL);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to register Thread event handler: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    /* Start Thread BR */
+    ret = thread_br_start();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Thread BR start failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    ESP_LOGI(TAG, "Thread Border Router started successfully");
+    return ESP_OK;
+}
+#endif /* CONFIG_OPENTHREAD_ENABLED */
+
 /*******************************************************************************
  * Main Application
  ******************************************************************************/
@@ -450,7 +565,7 @@ void app_main(void)
 
     ESP_LOGI(TAG, "===========================================");
     ESP_LOGI(TAG, "  Saturday Vinyl Hub Firmware v%s", FIRMWARE_VERSION);
-    ESP_LOGI(TAG, "  Phase 7: BLE Provisioning");
+    ESP_LOGI(TAG, "  Phase 8: Thread Border Router");
     ESP_LOGI(TAG, "===========================================");
 
     /* Log chip info */
@@ -481,6 +596,23 @@ void app_main(void)
     } else {
         ESP_LOGI(TAG, "Event loop ready");
     }
+
+#if defined(CONFIG_OPENTHREAD_ENABLED) && CONFIG_OPENTHREAD_ENABLED
+    /*
+     * Register eventfd VFS early - required for OpenThread task queue
+     * This must be done before any async networking starts
+     */
+    ESP_LOGI(TAG, "Registering eventfd VFS for OpenThread...");
+    esp_vfs_eventfd_config_t eventfd_config = {
+        .max_fds = 5,  /* netif + task_queue + border_router + radio */
+    };
+    ret = esp_vfs_eventfd_register(&eventfd_config);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to register eventfd VFS: %s", esp_err_to_name(ret));
+    } else {
+        ESP_LOGI(TAG, "eventfd VFS registered");
+    }
+#endif
 
     /*
      * Initialize Configuration Store (Phase 3)
@@ -773,6 +905,17 @@ void app_main(void)
         ESP_LOGI(TAG, "Event reporter started");
     }
 
+#if defined(CONFIG_OPENTHREAD_ENABLED) && CONFIG_OPENTHREAD_ENABLED
+    /*
+     * Initialize and Start Thread Border Router (Phase 8)
+     * Start after Wi-Fi is up for proper border routing
+     */
+    ret = start_thread_br();
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Thread BR not started - continuing without Thread");
+    }
+#endif /* CONFIG_OPENTHREAD_ENABLED */
+
     /* Start RFID polling with Now Playing integration (Phase 2 + 3) */
     ret = start_rfid_polling();
     if (ret != ESP_OK) {
@@ -890,5 +1033,19 @@ void app_main(void)
                          (unsigned long)er_status.heartbeats_sent);
             }
         }
+
+#if defined(CONFIG_OPENTHREAD_ENABLED) && CONFIG_OPENTHREAD_ENABLED
+        /* Thread BR stats every minute (Phase 8) */
+        if (loop_count % 60 == 0 && s_thread_running) {
+            thread_br_status_t thread_status;
+            if (thread_br_get_status(&thread_status) == ESP_OK) {
+                ESP_LOGI(TAG, "Thread: state=%s, pan=0x%04X, ch=%d, devices=%d",
+                         thread_br_state_to_string(thread_status.state),
+                         thread_status.pan_id,
+                         thread_status.channel,
+                         thread_status.device_count);
+            }
+        }
+#endif /* CONFIG_OPENTHREAD_ENABLED */
     }
 }

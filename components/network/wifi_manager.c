@@ -689,3 +689,11 @@ bool wifi_is_time_synced(void)
 {
     return s_time_synced;
 }
+
+/**
+ * @brief Get the Wi-Fi station netif
+ */
+esp_netif_t *wifi_get_netif(void)
+{
+    return s_wifi.netif;
+}

@@ -1,13 +1,13 @@
 {
-  "manifest_version": "1.0",
+  "manifest_version": "1.1",
   "device_type": "hub",
   "device_name": "Saturday Vinyl Hub",
   "firmware_id": "550e8400-e29b-41d4-a716-446655440000",
-  "firmware_version": "0.6.0",
+  "firmware_version": "0.8.0",
   "capabilities": {
     "wifi": true,
     "bluetooth": true,
-    "thread": false,
+    "thread": true,
     "cloud": true,
     "rfid": true,
     "audio": false,
@@ -19,7 +19,7 @@
     "required": ["unit_id", "cloud_url", "cloud_anon_key"],
     "optional": ["cloud_device_secret"]
   },
-  "supported_tests": ["wifi", "cloud", "rfid"],
+  "supported_tests": ["wifi", "cloud", "rfid", "thread"],
   "status_fields": [
     "device_type",
     "firmware_version",
@@ -32,6 +32,7 @@
     "wifi_ssid",
     "wifi_rssi",
     "ip_address",
+    "thread",
     "free_heap",
     "uptime_ms",
     "last_tests"

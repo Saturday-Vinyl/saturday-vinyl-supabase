@@ -280,11 +280,43 @@ Fields are only present if the device supports that capability.
 | `bluetooth_enabled` | boolean | Bluetooth enabled state | Devices with Bluetooth |
 | `thread_configured` | boolean | Thread network configured | Devices with Thread |
 | `thread_connected` | boolean | Thread network connected | Devices with Thread |
+| `thread` | object | Thread network credentials (see below) | Devices with Thread (Border Router) |
 | `free_heap` | number | Free heap memory in bytes | All devices |
 | `uptime_ms` | number | Milliseconds since boot | All devices |
 | `last_tests` | object | Results from last test run | All devices |
 | `battery_level` | number | Battery percentage (0-100) | Battery-powered devices |
 | `battery_charging` | boolean | Currently charging | Battery-powered devices |
+
+**Thread Credentials Object (`thread`):**
+
+For devices acting as Thread Border Routers (e.g., Saturday Hub), the `thread` field contains the network credentials generated on first boot. These credentials must be captured during factory provisioning and uploaded to the cloud so the mobile app can provision other devices (e.g., crates) to join the Thread network.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `network_name` | string | Thread network name (max 16 chars) |
+| `pan_id` | number | 16-bit PAN ID |
+| `channel` | number | Radio channel (11-26) |
+| `network_key` | string | 32-char hex string (128-bit master key) |
+| `extended_pan_id` | string | 16-char hex string (64-bit extended PAN ID) |
+| `mesh_local_prefix` | string | 16-char hex string (64-bit mesh-local prefix) |
+| `pskc` | string | 32-char hex string (Pre-Shared Key for Commissioner) |
+
+Example `thread` object:
+```json
+{
+  "thread": {
+    "network_name": "SaturdayVinyl",
+    "pan_id": 21334,
+    "channel": 15,
+    "network_key": "a1b2c3d4e5f6789012345678abcdef12",
+    "extended_pan_id": "0123456789abcdef",
+    "mesh_local_prefix": "fd00000000000000",
+    "pskc": "fedcba9876543210fedcba9876543210"
+  }
+}
+```
+
+If Thread is not yet initialized, `thread` will be `null`.
 
 ---
 
@@ -968,15 +1000,15 @@ Each device firmware must define a **Service Mode Manifest** - a machine-readabl
 
 ```json
 {
-  "manifest_version": "1.0",
+  "manifest_version": "1.1",
   "device_type": "hub",
   "device_name": "Saturday Vinyl Hub",
   "firmware_id": "550e8400-e29b-41d4-a716-446655440000",
-  "firmware_version": "0.6.0",
+  "firmware_version": "0.8.0",
   "capabilities": {
     "wifi": true,
     "bluetooth": true,
-    "thread": false,
+    "thread": true,
     "cloud": true,
     "rfid": true,
     "audio": false,
@@ -988,7 +1020,7 @@ Each device firmware must define a **Service Mode Manifest** - a machine-readabl
     "required": ["unit_id", "cloud_url", "cloud_anon_key"],
     "optional": ["cloud_device_secret"]
   },
-  "supported_tests": ["wifi", "bluetooth", "cloud", "rfid", "button"],
+  "supported_tests": ["wifi", "cloud", "rfid"],
   "status_fields": [
     "device_type",
     "firmware_version",
@@ -1001,7 +1033,7 @@ Each device firmware must define a **Service Mode Manifest** - a machine-readabl
     "wifi_ssid",
     "wifi_rssi",
     "ip_address",
-    "bluetooth_enabled",
+    "thread",
     "free_heap",
     "uptime_ms",
     "last_tests"

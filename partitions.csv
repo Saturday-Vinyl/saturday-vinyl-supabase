@@ -1,12 +1,11 @@
 # Saturday Vinyl Hub Partition Table
-# Supports OTA updates with two app partitions
+# Uses single factory partition due to large firmware size with Thread BR
+# OTA support requires 8MB flash or firmware optimization
 #
 # Name,   Type, SubType, Offset,   Size,     Flags
 # Note: if you change the partition table, run 'idf.py erase-flash' first
 #
 nvs,      data, nvs,     0x9000,   0x6000,
 phy_init, data, phy,     0xf000,   0x1000,
-otadata,  data, ota,     0x10000,  0x2000,
-ota_0,    app,  ota_0,   0x20000,  0x1C0000,
-ota_1,    app,  ota_1,   0x1E0000, 0x1C0000,
-storage,  data, spiffs,  0x3A0000, 0x60000,
+factory,  app,  factory, 0x10000,  0x350000,
+storage,  data, spiffs,  0x360000, 0xA0000,

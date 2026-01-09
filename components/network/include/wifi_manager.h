@@ -178,6 +178,16 @@ bool wifi_is_time_synced(void);
  */
 esp_err_t wifi_manager_deinit(void);
 
+/**
+ * @brief Get the Wi-Fi station netif
+ *
+ * Returns the esp_netif_t handle for the Wi-Fi station interface.
+ * Used by Thread Border Router to set up backbone interface.
+ *
+ * @return esp_netif_t pointer, or NULL if not initialized
+ */
+struct esp_netif_obj *wifi_get_netif(void);
+
 #ifdef __cplusplus
 }
 #endif

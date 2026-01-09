@@ -5,27 +5,32 @@
  * Implements the Saturday Service Mode Protocol for factory provisioning, testing,
  * and device servicing. Uses USB serial for communication with the Admin desktop app.
  *
- * Service Mode Protocol v2.1 - Commands supported:
+ * Service Mode Protocol v2.2 - Commands supported:
  * - enter_service_mode: Enter service mode (during boot window)
  * - exit_service_mode: Exit service mode and continue to normal operation
- * - get_status: Get current device status and configuration
+ * - get_status: Get current device status and configuration (includes Thread credentials)
  * - get_manifest: Get device capabilities manifest
  * - provision: Store unit_id and cloud credentials
  * - test_wifi: Test Wi-Fi connectivity
  * - test_rfid: Scan for RFID tags
  * - test_cloud: Test cloud API connectivity
+ * - test_thread: Test Thread Border Router (generates creds if needed, starts BR)
  * - test_all: Run all supported tests
  * - customer_reset: Clear user data, preserve provisioning
  * - factory_reset: Full wipe including unit_id
  * - reboot: Reboot the device
  *
  * Phase 6: Service Mode
+ * Phase 8: Thread Border Router integration
  */
+
+#include "sdkconfig.h"
 
 #include "serial_prov.h"
 #include "config_store.h"
 #include "supabase_client.h"
 #include "wifi_manager.h"
+#include "thread_br.h"
 #include "yrm100_driver.h"
 #include "rfid_protocol.h"
 #include "led_manager.h"
@@ -104,6 +109,7 @@ static void handle_provision(cJSON *params);
 static void handle_test_wifi(cJSON *params);
 static void handle_test_rfid(cJSON *params);
 static void handle_test_cloud(cJSON *params);
+static void handle_test_thread(cJSON *params);
 static void handle_test_all(cJSON *params);
 static void handle_customer_reset(cJSON *params);
 static void handle_factory_reset(cJSON *params);
@@ -444,6 +450,8 @@ static void process_command(const char *json_str)
         handle_test_rfid(params);
     } else if (strcmp(cmd_str, "test_cloud") == 0) {
         handle_test_cloud(params);
+    } else if (strcmp(cmd_str, "test_thread") == 0) {
+        handle_test_thread(params);
     } else if (strcmp(cmd_str, "test_all") == 0) {
         handle_test_all(params);
     } else if (strcmp(cmd_str, "customer_reset") == 0) {
@@ -543,6 +551,57 @@ static void handle_get_status(cJSON *params)
             cJSON_AddNumberToObject(data, "wifi_rssi", wifi_status.rssi);
         }
     }
+
+#if defined(CONFIG_OPENTHREAD_ENABLED) && CONFIG_OPENTHREAD_ENABLED
+    /* Thread Border Router credentials (Phase 8)
+     * These are generated on first boot and must be captured during factory
+     * provisioning for upload to Supabase. The mobile app retrieves them from
+     * the cloud when provisioning crates to join this hub's Thread network.
+     *
+     * Ensure credentials exist (generate if needed) before trying to read them.
+     * This allows get_status to work during service mode before Thread BR starts. */
+    thread_br_ensure_credentials();
+
+    thread_network_credentials_t thread_creds;
+    if (thread_br_get_credentials(&thread_creds) == ESP_OK) {
+        cJSON *thread = cJSON_CreateObject();
+
+        cJSON_AddStringToObject(thread, "network_name", thread_creds.network_name);
+        cJSON_AddNumberToObject(thread, "pan_id", thread_creds.pan_id);
+        cJSON_AddNumberToObject(thread, "channel", thread_creds.channel);
+
+        /* Network key as hex string (32 chars) */
+        char network_key_hex[33];
+        thread_br_get_network_key_hex(network_key_hex, sizeof(network_key_hex));
+        cJSON_AddStringToObject(thread, "network_key", network_key_hex);
+
+        /* Extended PAN ID as hex string (16 chars) */
+        char extpanid_hex[17];
+        thread_br_get_extpanid_hex(extpanid_hex, sizeof(extpanid_hex));
+        cJSON_AddStringToObject(thread, "extended_pan_id", extpanid_hex);
+
+        /* Mesh-local prefix as hex string (16 chars) */
+        char mesh_local_hex[17];
+        for (int i = 0; i < THREAD_MESH_LOCAL_PREFIX_LEN; i++) {
+            snprintf(&mesh_local_hex[i * 2], 3, "%02x",
+                     thread_creds.mesh_local_prefix[i]);
+        }
+        cJSON_AddStringToObject(thread, "mesh_local_prefix", mesh_local_hex);
+
+        /* PSKc as hex string (32 chars) - used for commissioner authentication */
+        char pskc_hex[33];
+        uint8_t *pskc_bytes = (uint8_t *)thread_creds.pskc;
+        for (int i = 0; i < 16; i++) {
+            snprintf(&pskc_hex[i * 2], 3, "%02x", pskc_bytes[i]);
+        }
+        cJSON_AddStringToObject(thread, "pskc", pskc_hex);
+
+        cJSON_AddItemToObject(data, "thread", thread);
+    } else {
+        /* Thread not initialized yet - include null to indicate it's expected */
+        cJSON_AddNullToObject(data, "thread");
+    }
+#endif /* CONFIG_OPENTHREAD_ENABLED */
 
     /* System info */
     cJSON_AddNumberToObject(data, "free_heap", esp_get_free_heap_size());
@@ -986,6 +1045,121 @@ static void handle_test_cloud(cJSON *params)
     vTaskDelay(pdMS_TO_TICKS(550));
     led_set_state(LED_COLOR_WHITE, LED_PATTERN_PULSE, 2000);
 }
+
+#if defined(CONFIG_OPENTHREAD_ENABLED) && CONFIG_OPENTHREAD_ENABLED
+static void handle_test_thread(cJSON *params)
+{
+    (void)params;
+
+    set_state(SERIAL_PROV_STATE_TESTING);
+    led_set_state(LED_COLOR_CYAN, LED_PATTERN_BLINK_FAST, 250);
+
+    ESP_LOGI(TAG, "Testing Thread Border Router...");
+
+    /* Ensure credentials exist (generate if needed) */
+    esp_err_t ret = thread_br_ensure_credentials();
+    if (ret != ESP_OK) {
+        send_error("thread_creds_failed", "Failed to ensure Thread credentials");
+        set_state(SERIAL_PROV_STATE_AWAITING);
+        led_flash(LED_COLOR_RED, 500);
+        vTaskDelay(pdMS_TO_TICKS(550));
+        led_set_state(LED_COLOR_WHITE, LED_PATTERN_PULSE, 2000);
+        return;
+    }
+
+    /* Get credentials to return in response */
+    thread_network_credentials_t creds;
+    ret = thread_br_get_credentials(&creds);
+    if (ret != ESP_OK) {
+        send_error("thread_creds_read_failed", "Failed to read Thread credentials");
+        set_state(SERIAL_PROV_STATE_AWAITING);
+        led_flash(LED_COLOR_RED, 500);
+        vTaskDelay(pdMS_TO_TICKS(550));
+        led_set_state(LED_COLOR_WHITE, LED_PATTERN_PULSE, 2000);
+        return;
+    }
+
+    /* Initialize Thread BR if not already */
+    ret = thread_br_init();
+    if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
+        /* ESP_ERR_INVALID_STATE means already initialized, which is OK */
+        send_error("thread_init_failed", "Failed to initialize Thread BR");
+        set_state(SERIAL_PROV_STATE_AWAITING);
+        led_flash(LED_COLOR_RED, 500);
+        vTaskDelay(pdMS_TO_TICKS(550));
+        led_set_state(LED_COLOR_WHITE, LED_PATTERN_PULSE, 2000);
+        return;
+    }
+
+    /* Start Thread BR */
+    ret = thread_br_start();
+    if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
+        send_error("thread_start_failed", "Failed to start Thread BR");
+        set_state(SERIAL_PROV_STATE_AWAITING);
+        led_flash(LED_COLOR_RED, 500);
+        vTaskDelay(pdMS_TO_TICKS(550));
+        led_set_state(LED_COLOR_WHITE, LED_PATTERN_PULSE, 2000);
+        return;
+    }
+
+    /* Wait for Thread to attach (become router or leader) with timeout */
+    ESP_LOGI(TAG, "Waiting for Thread network attachment...");
+    int64_t start = esp_timer_get_time();
+    const int64_t THREAD_ATTACH_TIMEOUT_MS = 30000;  /* 30 seconds */
+    bool attached = false;
+
+    while ((esp_timer_get_time() - start) < (THREAD_ATTACH_TIMEOUT_MS * 1000)) {
+        thread_br_state_t state = thread_br_get_state();
+        if (state >= THREAD_BR_STATE_CHILD) {
+            attached = true;
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+
+    /* Build response */
+    cJSON *data = cJSON_CreateObject();
+
+    cJSON_AddStringToObject(data, "network_name", creds.network_name);
+    cJSON_AddNumberToObject(data, "pan_id", creds.pan_id);
+    cJSON_AddNumberToObject(data, "channel", creds.channel);
+
+    /* Network key as hex string */
+    char network_key_hex[33];
+    thread_br_get_network_key_hex(network_key_hex, sizeof(network_key_hex));
+    cJSON_AddStringToObject(data, "network_key", network_key_hex);
+
+    if (attached) {
+        thread_br_status_t status;
+        thread_br_get_status(&status);
+
+        cJSON_AddBoolToObject(data, "attached", true);
+        cJSON_AddStringToObject(data, "role", thread_br_state_to_string(status.state));
+        cJSON_AddNumberToObject(data, "rloc16", status.rloc16);
+        cJSON_AddNumberToObject(data, "device_count", status.device_count);
+
+        led_flash(LED_COLOR_GREEN, 500);
+        send_response("ok", "Thread BR started and attached to network", data);
+    } else {
+        cJSON_AddBoolToObject(data, "attached", false);
+        cJSON_AddStringToObject(data, "role", thread_br_state_to_string(thread_br_get_state()));
+
+        led_flash(LED_COLOR_ORANGE, 500);
+        send_response("ok", "Thread BR started but not yet attached (still forming network)", data);
+    }
+
+    cJSON_Delete(data);
+    set_state(SERIAL_PROV_STATE_AWAITING);
+    vTaskDelay(pdMS_TO_TICKS(550));
+    led_set_state(LED_COLOR_WHITE, LED_PATTERN_PULSE, 2000);
+}
+#else
+static void handle_test_thread(cJSON *params)
+{
+    (void)params;
+    send_error("thread_not_supported", "Thread is not enabled in this firmware build");
+}
+#endif /* CONFIG_OPENTHREAD_ENABLED */
 
 static void handle_test_all(cJSON *params)
 {
