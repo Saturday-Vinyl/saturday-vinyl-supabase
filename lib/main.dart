@@ -7,6 +7,7 @@ import 'package:saturday_consumer_app/config/env_config.dart';
 import 'package:saturday_consumer_app/providers/library_view_provider.dart';
 import 'package:saturday_consumer_app/providers/intro_splash_provider.dart';
 import 'package:saturday_consumer_app/services/auth_service.dart';
+import 'package:saturday_consumer_app/services/live_activity_service.dart';
 import 'package:saturday_consumer_app/services/notification_service.dart';
 import 'package:saturday_consumer_app/services/supabase_service.dart';
 import 'package:saturday_consumer_app/utils/deep_link_handler.dart';
@@ -39,6 +40,9 @@ void main() async {
 
   // Initialize notification service
   await NotificationService.instance.initialize();
+
+  // Initialize Live Activity service (iOS only)
+  await LiveActivityService.instance.initialize();
 
   // Initialize deep link handler
   await DeepLinkHandler.instance.initialize();

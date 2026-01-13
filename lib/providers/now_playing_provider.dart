@@ -12,6 +12,15 @@ const String _nowPlayingAlbumIdKey = 'now_playing_album_id';
 const String _nowPlayingStartedAtKey = 'now_playing_started_at';
 const String _nowPlayingCurrentSideKey = 'now_playing_current_side';
 
+/// Source of the Now Playing album.
+enum NowPlayingSource {
+  /// Album was manually selected by the user.
+  manual,
+
+  /// Album was auto-detected by a Saturday Hub.
+  autoDetected,
+}
+
 /// Represents the current state of Now Playing.
 class NowPlayingState extends Equatable {
   /// Whether the state is currently loading.
@@ -29,12 +38,20 @@ class NowPlayingState extends Equatable {
   /// Error message if something went wrong.
   final String? error;
 
+  /// The source of this now playing (manual selection or auto-detected).
+  final NowPlayingSource source;
+
+  /// The name of the device that detected the album (if auto-detected).
+  final String? detectedByDevice;
+
   const NowPlayingState({
     this.isLoading = false,
     this.currentAlbum,
     this.startedAt,
     this.currentSide = 'A',
     this.error,
+    this.source = NowPlayingSource.manual,
+    this.detectedByDevice,
   });
 
   /// Whether there is something currently playing.
@@ -111,6 +128,9 @@ class NowPlayingState extends Equatable {
     });
   }
 
+  /// Whether this was auto-detected by a hub.
+  bool get isAutoDetected => source == NowPlayingSource.autoDetected;
+
   /// Creates a copy of this state with optional new values.
   NowPlayingState copyWith({
     bool? isLoading,
@@ -118,7 +138,10 @@ class NowPlayingState extends Equatable {
     DateTime? startedAt,
     String? currentSide,
     String? error,
+    NowPlayingSource? source,
+    String? detectedByDevice,
     bool clearAlbum = false,
+    bool clearDetectedByDevice = false,
   }) {
     return NowPlayingState(
       isLoading: isLoading ?? this.isLoading,
@@ -126,6 +149,10 @@ class NowPlayingState extends Equatable {
       startedAt: clearAlbum ? null : (startedAt ?? this.startedAt),
       currentSide: currentSide ?? this.currentSide,
       error: error,
+      source: clearAlbum ? NowPlayingSource.manual : (source ?? this.source),
+      detectedByDevice: clearAlbum || clearDetectedByDevice
+          ? null
+          : (detectedByDevice ?? this.detectedByDevice),
     );
   }
 
@@ -136,6 +163,8 @@ class NowPlayingState extends Equatable {
         startedAt,
         currentSide,
         error,
+        source,
+        detectedByDevice,
       ];
 }
 
@@ -273,6 +302,62 @@ class NowPlayingNotifier extends StateNotifier<NowPlayingState> {
   /// Clear any error state.
   void clearError() {
     state = state.copyWith(error: null);
+  }
+
+  /// Set an album as now playing from auto-detection (hub).
+  ///
+  /// Auto-detected albums take priority over manual selections.
+  /// This is called by the realtime provider when a hub detects a record.
+  Future<void> setAutoDetected(
+    LibraryAlbum album, {
+    required String deviceName,
+    DateTime? detectedAt,
+  }) async {
+    state = state.copyWith(
+      isLoading: true,
+      error: null,
+    );
+
+    try {
+      // Record the play in listening history
+      final userId = _ref.read(currentUserIdProvider);
+      if (userId != null) {
+        final historyRepo = _ref.read(listeningHistoryRepositoryProvider);
+        await historyRepo.recordPlay(
+          userId: userId,
+          libraryAlbumId: album.id,
+          deviceId: null, // TODO: Pass actual device ID when available
+        );
+      }
+
+      state = state.copyWith(
+        isLoading: false,
+        currentAlbum: album,
+        startedAt: detectedAt ?? DateTime.now(),
+        currentSide: 'A',
+        source: NowPlayingSource.autoDetected,
+        detectedByDevice: deviceName,
+      );
+
+      // Persist the state so timer survives app restarts
+      await _persistState();
+    } catch (e) {
+      state = state.copyWith(
+        isLoading: false,
+        error: 'Failed to set now playing: $e',
+      );
+    }
+  }
+
+  /// Clear the now playing state from auto-detection.
+  ///
+  /// Called when a record is removed from the hub.
+  Future<void> clearAutoDetected() async {
+    // Only clear if the current album was auto-detected
+    if (state.source == NowPlayingSource.autoDetected) {
+      state = state.copyWith(clearAlbum: true);
+      await _clearPersistedState();
+    }
   }
 }
 

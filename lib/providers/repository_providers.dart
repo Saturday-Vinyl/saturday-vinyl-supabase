@@ -31,3 +31,9 @@ final listeningHistoryRepositoryProvider =
     Provider<ListeningHistoryRepository>((ref) {
   return ListeningHistoryRepository();
 });
+
+/// Provider for AlbumLocationRepository.
+final albumLocationRepositoryProvider =
+    Provider<AlbumLocationRepository>((ref) {
+  return AlbumLocationRepository();
+});

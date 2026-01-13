@@ -6,9 +6,11 @@ import 'package:saturday_consumer_app/config/styles.dart';
 import 'package:saturday_consumer_app/config/theme.dart';
 import 'package:saturday_consumer_app/models/library_album.dart';
 import 'package:saturday_consumer_app/providers/now_playing_provider.dart';
+import 'package:saturday_consumer_app/providers/realtime_now_playing_provider.dart';
 import 'package:saturday_consumer_app/widgets/common/loading_indicator.dart';
 import 'package:saturday_consumer_app/widgets/common/saturday_app_bar.dart';
 import 'package:saturday_consumer_app/widgets/now_playing/album_art_hero.dart';
+import 'package:saturday_consumer_app/widgets/now_playing/auto_detected_badge.dart';
 import 'package:saturday_consumer_app/widgets/now_playing/flip_timer.dart';
 import 'package:saturday_consumer_app/widgets/now_playing/now_playing_empty_state.dart';
 import 'package:saturday_consumer_app/widgets/now_playing/now_playing_info.dart';
@@ -31,6 +33,10 @@ class NowPlayingScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final nowPlayingState = ref.watch(nowPlayingProvider);
     final recentlyPlayed = ref.watch(recentlyPlayedProvider);
+
+    // Initialize the realtime now playing subscription
+    // This ensures we listen for hub detections when the screen is visible
+    ref.watch(realtimeNowPlayingProvider);
 
     return Scaffold(
       appBar: const SaturdayAppBar(
@@ -71,6 +77,12 @@ class NowPlayingScreen extends ConsumerWidget {
           ),
 
           Spacing.sectionGap,
+
+          // Auto-detected badge (if detected by hub)
+          if (state.isAutoDetected && state.detectedByDevice != null) ...[
+            AutoDetectedBadge(deviceName: state.detectedByDevice!),
+            const SizedBox(height: Spacing.md),
+          ],
 
           // Album info
           if (album != null) NowPlayingInfo(album: album),

@@ -60,6 +60,9 @@ dependencies:
   # App Info
   package_info_plus: ^8.0.0
 
+  # Live Activities (iOS Dynamic Island)
+  live_activities: ^2.0.0
+
   # SVG Support
   flutter_svg: ^2.0.10
 

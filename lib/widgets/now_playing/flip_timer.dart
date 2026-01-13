@@ -28,13 +28,14 @@ class FlipTimer extends StatefulWidget {
   State<FlipTimer> createState() => _FlipTimerState();
 }
 
-class _FlipTimerState extends State<FlipTimer> {
+class _FlipTimerState extends State<FlipTimer> with WidgetsBindingObserver {
   Timer? _timer;
   int _elapsedSeconds = 0;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _calculateElapsed();
     _startTimer();
   }
@@ -48,15 +49,27 @@ class _FlipTimerState extends State<FlipTimer> {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    // Recalculate elapsed time when app comes back to foreground
+    if (state == AppLifecycleState.resumed) {
+      _calculateElapsed();
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     super.dispose();
   }
 
   void _calculateElapsed() {
     final now = DateTime.now();
-    _elapsedSeconds = now.difference(widget.startedAt).inSeconds;
-    if (_elapsedSeconds < 0) _elapsedSeconds = 0;
+    setState(() {
+      _elapsedSeconds = now.difference(widget.startedAt).inSeconds;
+      if (_elapsedSeconds < 0) _elapsedSeconds = 0;
+    });
   }
 
   void _startTimer() {
@@ -283,13 +296,15 @@ class CompactFlipTimer extends StatefulWidget {
   State<CompactFlipTimer> createState() => _CompactFlipTimerState();
 }
 
-class _CompactFlipTimerState extends State<CompactFlipTimer> {
+class _CompactFlipTimerState extends State<CompactFlipTimer>
+    with WidgetsBindingObserver {
   Timer? _timer;
   int _elapsedSeconds = 0;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _calculateElapsed();
     _startTimer();
   }
@@ -303,15 +318,27 @@ class _CompactFlipTimerState extends State<CompactFlipTimer> {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    // Recalculate elapsed time when app comes back to foreground
+    if (state == AppLifecycleState.resumed) {
+      _calculateElapsed();
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     super.dispose();
   }
 
   void _calculateElapsed() {
     final now = DateTime.now();
-    _elapsedSeconds = now.difference(widget.startedAt).inSeconds;
-    if (_elapsedSeconds < 0) _elapsedSeconds = 0;
+    setState(() {
+      _elapsedSeconds = now.difference(widget.startedAt).inSeconds;
+      if (_elapsedSeconds < 0) _elapsedSeconds = 0;
+    });
   }
 
   void _startTimer() {

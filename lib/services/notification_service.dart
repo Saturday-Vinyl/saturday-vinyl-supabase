@@ -352,6 +352,40 @@ class NotificationService {
     await _plugin.cancel(NotificationIds.deviceAlert(deviceId));
   }
 
+  /// Show a device offline notification.
+  ///
+  /// [deviceId] - The device ID.
+  /// [deviceName] - The device name.
+  Future<void> showDeviceOfflineNotification({
+    required String deviceId,
+    required String deviceName,
+  }) async {
+    await showDeviceAlert(
+      deviceId: deviceId,
+      deviceName: '$deviceName Offline',
+      alertType: 'offline',
+      message: '$deviceName is no longer connected.',
+    );
+  }
+
+  /// Show a low battery notification.
+  ///
+  /// [deviceId] - The device ID.
+  /// [deviceName] - The device name.
+  /// [batteryLevel] - The current battery level (0-100).
+  Future<void> showLowBatteryNotification({
+    required String deviceId,
+    required String deviceName,
+    required int batteryLevel,
+  }) async {
+    await showDeviceAlert(
+      deviceId: deviceId,
+      deviceName: '$deviceName Battery Low',
+      alertType: 'low_battery',
+      message: '$deviceName battery is at $batteryLevel%. Please charge soon.',
+    );
+  }
+
   /// Cancel all notifications.
   Future<void> cancelAll() async {
     await _plugin.cancelAll();

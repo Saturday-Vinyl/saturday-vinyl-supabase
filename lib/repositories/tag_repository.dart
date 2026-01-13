@@ -1,3 +1,4 @@
+import 'package:saturday_consumer_app/models/library_album.dart';
 import 'package:saturday_consumer_app/models/tag.dart';
 import 'package:saturday_consumer_app/repositories/base_repository.dart';
 
@@ -123,5 +124,37 @@ class TagRepository extends BaseRepository {
         .single();
 
     return Tag.fromJson(response);
+  }
+
+  /// Resolves an EPC identifier to its associated LibraryAlbum.
+  ///
+  /// Performs a lookup through the tag table to find the library album
+  /// that this EPC is associated with. Returns null if the tag doesn't
+  /// exist or isn't associated with an album.
+  ///
+  /// This method fetches the full LibraryAlbum with nested Album data.
+  Future<LibraryAlbum?> getLibraryAlbumByEpc(String epc) async {
+    // First get the tag to find the library_album_id
+    final tagResponse = await client
+        .from(_tableName)
+        .select('library_album_id')
+        .ilike('epc_identifier', epc)
+        .eq('status', TagStatus.active.name)
+        .maybeSingle();
+
+    if (tagResponse == null) return null;
+
+    final libraryAlbumId = tagResponse['library_album_id'] as String?;
+    if (libraryAlbumId == null) return null;
+
+    // Fetch the full library album with nested album data
+    final albumResponse = await client
+        .from('library_albums')
+        .select('*, album:albums(*)')
+        .eq('id', libraryAlbumId)
+        .maybeSingle();
+
+    if (albumResponse == null) return null;
+    return LibraryAlbum.fromJson(albumResponse);
   }
 }

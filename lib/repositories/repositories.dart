@@ -1,6 +1,7 @@
 /// Barrel file for all repositories.
 library;
 
+export 'album_location_repository.dart';
 export 'album_repository.dart';
 export 'base_repository.dart';
 export 'device_repository.dart';
