@@ -1,0 +1,261 @@
+/**
+ * @file s3_h2_protocol.h
+ * @brief UART Protocol Definitions for S3-H2 Inter-processor Communication
+ *
+ * This header defines the binary protocol used for communication between
+ * the ESP32-S3 master and ESP32-H2 Thread co-processor over UART.
+ *
+ * Frame Format:
+ * ┌────────┬──────┬────────┬────────────┬──────────┬─────┐
+ * │ Header │ Type │ Length │  Payload   │ Checksum │ End │
+ * │  0xAA  │  1B  │   2B   │  Variable  │    2B    │0x55 │
+ * └────────┴──────┴────────┴────────────┴──────────┴─────┘
+ *
+ * - Header: Always 0xAA
+ * - Type: Message type (command, response, or event)
+ * - Length: Payload length (little-endian, max 1024)
+ * - Payload: Type-specific data
+ * - Checksum: CRC-16/CCITT of Type + Length + Payload
+ * - End: Always 0x55
+ */
+
+#ifndef S3_H2_PROTOCOL_H
+#define S3_H2_PROTOCOL_H
+
+#include <stdint.h>
+#include <stdbool.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/*******************************************************************************
+ * Frame Constants
+ ******************************************************************************/
+
+#define S3H2_FRAME_HEADER           0xAA
+#define S3H2_FRAME_END              0x55
+#define S3H2_MAX_PAYLOAD_LEN        1024
+#define S3H2_FRAME_OVERHEAD         6       /* Header(1) + Type(1) + Len(2) + CRC(2) + End(1) - 1 */
+
+/*******************************************************************************
+ * Message Types - Commands (S3 -> H2)
+ ******************************************************************************/
+
+typedef enum {
+    /* Basic Commands */
+    S3H2_CMD_PING               = 0x01,     /**< Ping request */
+    S3H2_CMD_GET_STATUS         = 0x02,     /**< Request Thread BR status */
+    S3H2_CMD_GET_CREDENTIALS    = 0x03,     /**< Request Thread network credentials */
+    S3H2_CMD_GET_DEVICES        = 0x04,     /**< Request list of Thread devices */
+
+    /* Thread Control Commands */
+    S3H2_CMD_START_THREAD       = 0x05,     /**< Start Thread network */
+    S3H2_CMD_STOP_THREAD        = 0x06,     /**< Stop Thread network */
+    S3H2_CMD_ENABLE_JOINING     = 0x07,     /**< Enable device joining */
+    S3H2_CMD_DISABLE_JOINING    = 0x08,     /**< Disable device joining */
+    S3H2_CMD_RESET_CREDENTIALS  = 0x09,     /**< Generate new network credentials */
+
+    /* System Commands */
+    S3H2_CMD_ENTER_BOOTLOADER   = 0x10,     /**< Enter bootloader for firmware update */
+    S3H2_CMD_RESET              = 0x11,     /**< Software reset */
+    S3H2_CMD_GET_VERSION        = 0x12,     /**< Request firmware version */
+} s3h2_cmd_t;
+
+/*******************************************************************************
+ * Message Types - Responses (H2 -> S3)
+ ******************************************************************************/
+
+typedef enum {
+    S3H2_RSP_PONG               = 0x81,     /**< Pong response to PING */
+    S3H2_RSP_STATUS             = 0x82,     /**< Thread BR status */
+    S3H2_RSP_CREDENTIALS        = 0x83,     /**< Thread network credentials */
+    S3H2_RSP_ACK                = 0x84,     /**< Command acknowledged/success */
+    S3H2_RSP_NAK                = 0x85,     /**< Command failed */
+    S3H2_RSP_DEVICES            = 0x86,     /**< Device list */
+    S3H2_RSP_VERSION            = 0x87,     /**< Firmware version */
+} s3h2_rsp_t;
+
+/*******************************************************************************
+ * Message Types - Events (H2 -> S3, unsolicited)
+ ******************************************************************************/
+
+typedef enum {
+    S3H2_EVT_CRATE_JOINED       = 0xE0,     /**< Crate joined Thread network */
+    S3H2_EVT_CRATE_LEFT         = 0xE1,     /**< Crate left Thread network */
+    S3H2_EVT_INVENTORY_UPDATE   = 0xE2,     /**< Crate inventory changed */
+    S3H2_EVT_CRATE_HEARTBEAT    = 0xE3,     /**< Crate heartbeat received */
+    S3H2_EVT_THREAD_STATE       = 0xE4,     /**< Thread state changed */
+    S3H2_EVT_ERROR              = 0xEF,     /**< Error occurred */
+} s3h2_evt_t;
+
+/*******************************************************************************
+ * NAK Error Codes
+ ******************************************************************************/
+
+typedef enum {
+    S3H2_ERR_NONE               = 0x00,     /**< No error */
+    S3H2_ERR_INVALID_CMD        = 0x01,     /**< Unknown command */
+    S3H2_ERR_INVALID_PARAM      = 0x02,     /**< Invalid parameter */
+    S3H2_ERR_NOT_READY          = 0x03,     /**< Thread BR not ready */
+    S3H2_ERR_BUSY               = 0x04,     /**< Operation in progress */
+    S3H2_ERR_TIMEOUT            = 0x05,     /**< Operation timed out */
+    S3H2_ERR_NO_CREDENTIALS     = 0x06,     /**< No Thread credentials */
+    S3H2_ERR_NOT_ATTACHED       = 0x07,     /**< Not attached to Thread network */
+    S3H2_ERR_INTERNAL           = 0xFF,     /**< Internal error */
+} s3h2_error_t;
+
+/*******************************************************************************
+ * Thread BR State (for STATUS response and THREAD_STATE event)
+ ******************************************************************************/
+
+typedef enum {
+    S3H2_THREAD_STATE_DISABLED  = 0x00,     /**< Thread BR disabled */
+    S3H2_THREAD_STATE_DETACHED  = 0x01,     /**< Initialized but not attached */
+    S3H2_THREAD_STATE_ATTACHING = 0x02,     /**< Attempting to attach */
+    S3H2_THREAD_STATE_CHILD     = 0x03,     /**< Attached as child */
+    S3H2_THREAD_STATE_ROUTER    = 0x04,     /**< Operating as router */
+    S3H2_THREAD_STATE_LEADER    = 0x05,     /**< Operating as network leader */
+} s3h2_thread_state_t;
+
+/*******************************************************************************
+ * Payload Structures
+ ******************************************************************************/
+
+/**
+ * @brief Status response payload (RSP_STATUS)
+ */
+typedef struct __attribute__((packed)) {
+    uint8_t thread_state;           /**< s3h2_thread_state_t */
+    uint16_t pan_id;                /**< Current PAN ID */
+    uint8_t channel;                /**< Current channel */
+    uint16_t rloc16;                /**< Router Locator (16-bit address) */
+    uint8_t device_count;           /**< Number of devices on network */
+    uint8_t joining_enabled;        /**< 1 if joining enabled, 0 otherwise */
+} s3h2_status_payload_t;
+
+/**
+ * @brief Credentials response payload (RSP_CREDENTIALS)
+ */
+typedef struct __attribute__((packed)) {
+    char network_name[17];          /**< Network name (null-terminated) */
+    uint16_t pan_id;                /**< PAN ID */
+    uint8_t channel;                /**< Channel */
+    uint8_t network_key[16];        /**< Network master key */
+    uint8_t extended_pan_id[8];     /**< Extended PAN ID */
+    uint8_t mesh_local_prefix[8];   /**< Mesh-local prefix */
+} s3h2_credentials_payload_t;
+
+/**
+ * @brief Enable joining command payload (CMD_ENABLE_JOINING)
+ */
+typedef struct __attribute__((packed)) {
+    uint32_t duration_sec;          /**< Duration in seconds (0 = indefinite) */
+} s3h2_enable_joining_payload_t;
+
+/**
+ * @brief Crate joined event payload (EVT_CRATE_JOINED)
+ */
+typedef struct __attribute__((packed)) {
+    uint8_t ext_addr[8];            /**< Extended MAC address */
+    uint16_t rloc16;                /**< Router Locator */
+} s3h2_crate_joined_payload_t;
+
+/**
+ * @brief Crate left event payload (EVT_CRATE_LEFT)
+ */
+typedef struct __attribute__((packed)) {
+    uint8_t ext_addr[8];            /**< Extended MAC address */
+} s3h2_crate_left_payload_t;
+
+/**
+ * @brief Inventory update event payload (EVT_INVENTORY_UPDATE)
+ */
+typedef struct __attribute__((packed)) {
+    uint8_t ext_addr[8];            /**< Crate extended MAC address */
+    uint8_t slot_count;             /**< Number of slots in crate */
+    /* Followed by slot_count * 12-byte EPC values */
+} s3h2_inventory_update_payload_t;
+
+/**
+ * @brief Crate heartbeat event payload (EVT_CRATE_HEARTBEAT)
+ */
+typedef struct __attribute__((packed)) {
+    uint8_t ext_addr[8];            /**< Crate extended MAC address */
+    uint8_t battery_percent;        /**< Battery level (0-100) */
+    int8_t rssi;                    /**< Signal strength (dBm) */
+} s3h2_crate_heartbeat_payload_t;
+
+/**
+ * @brief Thread state event payload (EVT_THREAD_STATE)
+ */
+typedef struct __attribute__((packed)) {
+    uint8_t old_state;              /**< Previous state (s3h2_thread_state_t) */
+    uint8_t new_state;              /**< New state (s3h2_thread_state_t) */
+} s3h2_thread_state_payload_t;
+
+/**
+ * @brief NAK response payload (RSP_NAK)
+ */
+typedef struct __attribute__((packed)) {
+    uint8_t error_code;             /**< s3h2_error_t */
+} s3h2_nak_payload_t;
+
+/**
+ * @brief Version response payload (RSP_VERSION)
+ */
+typedef struct __attribute__((packed)) {
+    uint8_t major;                  /**< Major version */
+    uint8_t minor;                  /**< Minor version */
+    uint8_t patch;                  /**< Patch version */
+} s3h2_version_payload_t;
+
+/*******************************************************************************
+ * Frame Structure
+ ******************************************************************************/
+
+/**
+ * @brief Complete frame structure
+ */
+typedef struct {
+    uint8_t type;                   /**< Message type */
+    uint16_t length;                /**< Payload length */
+    uint8_t payload[S3H2_MAX_PAYLOAD_LEN]; /**< Payload data */
+    uint16_t checksum;              /**< CRC-16 checksum */
+} s3h2_frame_t;
+
+/*******************************************************************************
+ * CRC-16/CCITT Calculation
+ ******************************************************************************/
+
+/**
+ * @brief Calculate CRC-16/CCITT checksum
+ *
+ * Polynomial: 0x1021
+ * Initial value: 0xFFFF
+ *
+ * @param data Data buffer
+ * @param len Data length
+ * @return CRC-16 checksum
+ */
+static inline uint16_t s3h2_crc16(const uint8_t *data, size_t len)
+{
+    uint16_t crc = 0xFFFF;
+    for (size_t i = 0; i < len; i++) {
+        crc ^= ((uint16_t)data[i] << 8);
+        for (int j = 0; j < 8; j++) {
+            if (crc & 0x8000) {
+                crc = (crc << 1) ^ 0x1021;
+            } else {
+                crc <<= 1;
+            }
+        }
+    }
+    return crc;
+}
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* S3_H2_PROTOCOL_H */

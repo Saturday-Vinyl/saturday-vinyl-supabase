@@ -1,0 +1,102 @@
+# Saturday Vinyl Hub - ESP32-H2 Thread Border Router SDK Configuration
+# This is the dedicated Thread co-processor for mesh networking.
+
+# Target: ESP32-H2
+CONFIG_IDF_TARGET="esp32h2"
+
+# Project configuration
+CONFIG_ESPTOOLPY_MONITOR_BAUD=115200
+
+# Partition table
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# Flash configuration (4MB flash)
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_ESPTOOLPY_FLASHMODE_DIO=y
+CONFIG_ESPTOOLPY_FLASHFREQ_48M=y
+
+# =============================================================================
+# FreeRTOS Configuration
+# =============================================================================
+CONFIG_FREERTOS_HZ=1000
+CONFIG_FREERTOS_TIMER_TASK_STACK_DEPTH=3072
+
+# =============================================================================
+# Logging
+# =============================================================================
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
+
+# =============================================================================
+# OpenThread Configuration
+# =============================================================================
+# Note: ESP32-H2 doesn't have prebuilt BORDER_ROUTER library in ESP-IDF 5.5
+# Configure as FTD (Full Thread Device) for mesh networking.
+# Border routing (IP bridging) happens at application level via UART to S3.
+CONFIG_OPENTHREAD_ENABLED=y
+CONFIG_OPENTHREAD_FTD=y
+CONFIG_OPENTHREAD_RADIO_NATIVE=y
+CONFIG_OPENTHREAD_COMMISSIONER=y
+
+# Thread network settings
+CONFIG_OPENTHREAD_DNS_CLIENT=n
+CONFIG_OPENTHREAD_SRP_CLIENT=y
+
+# Disable OpenThread CLI - all control via UART from S3
+CONFIG_OPENTHREAD_CLI=n
+CONFIG_OPENTHREAD_CONSOLE_ENABLE=n
+
+# Thread network defaults (overridden at runtime)
+CONFIG_OPENTHREAD_NETWORK_NAME="SaturdayVinyl"
+CONFIG_OPENTHREAD_NETWORK_CHANNEL=15
+CONFIG_OPENTHREAD_NETWORK_PANID=0x5356
+
+# =============================================================================
+# IEEE 802.15.4 Radio (Thread)
+# =============================================================================
+CONFIG_IEEE802154_ENABLED=y
+
+# =============================================================================
+# mbedTLS for Thread (DTLS)
+# =============================================================================
+CONFIG_MBEDTLS_SSL_PROTO_DTLS=y
+CONFIG_MBEDTLS_SSL_DTLS_HELLO_VERIFY=y
+CONFIG_MBEDTLS_SSL_DTLS_SRTP=n
+CONFIG_MBEDTLS_KEY_EXCHANGE_ECJPAKE=y
+CONFIG_MBEDTLS_ECJPAKE_C=y
+
+# =============================================================================
+# UART Configuration (Communication with S3)
+# =============================================================================
+CONFIG_UART_ISR_IN_IRAM=y
+
+# H2 uses UART0 for S3 communication (no USB console)
+CONFIG_ESP_CONSOLE_NONE=y
+
+# =============================================================================
+# NVS Storage
+# =============================================================================
+# Store Thread credentials in NVS
+
+# =============================================================================
+# Watchdog
+# =============================================================================
+CONFIG_ESP_TASK_WDT_EN=y
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=30
+
+# =============================================================================
+# Power Management
+# =============================================================================
+# Disable PM for reliable Thread operation
+CONFIG_PM_ENABLE=n
+
+# =============================================================================
+# Bootloader Configuration
+# =============================================================================
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# =============================================================================
+# System Configuration
+# =============================================================================
+CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=4096

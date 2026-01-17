@@ -1,1118 +1,936 @@
 # Saturday Vinyl Hub Firmware - Implementation Plan
 
-**Project:** sv-hub-firmware
-**Document Version:** 0.2.0
-**Last Updated:** 2026-01-03
+**Project:** sv-hub-firmware (2-SoC Architecture)
+**Document Version:** 1.1.0
+**Last Updated:** 2026-01-13
 
 ---
 
 ## Overview
 
-This document breaks down the hub firmware development into iterative phases. Each phase builds on the previous one and produces testable functionality as early as possible.
+This document breaks down the hub firmware development into iterative phases for a **dual-SoC architecture**:
+- **ESP32-S3** (Master) - WiFi, BLE, RFID, Cloud, USB interface
+- **ESP32-H2** (Slave) - Thread Border Router, CoAP server
+
+### Why Two SoCs?
+
+Single-chip solutions (ESP32-C6) suffer from WiFi/Thread radio contention in the 2.4 GHz band, causing:
+- TLS handshake failures during cloud sync
+- Thread mesh instability during WiFi operations
+- Unreliable connectivity requiring complex retry logic
+
+The dual-SoC approach provides dedicated radios, eliminating these issues.
 
 ### Guiding Principles
 
 1. **Test early, test often** - Get code running on hardware from day one
 2. **Vertical slices** - Each phase delivers end-to-end functionality
-3. **Incremental complexity** - Start simple, add features progressively
+3. **Parallel development** - S3 and H2 firmware can be developed in parallel after protocol definition
 4. **Hardware first** - Validate hardware interfaces before building abstractions
+5. **Protocol-driven** - Define S3↔H2 UART protocol early, then implement both sides
 
 ### Phase Summary
 
 | Phase | Name | Outcome |
 |-------|------|---------|
-| 0 | Project Setup | Build system works, LED blinks on device |
-| 1 | Hardware Bring-Up | All peripherals functional (LED, button, RFID, UART) |
-| 2 | RFID Detection | Tags detected and logged to console |
-| 3 | Now Playing Logic | Debounced detection with state machine |
-| 4 | Wi-Fi Connectivity | Connect to network, basic HTTP request |
-| 5 | Supabase Integration | Now Playing events sent to cloud |
-| 6 | Serial Provisioning | Factory provisioning via desktop app |
-| 7 | BLE Provisioning | Consumer provisioning via mobile app |
-| 8 | Thread Border Router | Thread network operational |
-| 9 | CoAP Server | Receive messages from mock crate |
-| 10 | Crate Integration | Full crate → hub → cloud pipeline |
-| 11 | OTA Updates | Firmware updates from cloud |
-| 12 | Hardening | Error handling, watchdogs, edge cases |
-| 13 | Production Ready | Final testing, documentation, release |
+| **S3 Phases** |||
+| S3-0 | Project Setup | S3 build system works, LED blinks |
+| S3-1 | Hardware Bring-Up | S3 peripherals functional (LED, button, RFID) |
+| S3-2 | RFID Detection | Tags detected and logged |
+| S3-3 | Now Playing Logic | Debounced detection with state machine |
+| S3-4 | WiFi Connectivity | Connect to network, HTTPS works |
+| S3-5 | Supabase Integration | Now Playing events sent to cloud |
+| S3-6 | BLE Provisioning | Consumer WiFi setup via mobile app |
+| S3-7 | H2 Communication | UART protocol to H2 implemented |
+| S3-8 | Service Mode | Factory provisioning via USB serial |
+| **H2 Phases** |||
+| H2-0 | Project Setup | H2 build system works |
+| H2-1 | Thread Border Router | Thread network forms and runs |
+| H2-2 | CoAP Server | Receive messages from mock crate |
+| H2-3 | S3 Communication | UART protocol to S3 implemented |
+| **Integration Phases** |||
+| INT-1 | S3↔H2 Integration | Both chips communicate reliably |
+| INT-2 | Full Pipeline | Crate → H2 → S3 → Cloud |
+| INT-3 | H2 Firmware Update | S3 can flash H2 via esp-serial-flasher |
+| **Production Phases** |||
+| PROD-1 | OTA Updates | Firmware updates from cloud |
+| PROD-2 | Hardening | Error handling, watchdogs |
+| PROD-3 | Production Ready | Final testing, documentation |
 
 ---
 
-## Phase 0: Project Setup
+## Repository Setup
 
-**Goal:** Establish the development environment and verify basic firmware runs on hardware.
+Before starting development, set up the repository structure:
 
-### Tasks
+```
+sv-hub-firmware/
+├── s3-master/                      # ESP32-S3 master firmware
+│   ├── CMakeLists.txt
+│   ├── sdkconfig.defaults
+│   ├── partitions.csv
+│   ├── main/
+│   └── components/
+│
+├── h2-thread-br/                   # ESP32-H2 slave firmware
+│   ├── CMakeLists.txt
+│   ├── sdkconfig.defaults
+│   ├── partitions.csv
+│   ├── main/
+│   └── components/
+│
+├── shared/                         # Shared definitions
+│   ├── protocol/
+│   │   └── s3_h2_protocol.h        # UART protocol definitions
+│   └── common/
+│
+├── tools/
+│   ├── flash_both.py
+│   └── flash_h2_via_s3.py
+│
+└── docs/
+    ├── developers_guide.md
+    └── implementation_plan.md
+```
 
-#### 0.1 Development Environment Setup
-- [x] Install ESP-IDF v5.2+ following official documentation
-- [x] Verify toolchain with `idf.py --version`
-- [x] Install VS Code with ESP-IDF extension (optional but recommended)
-- [x] Set up git repository with `.gitignore` for ESP-IDF projects
+---
 
-#### 0.2 Create Project Structure
-- [x] Initialize project with `idf.py create-project sv-hub-firmware`
-- [x] Set target to ESP32-C6: `idf.py set-target esp32c6`
-- [x] Create directory structure:
+## S3 Phases (ESP32-S3 Master Firmware)
+
+### Phase S3-0: Project Setup
+
+**Goal:** Establish S3 development environment and verify basic firmware runs.
+
+#### Tasks
+
+##### S3-0.1 Development Environment
+- [ ] Install ESP-IDF v5.2+ with ESP32-S3 support
+- [ ] Verify toolchain: `idf.py --version`
+- [ ] Set up git repository with dual-project structure
+
+##### S3-0.2 Create S3 Project
+- [ ] Create `s3-master/` directory structure
+- [ ] Set target: `idf.py set-target esp32s3`
+- [ ] Configure partition table for OTA support
+- [ ] Create `sdkconfig.defaults`:
   ```
-  sv-hub-firmware/
-  ├── CMakeLists.txt
-  ├── sdkconfig.defaults
-  ├── main/
-  │   ├── CMakeLists.txt
-  │   ├── main.c
-  │   └── Kconfig.projbuild
-  ├── components/
-  └── docs/
+  CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+  CONFIG_PARTITION_TABLE_CUSTOM=y
+  CONFIG_ESP_SYSTEM_PANIC_PRINT_HALT=y
   ```
-- [x] Configure partition table for OTA support (`partitions.csv`)
-- [x] Create `sdkconfig.defaults` with baseline configuration
 
-#### 0.3 Hello World Build
-- [x] Write minimal `main.c` that logs "Saturday Hub starting..."
+##### S3-0.3 Hello World Build
+- [ ] Write minimal `main.c` that logs "Saturday Hub S3 starting..."
 - [ ] Build: `idf.py build`
-- [ ] Flash to device: `idf.py -p <PORT> flash`
-- [ ] Verify output: `idf.py -p <PORT> monitor`
+- [ ] Flash: `idf.py -p <PORT> flash monitor`
 
-#### 0.4 LED Blink Test
-- [x] Configure GPIO for one LED channel (e.g., GPIO8 for red)
-- [x] Implement simple blink loop (500ms on/off)
-- [ ] Verify LED toggles on physical hardware
+##### S3-0.4 LED Blink Test
+- [ ] Configure GPIO48 for WS2812 LED (ESP32-S3 native)
+- [ ] Implement simple blink loop
+- [ ] Verify LED toggles on hardware
 
-### Deliverables
-- Working build system
-- Firmware that boots and blinks LED
+#### Deliverables
+- Working S3 build system
+- S3 firmware boots and blinks LED
 - Serial console output visible
 
-### Testing
-- Visual: LED blinks at expected rate
-- Console: Boot messages appear in monitor
-
 ---
 
-## Phase 1: Hardware Bring-Up
+### Phase S3-1: Hardware Bring-Up
 
-**Goal:** Validate all hardware peripherals work independently.
+**Goal:** Validate all S3 peripherals work independently.
 
-**Status:** Complete
+#### Tasks
 
-### Tasks
+##### S3-1.1 RGB LED Driver
+- [ ] Create `components/ui/led_manager.c`
+- [ ] Configure WS2812 on GPIO48 using RMT
+- [ ] Implement patterns: SOLID, BLINK_SLOW, BLINK_FAST, PULSE
 
-#### 1.1 RGB LED Driver
-- [x] Create `components/ui/led_manager.c`
-- [x] Configure WS2812 addressable LED on GPIO8 (DevKitC-1 onboard LED)
-- [x] Implement basic functions:
-  ```c
-  void led_init(void);
-  void led_set_color(uint8_t r, uint8_t g, uint8_t b);
-  void led_set_brightness(uint8_t brightness);
-  ```
-- [x] Test: Cycle through colors (red → green → blue → white)
+##### S3-1.2 Button Input
+- [ ] Create `components/ui/button_handler.c`
+- [ ] Configure GPIO0 as input with internal pull-up
+- [ ] Implement debounced button with duration detection:
+  - SHORT (<500ms)
+  - LONG (3-5s) → Enter BLE provisioning
+  - FACTORY (>10s) → Factory reset
 
-**Implementation Notes:**
-- Uses ESP-IDF led_strip component (espressif/led_strip managed component)
-- WS2812 protocol via RMT peripheral at 10MHz resolution
-- Pattern support: SOLID, BLINK_SLOW, BLINK_FAST, PULSE, FLASH
-- Background FreeRTOS task handles pattern generation
-- Thread-safe with mutex protection
-- GPIO8 is the onboard WS2812 on ESP32-C6-DevKitC-1
+##### S3-1.3 UART1 for RFID Module
+- [ ] Configure UART1 at 115200 baud:
+  - GPIO17 = TX → YRM100 RXD
+  - GPIO18 = RX ← YRM100 TXD
+- [ ] Configure GPIO5 as RFID enable (active high)
+- [ ] Implement basic send/receive functions
+- [ ] Test: Send GetRfPower command, verify response
 
-#### 1.2 Button Input
-- [x] Create `components/ui/button_handler.c`
-- [x] Configure GPIO18 as input with internal pull-up
-- [x] Implement debounced button reading (50ms debounce)
-- [x] Implement press duration detection:
-  ```c
-  typedef enum {
-      BUTTON_PRESS_SHORT,    // < 500ms
-      BUTTON_PRESS_LONG,     // 3-5 seconds
-      BUTTON_PRESS_FACTORY,  // > 10 seconds
-  } button_press_t;
-  ```
-- [x] Test: Press button, log detected press type, change LED color
+##### S3-1.4 UART2 for H2 Communication
+- [ ] Configure UART2 at 115200 baud:
+  - GPIO15 = TX → H2 RX
+  - GPIO16 = RX ← H2 TX
+- [ ] Configure GPIO6 as H2_EN (reset control)
+- [ ] Configure GPIO7 as H2_BOOT (boot mode)
+- [ ] Test: Send bytes, verify loopback (with H2 not connected)
 
-**Implementation Notes:**
-- GPIO interrupt-driven (ANYEDGE) with event queue to task
-- Duration thresholds logged when crossed (for user feedback)
-- Callback registration for application handling
+##### S3-1.5 USB Console
+- [ ] Verify USB-CDC works for debug output
+- [ ] Test ESP_LOG output at various levels
 
-#### 1.3 UART for RFID Module
-- [x] Configure UART1 at 115200 baud:
-  - GPIO5 = ESP32 TX → YRM100 RXD (Yellow wire)
-  - GPIO4 = ESP32 RX ← YRM100 TXD (Green wire)
-- [x] Configure GPIO6 as RFID enable pin (active HIGH, with pull-up)
-- [x] Implement basic send/receive functions:
-  ```c
-  void rfid_uart_init(void);
-  void rfid_enable(bool enable);
-  int rfid_send(const uint8_t *data, size_t len);
-  int rfid_receive(uint8_t *buf, size_t max_len, uint32_t timeout_ms);
-  ```
-- [x] Test: Send `GetRfPower` command, verify response received
-
-**Implementation Notes:**
-- Full frame protocol implemented (build, parse, checksum)
-- Commands: GetFirmwareVersion (with 0x00 param), Get/SetRfPower, Single/MultiplePoll
-- Raw send/receive functions available for debugging
-- Thread-safe UART access with mutex
-- EN pin requires GPIO_MODE_INPUT_OUTPUT with pull-up for reliable operation
-- 500ms delay after enabling module before sending commands
-
-**YRM100 Wiring Reference:**
-
-Two YRM100 module variants are supported with different wire colors:
-
-*YRM100 (SBComponents) - 3 dBi Antenna:*
-| YRM100 Pin | Wire Color | ESP32 GPIO |
-|------------|------------|------------|
-| 1 (GND) | Black | GND |
-| 2 (EN) | Green | GPIO6 |
-| 3 (RXD) | Orange | GPIO5 |
-| 4 (TXD) | Yellow | GPIO4 |
-| 5 (VCC) | Red | 5V (USB rail) |
-
-*YRM100 (Generic/AliExpress) - 2 dBi Antenna:*
-| YRM100 Pin | Wire Color | ESP32 GPIO |
-|------------|------------|------------|
-| 1 (GND) | Blue | GND |
-| 2 (EN) | Green | GPIO6 |
-| 3 (RXD) | Yellow | GPIO5 |
-| 4 (TXD) | Black | GPIO4 |
-| 5 (VCC) | Red | 5V (USB rail) |
-
-> **Note:** Both modules require 5V power and have a minimum RF power of 15 dBm.
-
-#### 1.4 USB Serial Console
-- [x] Verify UART0 works for debug output (should work by default)
-- [x] Test printf/ESP_LOG output at various log levels
-
-### Deliverables
-- LED shows any color via function call
-- Button presses detected with duration classification
-- RFID UART communication working (raw bytes)
+#### Deliverables
+- LED shows any color/pattern
+- Button presses detected with duration
+- RFID UART communication working
+- H2 UART ready for protocol
 - Debug console functional
 
-### Testing
-- LED: Visual inspection of color accuracy
-- Button: Console logs press types correctly
-- RFID: Hex dump shows valid response frames (starts with 0xBB)
-
 ---
 
-## Phase 2: RFID Detection
+### Phase S3-2: RFID Detection
 
 **Goal:** Detect RFID tags and extract EPC data.
 
-**Status:** Complete
+*Note: Same as original Phase 2 - YRM100 driver and polling.*
 
-### Tasks
+#### Tasks
 
-#### 2.1 YRM100 Frame Codec
-- [x] Create `components/rfid/rfid_protocol.c`
-- [x] Implement frame builder:
-  ```c
-  size_t rfid_build_frame(uint8_t cmd, const uint8_t *params,
-                          size_t param_len, uint8_t *out_buf);
-  ```
-- [x] Implement frame parser:
-  ```c
-  typedef struct {
-      uint8_t type;      // 0x00=cmd, 0x01=response, 0x02=notice
-      uint8_t command;
-      uint8_t *params;
-      uint16_t param_len;
-  } rfid_frame_t;
+##### S3-2.1 YRM100 Frame Codec
+- [ ] Create `components/rfid/rfid_protocol.c`
+- [ ] Implement frame builder and parser
+- [ ] Implement checksum calculation
 
-  bool rfid_parse_frame(const uint8_t *buf, size_t len, rfid_frame_t *frame);
-  ```
-- [x] Implement checksum calculation and validation
-- [x] Test: Build and parse known frames from documentation
+##### S3-2.2 YRM100 Driver
+- [ ] Create `components/rfid/yrm100_driver.c`
+- [ ] Implement: init, get_firmware, set/get_rf_power, polling
 
-**Implementation Notes:**
-- Header file: `components/rfid/include/rfid_protocol.h`
-- Frame finding function `rfid_find_frame()` for extracting frames from streams
-- Utility functions: `rfid_epc_to_hex_string()`, `rfid_rssi_to_dbm()`
+##### S3-2.3 Tag Polling
+- [ ] Parse tag notice frames (RSSI, PC, EPC)
+- [ ] Validate Saturday tags (0x5356 prefix)
 
-#### 2.2 YRM100 Driver
-- [x] Create `components/rfid/yrm100_driver.c`
-- [x] Implement command functions:
-  ```c
-  bool yrm100_init(void);
-  bool yrm100_get_firmware_version(char *version, size_t max_len);
-  bool yrm100_set_rf_power(uint8_t power_dbm);
-  bool yrm100_get_rf_power(uint8_t *power_dbm);
-  bool yrm100_start_polling(void);
-  bool yrm100_stop_polling(void);
-  ```
-- [x] Implement response handling with timeout
-- [x] Test: Get firmware version, set/get RF power
+##### S3-2.4 Continuous Polling Task
+- [ ] Background task for RFID polling
+- [ ] Callback-based tag notifications
 
-**Implementation Notes:**
-- Added `yrm100_single_poll_with_data()` for full tag data extraction
-- Added `yrm100_read_tag_notice()` for continuous polling mode
-- Thread-safe with mutex protection on UART access
-
-#### 2.3 Tag Polling
-- [x] Implement tag notice frame parsing:
-  ```c
-  typedef struct {
-      uint8_t rssi;
-      uint16_t pc;
-      uint8_t epc[12];
-      uint8_t epc_len;
-  } rfid_tag_t;
-
-  bool rfid_parse_tag_notice(const rfid_frame_t *frame, rfid_tag_t *tag);
-  ```
-- [x] Extract EPC length from PC word (bits 15-11)
-- [x] Implement Saturday tag validation (prefix check)
-- [x] Test: Place tag near antenna, verify EPC logged correctly
-
-**Implementation Notes:**
-- `rfid_tag_t` structure includes `is_saturday_tag` boolean
-- Saturday prefix: 0x5356 ("SV" in ASCII)
-- EPC length extracted from PC word bits 15-11 (word count * 2)
-
-#### 2.4 Continuous Polling Task
-- [x] Create FreeRTOS task for RFID polling
-- [x] Read incoming frames in a loop
-- [x] Parse tag notices and log detected tags
-- [x] Test: Multiple tags, tags entering/leaving field
-
-**Implementation Notes:**
-- Background task: `yrm100_start_polling_task()` / `yrm100_stop_polling_task()`
-- Callback-based: `yrm100_register_tag_callback()`
-- Configurable: poll interval, RF power, Saturday-only filter
-- Statistics: `yrm100_get_poll_stats()` for monitoring
-- Uses single polls with intervals (cleaner than continuous mode)
-
-### Deliverables
-- YRM100 commands work reliably
+#### Deliverables
 - Tags detected with EPC and RSSI
 - Saturday vs non-Saturday tags distinguished
 - Continuous polling runs in background
 
-### Testing
-- Place known test tag, verify logged EPC matches
-- Remove tag, verify no more detections
-- Test with non-Saturday tag, verify it's flagged differently
+---
+
+### Phase S3-3: Now Playing Logic
+
+**Goal:** Implement debounced "Now Playing" detection.
+
+*Note: Same as original Phase 3.*
+
+#### Tasks
+
+##### S3-3.1 Configuration Storage
+- [ ] Create `components/config/config_store.c`
+- [ ] NVS-based config for RFID parameters
+
+##### S3-3.2 Now Playing State Machine
+- [ ] States: IDLE, TAG_CONFIRMING, TAG_PRESENT, TAG_REMOVING
+- [ ] Debounce timers for place/remove
+
+##### S3-3.3 Event Generation
+- [ ] TAG_PLACED and TAG_REMOVED events
+- [ ] ESP-IDF event loop integration
+
+##### S3-3.4 LED Feedback
+- [ ] Green flash on tag place
+- [ ] Dim green when tag present
+
+#### Deliverables
+- Debounced tag detection
+- Events for place/remove
+- LED indicates state
 
 ---
 
-## Phase 3: Now Playing Logic
+### Phase S3-4: WiFi Connectivity
 
-**Goal:** Implement debounced "Now Playing" detection with state machine.
+**Goal:** Connect to WiFi and make HTTPS requests.
 
-**Status:** Complete
+*Note: Same as original Phase 4, but simpler without Thread contention.*
 
-### Tasks
+#### Tasks
 
-#### 3.1 Configuration Storage (Basic)
-- [x] Create `components/config/config_store.c`
-- [x] Initialize NVS:
-  ```c
-  esp_err_t config_init(void);
-  ```
-- [x] Implement RFID config read/write:
-  ```c
-  typedef struct {
-      uint16_t poll_interval_ms;
-      uint8_t rf_power_dbm;
-      uint16_t debounce_present_ms;
-      uint16_t debounce_absent_ms;
-  } rfid_config_t;
+##### S3-4.1 WiFi Manager
+- [ ] Create `components/network/wifi_manager.c`
+- [ ] Station mode with auto-reconnect
+- [ ] Exponential backoff for retries
 
-  esp_err_t config_get_rfid(rfid_config_t *config);
-  esp_err_t config_set_rfid(const rfid_config_t *config);
-  ```
-- [x] Use sensible defaults if not configured
-- [ ] Test: Set config, reboot, verify config persists
+##### S3-4.2 WiFi Credential Storage
+- [ ] NVS storage for SSID/password
 
-**Implementation Notes:**
-- NVS namespace: `sv_rfid`
-- Keys: `poll_int`, `rf_power`, `deb_pres`, `deb_abs`
-- Validation on set: poll_interval 100-5000ms, rf_power 0-30dBm, debounce 0-5000/10000ms
-- Graceful fallback to defaults if NVS not found
+##### S3-4.3 HTTP Client
+- [ ] Create `components/network/http_client.c`
+- [ ] HTTPS with TLS certificate bundle
+- [ ] Basic GET/POST functions
 
-#### 3.2 Now Playing State Machine
-- [x] Create `components/rfid/now_playing.c`
-- [x] Implement state machine:
-  ```c
-  typedef enum {
-      NOW_PLAYING_STATE_IDLE,
-      NOW_PLAYING_STATE_TAG_CONFIRMING,
-      NOW_PLAYING_STATE_TAG_PRESENT,
-      NOW_PLAYING_STATE_TAG_REMOVING,
-  } now_playing_state_t;
-  ```
-- [x] Track current tag EPC and timestamps
-- [x] Implement state transitions with debounce timers
-- [ ] Test: Place tag, observe state transitions in logs
-
-**Implementation Notes:**
-- Mutex-protected state for thread safety
-- Separate pending/current tag tracking
-- Time-based debouncing using esp_timer_get_time()
-- Statistics tracking (total placed/removed events)
-
-#### 3.3 Event Generation
-- [x] Define events:
-  ```c
-  typedef enum {
-      NOW_PLAYING_EVENT_TAG_PLACED,
-      NOW_PLAYING_EVENT_TAG_REMOVED,
-  } now_playing_event_type_t;
-
-  typedef struct {
-      now_playing_event_type_t type;
-      uint8_t epc[12];
-      int8_t rssi;
-      int64_t timestamp;
-      uint32_t duration_ms;  // For removal events
-  } now_playing_event_t;
-  ```
-- [x] Integrate with ESP-IDF event loop
-- [ ] Test: Subscribe to events, log when received
-
-**Implementation Notes:**
-- Event base: `NOW_PLAYING_EVENTS` (ESP_EVENT_DEFINE_BASE)
-- Events posted to default event loop
-- Duration calculated automatically for removal events
-
-#### 3.4 LED Feedback
-- [x] Flash LED green briefly when tag confirmed
-- [x] Show dim green (brightness 64) when tag present
-- [x] Return to very dim green (brightness 16) when tag removed
-- [x] Flash cyan briefly on tag removal
-- [ ] Test: Visual confirmation of state changes
-
-**Implementation Notes:**
-- Event handler registered in main.c
-- LED brightness: 16 (idle), 64 (now playing)
-- Flash duration: 300ms placed, 200ms removed
-
-### Deliverables
-- Debounced tag detection (no false triggers)
-- Events generated for place/remove
-- LED indicates current state
-- Configurable timing parameters
-
-### Testing
-- Quickly wave tag past antenna - should NOT trigger event
-- Place tag and hold - should trigger "placed" after debounce
-- Remove tag - should trigger "removed" after debounce
-- Adjust debounce config, verify behavior changes
+#### Deliverables
+- WiFi connects on boot
+- Auto-reconnect on disconnect
+- HTTPS requests work reliably
 
 ---
 
-## Phase 4: Wi-Fi Connectivity
+### Phase S3-5: Supabase Integration
 
-**Goal:** Connect to Wi-Fi network and make basic HTTP requests.
+**Goal:** Send events to Supabase cloud.
 
-**Status:** Complete
+*Note: Same as original Phase 5.*
 
-### Tasks
+#### Tasks
 
-#### 4.1 Wi-Fi Manager
-- [x] Create `components/network/wifi_manager.c`
-- [x] Implement Wi-Fi station mode initialization
-- [x] Implement connection with stored credentials:
-  ```c
-  esp_err_t wifi_init(void);
-  esp_err_t wifi_connect(const char *ssid, const char *password);
-  esp_err_t wifi_disconnect(void);
-  bool wifi_is_connected(void);
-  ```
-- [x] Handle Wi-Fi events (connected, disconnected, got IP)
-- [ ] Test: Hardcode credentials, verify connection
+##### S3-5.1 Supabase Client
+- [ ] Create `components/cloud/supabase_client.c`
+- [ ] Authenticated REST API calls
 
-**Implementation Notes:**
-- Event-based architecture using ESP-IDF event loop
-- Posts WIFI_MANAGER_EVENTS for application integration
-- Tracks connection statistics (attempts, disconnects, RSSI)
-- Thread-safe state management
+##### S3-5.2 Event Reporter
+- [ ] Create `components/cloud/event_reporter.c`
+- [ ] Forward Now Playing events to Supabase
 
-#### 4.2 Wi-Fi Credential Storage
-- [x] Add to config store:
-  ```c
-  esp_err_t config_get_wifi(char *ssid, size_t ssid_len,
-                            char *password, size_t pass_len);
-  esp_err_t config_set_wifi(const char *ssid, const char *password);
-  bool config_has_wifi(void);
-  ```
-- [x] Added config_clear_wifi() for credential removal
-- [ ] Encrypt password in NVS (optional, can use NVS encryption)
-- [ ] Test: Store credentials, reboot, auto-connect
+##### S3-5.3 Event Queue
+- [ ] In-memory queue for offline support
+- [ ] Flush on WiFi reconnect
 
-**Implementation Notes:**
-- NVS namespace: `sv_wifi`
-- Keys: `ssid`, `password`
-- Validation: SSID max 32 chars, password max 64 chars
-- Empty password supported for open networks
+##### S3-5.4 Hub Heartbeat
+- [ ] Periodic heartbeat (5 minutes)
+- [ ] Include: version, WiFi RSSI, H2 status, free heap
 
-#### 4.3 Connection State Machine
-- [x] Implement auto-reconnect on disconnect
-- [x] Exponential backoff for retry (1s, 2s, 4s, ... max 60s)
-- [x] Update LED state based on connection status
-- [ ] Test: Disconnect router, verify reconnect behavior
-
-**Implementation Notes:**
-- States: DISCONNECTED, CONNECTING, CONNECTED, RECONNECTING
-- Auto-reconnect enabled by default, uses esp_timer for backoff
-- LED feedback: Yellow pulse (connecting), Cyan flash (connected),
-  Orange blink (reconnecting), Red blink (failed)
-
-#### 4.4 Basic HTTP Client
-- [x] Create `components/network/http_client.c`
-- [x] Implement http_get() and http_post_json() functions
-- [x] Configure TLS certificates using ESP certificate bundle
-- [x] Implement http_test_connectivity() using Cloudflare endpoint
-- [ ] Test: Verify response received and parsed
-
-**Implementation Notes:**
-- Uses esp_http_client with esp_crt_bundle for HTTPS
-- Response buffering up to 4KB
-- Request timing measurement included
-- Connectivity test uses https://1.1.1.1/cdn-cgi/trace
-
-### Deliverables
-- Wi-Fi connects automatically on boot (if configured)
-- Reconnects automatically on disconnect
-- LED indicates connection state
-- HTTPS requests work
-
-### Testing
-- Boot with valid credentials - should connect
-- Boot with invalid credentials - should show error state
-- Disconnect router - should attempt reconnect
-- Make HTTPS request - should succeed
-
----
-
-## Phase 5: Supabase Integration
-
-**Goal:** Send Now Playing events to Supabase.
-
-**Status:** Complete
-
-### Tasks
-
-#### 5.1 Supabase Client
-- [x] Create `components/cloud/supabase_client.c`
-- [x] Store Supabase config:
-  ```c
-  typedef struct {
-      char url[128];
-      char anon_key[256];
-      char device_secret[64];
-  } supabase_config_t;
-  ```
-- [x] Implement authenticated POST request:
-  ```c
-  esp_err_t supabase_post(const char *table, const char *json_body);
-  ```
-- [x] Handle HTTP response codes (200, 401, 500, etc.)
-- [x] Test: POST to test table, verify row created in Supabase dashboard
-
-**Implementation Notes:**
-- NVS namespace: `sv_supabase`
-- Keys: `url`, `anon_key`, `dev_secret`, `hub_id`
-- Uses esp_http_client with esp_crt_bundle for HTTPS
-- Response buffering up to 4KB
-- Automatic headers: apikey, Authorization (Bearer), Content-Type
-
-#### 5.2 Event Reporter
-- [x] Create `components/cloud/event_reporter.c`
-- [x] Subscribe to Now Playing events
-- [x] Format events as JSON:
-  ```json
-  {
-    "hub_id": "HUB-TEST",
-    "epc": "5356...",
-    "event_type": "placed",
-    "rssi": -45,
-    "timestamp": "2025-01-15T10:30:00Z"
-  }
-  ```
-- [x] Send to Supabase when event occurs
-- [x] Test: Place tag, verify event appears in Supabase
-
-**Implementation Notes:**
-- Background FreeRTOS task for cloud sync (8KB stack)
-- Automatic Wi-Fi state tracking
-- Posts to `now_playing_events` table
-- Includes duration_ms for removal events
-
-#### 5.3 Event Queue (Offline Support)
-- [x] Implement in-memory event queue (ring buffer)
-- [x] Queue events when Wi-Fi disconnected
-- [x] Flush queue when Wi-Fi reconnects
-- [x] Drop oldest events if queue full (log warning)
-- [x] Test: Disconnect Wi-Fi, generate events, reconnect, verify all sent
-
-**Implementation Notes:**
-- Ring buffer with configurable size (default: 100 events)
-- Thread-safe with mutex protection
-- Posts EVENT_REPORTER_EVENTS for sync status
-- Automatic flush on Wi-Fi reconnect
-
-#### 5.4 Hub Heartbeat
-- [x] Implement periodic heartbeat (every 5 minutes)
-- [x] Include device health metrics:
-  ```json
-  {
-    "hub_id": "HUB-TEST",
-    "firmware_version": "0.5.0",
-    "wifi_rssi": -55,
-    "uptime_sec": 3600,
-    "free_heap": 128000
-  }
-  ```
-- [x] Test: Verify heartbeats appear in Supabase
-
-**Implementation Notes:**
-- Uses esp_timer for periodic callbacks
-- Posts to `hub_heartbeats` table
-- Includes events_queued count for monitoring
-- Configurable interval (default: 300 seconds)
-
-### Deliverables
-- Now Playing events in Supabase within seconds
-- Events queued during Wi-Fi outage
+#### Deliverables
+- Now Playing events in Supabase
+- Offline queuing works
 - Hub heartbeats for monitoring
-- Proper error handling for API failures
-
-### Testing
-- Place/remove tags, verify events in Supabase
-- Check timestamps are accurate
-- Simulate Wi-Fi outage, verify events queued and sent on reconnect
-- Verify heartbeats arrive at expected interval
 
 ---
 
-## Phase 6: Serial Provisioning
+### Phase S3-6: BLE Provisioning
 
-**Goal:** Enable factory provisioning via USB serial with Saturday Admin app.
+**Goal:** Consumer WiFi setup via BLE.
 
-**Status:** Complete
+*Note: Same as original Phase 7.*
 
-### Tasks
+#### Tasks
 
-#### 6.1 Serial Protocol
-- [x] Create `components/provisioning/serial_prov.c`
-- [x] Define JSON protocol:
-  ```
-  Hub → Host: {"status": "awaiting_provisioning", "version": "0.6.0"}
-  Host → Hub: {"cmd": "provision", "data": {...}}
-  Hub → Host: {"status": "success", "hub_id": "HUB-XXXX"}
-  ```
-- [x] Implement JSON parsing (use cJSON library)
-- [ ] Test: Send commands via serial terminal
+##### S3-6.1 BLE Stack Setup
+- [ ] Enable NimBLE
+- [ ] Device name: "Saturday Hub XXXX"
 
-**Implementation Notes:**
-- Uses UART0 (USB serial console) for communication
-- JSON messages terminated by newline
-- Periodic status messages every 2 seconds in provisioning mode
-- Commands: get_status, provision, test_wifi, test_rfid, test_supabase, test_all, factory_reset, reboot
+##### S3-6.2 Provisioning Service
+- [ ] GATT service with Saturday UUIDs
+- [ ] Characteristics: Device Info, Status, Command, WiFi SSID/Password
 
-#### 6.2 Provisioning Commands
-- [x] Implement `provision` command:
-  - Receive hub_id, supabase_url, supabase_key, device_secret
-  - Store in NVS
-  - Mark device as factory-provisioned
-- [x] Implement `get_status` command:
-  - Return current provisioning state
-  - Return firmware version
-- [x] Implement `factory_reset` command:
-  - Clear all NVS data
-  - Reboot device
-- [ ] Test: Provision device via serial
+##### S3-6.3 Provisioning Flow
+- [ ] State machine: IDLE → ADVERTISING → CONNECTED → CONNECTING_WIFI → SUCCESS
 
-**Implementation Notes:**
-- Added test commands: test_wifi, test_rfid, test_supabase, test_all
-- Wi-Fi test with 15s timeout, RFID scan for 5s
-- Supabase test sends heartbeat to verify connectivity
+##### S3-6.4 Button Trigger
+- [ ] Long press (3-5s) enters BLE mode
+- [ ] LED shows blue blink when advertising
 
-#### 6.3 Provisioning State
-- [x] Add provisioning state to device state machine
-- [x] On boot, check if factory-provisioned
-- [x] If not provisioned, enter serial provisioning mode
-- [x] LED shows appropriate state (white pulsing)
-- [ ] Test: Boot unprovisioned device, verify state
-
-**Implementation Notes:**
-- `config_is_provisioned()` / `config_set_provisioned()` in config_store
-- main.c checks provisioning state on boot
-- Blocks in provisioning mode until device is provisioned
-
-#### 6.4 Integration with Admin App
-- [x] Document serial protocol for Admin app team
-- [ ] Test end-to-end with Admin app (or mock script)
-- [ ] Verify device registers in Supabase after provisioning
-
-**Implementation Notes:**
-- Protocol documented in `docs/service_mode_protocol.md`
-- Includes workflow, commands, responses, error codes, and examples
-
-### Deliverables
-- Factory provisioning works via USB serial
-- Device stores all required credentials
-- Clear factory reset capability
-- Documentation for Admin app integration
-
-### Testing
-- Connect unprovisioned hub, send provision command
-- Verify credentials stored correctly
-- Reboot, verify device uses stored credentials
-- Factory reset, verify device returns to unprovisioned state
-
----
-
-## Phase 7: BLE Provisioning
-
-**Goal:** Enable consumer provisioning via BLE with Saturday mobile app.
-
-**Status:** Complete
-
-### Tasks
-
-#### 7.1 BLE Stack Setup
-- [x] Enable BLE in sdkconfig
-- [x] Initialize NimBLE stack (ESP-IDF's BLE implementation)
-- [x] Configure device name: "Saturday Hub XXXX" (last 4 of hub_id or MAC)
-- [ ] Test: Device appears in BLE scanner app
-
-**Implementation Notes:**
-- NimBLE configured in sdkconfig.defaults with peripheral role only
-- Device name generated from unit_id (last 4 chars) or MAC address fallback
-- BLE address type auto-inferred on host sync
-
-#### 7.2 Provisioning Service
-- [x] Create `components/provisioning/ble_prov.c`
-- [x] Define GATT service and characteristics per protocol spec:
-  ```
-  Service: Saturday Provisioning (UUID: 53560000-0001-1000-8000-00805f9b34fb)
-  ├── Device Info (Read)     - UUID: 53560001-... (JSON device metadata)
-  ├── Status (Read, Notify)  - UUID: 53560002-... (single-byte status)
-  ├── Command (Write)        - UUID: 53560003-...
-  ├── Response (Read, Notify)- UUID: 53560004-... (JSON responses)
-  ├── WiFi SSID (Write)      - UUID: 53560010-...
-  └── WiFi Password (Write)  - UUID: 53560011-...
-  ```
-- [x] Implement characteristic handlers
-- [x] Create BLE Provisioning Protocol specification (docs/ble_provisioning_protocol.md)
-- [ ] Test: Connect with nRF Connect, read/write characteristics
-
-**Implementation Notes:**
-- Full 128-bit UUIDs with Saturday Vinyl prefix (5356 = "SV")
-- Device Info returns JSON with device_type, unit_id, firmware_version, capabilities
-- Status uses single-byte codes per protocol: 0x00=IDLE, 0x01=READY, 0x05=SUCCESS, 0x10+=errors
-- Response characteristic provides JSON-formatted messages
-- Commands: CONNECT (0x01), RESET (0x02), GET_STATUS (0x03), SCAN_WIFI (0x04), ABORT (0x05)
-- Protocol designed for extensibility (Thread 0x0020, User Token 0x0030)
-
-#### 7.3 Provisioning Flow
-- [x] Implement state machine:
-  1. IDLE → ADVERTISING (on start)
-  2. ADVERTISING → CONNECTED (on BLE connect)
-  3. CONNECTED → CREDENTIALS_SET (both SSID and pass received)
-  4. CREDENTIALS_SET → CONNECTING_WIFI (on CONNECT command)
-  5. CONNECTING_WIFI → SUCCESS or FAILED
-- [x] Notify status changes via Status characteristic
-- [x] Handle errors (bad password, network not found, timeout)
-- [ ] Test: Full flow with nRF Connect app
-
-**Implementation Notes:**
-- Wi-Fi connection runs in separate task (8KB stack for TLS)
-- 15-second Wi-Fi connection timeout
-- Credentials cleared on failure
-- BLE auto-stops after successful provisioning
-- State callbacks available for application integration
-
-#### 7.4 Security
-- [ ] Require bonding/pairing for write characteristics (disabled for now)
-- [x] Implement timeout (stop advertising after 5 minutes)
-- [x] Only allow provisioning when triggered by button or no Wi-Fi configured
-- [ ] Test: Verify can't re-provision already provisioned device
-
-**Implementation Notes:**
-- 5-minute advertising timeout (BLE_PROV_ADV_TIMEOUT_SEC)
-- Timeout timer auto-stops on BLE connection
-- LED returns to idle state on timeout
-- Pairing support prepared but disabled (require_pairing config option)
-
-#### 7.5 Button Trigger
-- [x] Long press (3-5s) enters BLE provisioning mode
-- [x] LED shows blue slow blink when in provisioning mode
-- [x] LED shows solid blue when BLE connected
-- [x] LED shows yellow pulse when connecting to Wi-Fi
-- [ ] Test: Press button, verify BLE advertising starts
-
-**Implementation Notes:**
-- Button callback sets flag, main loop handles BLE start (thread safety)
-- Auto-enters BLE mode on boot if has unit_id but no Wi-Fi credentials
-- LED patterns: BLUE/BLINK_SLOW (advertising), BLUE/SOLID (connected),
-  YELLOW/PULSE (Wi-Fi connecting), GREEN flash (success), RED/BLINK_SLOW (failure)
-
-### Deliverables
+#### Deliverables
 - BLE provisioning works with mobile app
-- 5-minute advertising timeout
 - Button triggers provisioning mode
-- Clear status feedback via BLE notifications and LED
-
-### Testing
-- Long press button, verify BLE advertising
-- Connect with mobile app (or nRF Connect), send credentials
-- Verify Wi-Fi connects and credentials saved
-- Try to provision already-provisioned device via button - should work (re-provisioning allowed)
+- Status feedback via LED
 
 ---
 
-## Phase 8: Thread Border Router
+### Phase S3-7: H2 Communication
 
-**Goal:** Establish Thread network and act as border router.
+**Goal:** Implement UART protocol to communicate with H2.
 
-**Status:** Complete
+#### Tasks
 
-### Tasks
+##### S3-7.1 Protocol Definition
+- [ ] Create `shared/protocol/s3_h2_protocol.h`
+- [ ] Define frame format:
+  ```c
+  #define PROTO_HEADER        0xAA
+  #define PROTO_END           0x55
 
-#### 8.1 OpenThread Setup
-- [x] Enable OpenThread in sdkconfig:
+  // S3 → H2 Commands
+  #define CMD_PING            0x01
+  #define CMD_GET_STATUS      0x02
+  #define CMD_GET_CREDENTIALS 0x03
+  #define CMD_START_THREAD    0x05
+  #define CMD_STOP_THREAD     0x06
+  #define CMD_ENABLE_JOINING  0x07
+  #define CMD_ENTER_BOOTLOADER 0x10
+
+  // H2 → S3 Responses
+  #define RSP_PONG            0x81
+  #define RSP_STATUS          0x82
+  #define RSP_CREDENTIALS     0x83
+  #define RSP_ACK             0x84
+  #define RSP_NAK             0x85
+
+  // H2 → S3 Events (async)
+  #define EVT_CRATE_JOINED    0xE0
+  #define EVT_CRATE_LEFT      0xE1
+  #define EVT_INVENTORY_UPDATE 0xE2
+  #define EVT_CRATE_HEARTBEAT 0xE3
+  ```
+
+##### S3-7.2 Protocol Codec
+- [ ] Create `components/h2_comm/h2_protocol.c`
+- [ ] Frame builder with CRC-16
+- [ ] Frame parser with validation
+
+##### S3-7.3 H2 Communication Task
+- [ ] Create `components/h2_comm/h2_comm.c`
+- [ ] Background task for UART RX
+- [ ] Command/response with 1s timeout
+- [ ] Async event handling
+
+##### S3-7.4 H2 Control Functions
+- [ ] `h2_ping()` - Health check
+- [ ] `h2_get_status()` - Get Thread BR status
+- [ ] `h2_start_thread()` - Start Thread network
+- [ ] `h2_enable_joining()` - Enable commissioner
+
+##### S3-7.5 H2 Health Monitoring
+- [ ] Periodic PING every 5 seconds
+- [ ] Reset H2 after 3 failures (GPIO6 toggle)
+- [ ] LED shows H2 error state
+
+##### S3-7.6 Event Forwarding
+- [ ] Forward INVENTORY_UPDATE to Supabase
+- [ ] Forward CRATE_HEARTBEAT to Supabase
+- [ ] Queue if WiFi unavailable
+
+#### Deliverables
+- UART protocol fully defined
+- S3 can send commands to H2
+- S3 receives events from H2
+- H2 health monitoring works
+
+---
+
+### Phase S3-8: Service Mode
+
+**Goal:** Implement Service Mode for factory provisioning and technician access via USB serial.
+
+Service Mode provides a standardized serial interface for factory provisioning, device testing, diagnostics, and servicing. See `docs/service_mode_protocol.md` for the full protocol specification.
+
+#### Tasks
+
+##### S3-8.1 Service Mode Component
+- [ ] Create `components/service_mode/service_mode.c`
+- [ ] Create `components/service_mode/service_manifest.json`
+- [ ] Embed manifest at compile time using `EMBED_TXTFILES`
+
+##### S3-8.2 Service Mode Entry
+- [ ] Fresh device (no `unit_id`) → auto-enter service mode on boot
+- [ ] Provisioned device → 10-second window to receive `enter_service_mode`
+- [ ] LED shows white pulse when in service mode
+
+##### S3-8.3 Status Beacon
+- [ ] Send status beacon every 2 seconds while in service mode:
+  ```json
+  {
+    "status": "service_mode",
+    "data": {
+      "device_type": "hub",
+      "firmware_version": "1.0.0",
+      "mac_address": "AA:BB:CC:DD:EE:FF",
+      "unit_id": "SV-HUB-000001",
+      "cloud_configured": true
+    }
+  }
+  ```
+
+##### S3-8.4 Core Commands
+- [ ] `enter_service_mode` - Enter service mode (boot window only)
+- [ ] `exit_service_mode` - Exit to standard operation
+- [ ] `get_status` - Return device status including H2/Thread info
+- [ ] `get_manifest` - Return Service Mode Manifest
+- [ ] `provision` - Store `unit_id` and cloud credentials
+- [ ] `reboot` - Reboot device
+
+##### S3-8.5 Test Commands
+- [ ] `test_wifi` - Test WiFi connectivity (with optional credentials)
+- [ ] `test_rfid` - Test RFID module (scan for tags)
+- [ ] `test_cloud` - Test Supabase connectivity (send heartbeat)
+- [ ] `test_thread` - Query H2 for Thread network status
+- [ ] `test_all` - Run all supported tests in sequence
+
+##### S3-8.6 Reset Commands
+- [ ] `customer_reset` - Clear user data, preserve unit_id and cloud config
+- [ ] `factory_reset` - Full wipe including unit_id (returns to fresh state)
+
+##### S3-8.7 Thread Credential Retrieval
+- [ ] Query H2 for Thread credentials via `h2_get_credentials()`
+- [ ] Include Thread credentials in `get_status` response:
+  ```json
+  {
+    "thread": {
+      "network_name": "SaturdayVinyl",
+      "pan_id": 21334,
+      "channel": 15,
+      "network_key": "0123456789abcdef...",
+      "extended_pan_id": "0123456789abcdef"
+    }
+  }
+  ```
+
+##### S3-8.8 Service Mode Manifest
+- [ ] Define manifest for Saturday Hub:
+  ```json
+  {
+    "manifest_version": "1.0",
+    "device_type": "hub",
+    "device_name": "Saturday Vinyl Hub",
+    "capabilities": {
+      "wifi": true,
+      "bluetooth": true,
+      "thread": true,
+      "cloud": true,
+      "rfid": true,
+      "audio": false,
+      "display": false,
+      "battery": false,
+      "button": true
+    },
+    "supported_tests": ["wifi", "cloud", "rfid", "thread"],
+    "provisioning_fields": {
+      "required": ["unit_id", "cloud_url", "cloud_anon_key"],
+      "optional": ["cloud_device_secret"]
+    }
+  }
+  ```
+
+#### Deliverables
+- Factory provisioning via USB serial works
+- All test commands functional
+- Thread credentials retrievable via service mode
+- Manifest accurately describes device capabilities
+- Customer and factory reset work correctly
+
+#### Testing
+- Connect fresh device, verify auto-enters service mode
+- Send `provision`, verify credentials stored
+- Run `test_all`, verify all tests pass
+- Run `factory_reset`, verify device returns to fresh state
+- Connect provisioned device, verify 10-second entry window
+
+---
+
+## H2 Phases (ESP32-H2 Slave Firmware)
+
+### Phase H2-0: Project Setup
+
+**Goal:** Establish H2 development environment.
+
+#### Tasks
+
+##### H2-0.1 Create H2 Project
+- [ ] Create `h2-thread-br/` directory structure
+- [ ] Set target: `idf.py set-target esp32h2`
+- [ ] Configure sdkconfig.defaults:
   ```
   CONFIG_OPENTHREAD_ENABLED=y
   CONFIG_OPENTHREAD_BORDER_ROUTER=y
+  CONFIG_OPENTHREAD_RADIO_NATIVE=y
+  CONFIG_IEEE802154_ENABLED=y
   ```
-- [x] Create `components/network/thread_br.c`
-- [x] Initialize OpenThread stack
-- [ ] Test: OpenThread CLI responds to commands
 
-**Implementation Notes:**
-- Full OpenThread Border Router configuration in sdkconfig.defaults
-- mbedTLS DTLS enabled for Thread commissioning
-- IEEE 802.15.4 radio enabled for ESP32-C6
+##### H2-0.2 Hello World Build
+- [ ] Write minimal main.c
+- [ ] Build and flash via direct connection
+- [ ] Verify serial output
 
-#### 8.2 Thread Network Formation
-- [x] Generate or load network credentials:
-  - Network name: "SaturdayVinyl"
-  - PAN ID: 0x5356
-  - Channel: default 15
-  - Network key: generate random, store in NVS
-- [x] Form network as Leader
-- [ ] Test: Thread network visible in OpenThread sniffer
-
-**Implementation Notes:**
-- Credentials auto-generated on first boot using esp_fill_random()
-- Stored in NVS namespace `sv_thread`
-- Keys: net_name, pan_id, channel, net_key, extpanid, mesh_pfx, pskc
-- Network dataset includes security policy with 4-week key rotation
-
-#### 8.3 Border Router Configuration
-- [x] Configure NAT64 for IPv4 connectivity
-- [x] Advertise OMR (Off-Mesh Routable) prefix
-- [x] Configure DNS-SD for service discovery
-- [ ] Test: Thread device can ping external IP
-
-**Implementation Notes:**
-- Uses esp_openthread_border_router_init() for full BR setup
-- DNS64 and SRP client enabled in sdkconfig
-- Border routing bridges Thread mesh to Wi-Fi network
-
-#### 8.4 Network Status
-- [x] Track Thread network state:
-  - Network formed (leader/router/child roles)
-  - Number of devices (neighbor count)
-  - Device join/leave events (via OT callbacks)
-- [x] Update LED based on Thread status:
-  - Cyan pulse while forming network
-  - Cyan flash when attached
-  - Cyan flash when device joins
-- [x] Expose network info for heartbeat
-- [ ] Test: Verify device count updates
-
-**Implementation Notes:**
-- State machine: DISABLED → DETACHED → ATTACHING → ROUTER/LEADER
-- Events posted to ESP-IDF event loop (THREAD_BR_EVENTS)
-- Status includes: state, PAN ID, channel, RLOC16, device count
-- Commissioner mode available for device joining (PSKd: SVJOIN)
-
-### Deliverables
-- Thread network forms on boot
-- Border router bridges Thread to Wi-Fi/Internet
-- Network credentials stored persistently
-- Device count tracked
-
-### Testing
-- Boot hub, verify Thread network forms
-- Join Thread device, verify it can reach Internet
-- Check device count increases
-- Reboot hub, verify network reforms with same credentials
+#### Deliverables
+- Working H2 build system
+- H2 firmware boots
 
 ---
 
-## Phase 9: CoAP Server
+### Phase H2-1: Thread Border Router
 
-**Goal:** Receive inventory updates from crates via CoAP.
+**Goal:** Thread network forms and operates as Border Router.
 
-### Tasks
+#### Tasks
 
-#### 9.1 CoAP Stack Setup
-- [ ] Add CoAP library (ESP-IDF includes libcoap)
-- [ ] Create `components/network/coap_server.c`
-- [ ] Initialize CoAP server on Thread interface
-- [ ] Test: CoAP client can reach server
+##### H2-1.1 OpenThread Setup
+- [ ] Create `components/thread_br/thread_br.c`
+- [ ] Initialize OpenThread stack
+- [ ] Configure as Border Router
 
-#### 9.2 Inventory Endpoint
-- [ ] Implement POST `/inventory` handler:
-  ```c
-  typedef struct {
-      char crate_id[32];
-      int64_t timestamp;
-      char epcs[75][25];  // Up to 75 EPCs
-      size_t epc_count;
-      char added[10][25];
-      size_t added_count;
-      char removed[10][25];
-      size_t removed_count;
-  } inventory_update_t;
-  ```
-- [ ] Parse CBOR or JSON payload
-- [ ] Validate EPCs (Saturday prefix check)
-- [ ] Test: Send test inventory update
+##### H2-1.2 Thread Network Formation
+- [ ] Generate or load network credentials
+- [ ] Form network as Leader
+- [ ] Store credentials in NVS
 
-#### 9.3 Heartbeat Endpoint
-- [ ] Implement POST `/heartbeat` handler:
-  ```c
-  typedef struct {
-      char crate_id[32];
-      uint8_t battery_pct;
-      uint8_t tag_count;
-      int8_t rssi;
-      uint32_t uptime_sec;
-  } crate_heartbeat_t;
-  ```
-- [ ] Track last heartbeat time per crate
-- [ ] Test: Send test heartbeat
+##### H2-1.3 Border Router Configuration
+- [ ] Configure NAT64
+- [ ] Advertise OMR prefix
+- [ ] Enable DNS-SD
 
-#### 9.4 Event Forwarding
-- [ ] Forward inventory updates to cloud (event reporter)
-- [ ] Forward crate heartbeats to cloud
-- [ ] Queue if Wi-Fi unavailable
-- [ ] Test: CoAP message → Supabase row
+##### H2-1.4 Network Status Tracking
+- [ ] Track state: DISABLED, DETACHED, ROUTER, LEADER
+- [ ] Track device count
+- [ ] Track device join/leave events
 
-### Deliverables
+#### Deliverables
+- Thread network forms on boot
+- Border router bridges Thread to IP
+- Network credentials persist
+
+---
+
+### Phase H2-2: CoAP Server
+
+**Goal:** Receive messages from crates via CoAP.
+
+#### Tasks
+
+##### H2-2.1 CoAP Stack Setup
+- [ ] Create `components/coap_server/coap_server.c`
+- [ ] Initialize libcoap on Thread interface
+
+##### H2-2.2 Inventory Endpoint
+- [ ] POST `/inventory` handler
+- [ ] Parse JSON/CBOR payload
+- [ ] Queue for S3 forwarding
+
+##### H2-2.3 Heartbeat Endpoint
+- [ ] POST `/heartbeat` handler
+- [ ] Track last heartbeat per crate
+
+##### H2-2.4 Config Endpoint
+- [ ] GET `/config` handler
+- [ ] Return crate configuration
+
+#### Deliverables
 - CoAP server accepts inventory updates
 - CoAP server accepts heartbeats
-- Data forwarded to Supabase
-- Offline queuing works
-
-### Testing
-- Use CoAP client (coap-cli or similar) to send test messages
-- Verify data appears in Supabase
-- Simulate Wi-Fi outage, verify messages queued
+- Data queued for S3
 
 ---
 
-## Phase 10: Crate Integration
+### Phase H2-3: S3 Communication
 
-**Goal:** Full end-to-end crate → hub → cloud pipeline with real crate hardware.
+**Goal:** Implement UART protocol to communicate with S3.
 
-### Tasks
+#### Tasks
 
-#### 10.1 Crate Commissioning
-- [ ] Implement Thread commissioner role
-- [ ] Add "commission crate" command from cloud
-- [ ] Generate and share network credentials with crate
-- [ ] Test: Commission real crate device
+##### H2-3.1 Include Shared Protocol
+- [ ] Reference `shared/protocol/s3_h2_protocol.h`
+- [ ] Or copy definitions to H2 project
 
-#### 10.2 Crate Discovery
-- [ ] Implement mDNS/DNS-SD discovery
-- [ ] Track known crates:
-  ```c
-  typedef struct {
-      char crate_id[32];
-      uint8_t thread_addr[16];
-      int64_t last_seen;
-      uint8_t battery_pct;
-      uint8_t tag_count;
-  } crate_info_t;
-  ```
-- [ ] Detect crate join/leave
-- [ ] Test: Crate joins, appears in hub's crate list
+##### H2-3.2 Protocol Codec
+- [ ] Create `components/s3_comm/s3_protocol.c`
+- [ ] Frame builder and parser (same as S3 side)
 
-#### 10.3 Integration Testing
-- [ ] Test with real RFID crate hardware
-- [ ] Add records, verify inventory update reaches cloud
-- [ ] Remove records, verify delta reported correctly
-- [ ] Test multiple crates simultaneously
-- [ ] Test: Full user scenario
+##### H2-3.3 S3 Communication Task
+- [ ] Create `components/s3_comm/s3_comm.c`
+- [ ] Background task for UART RX
+- [ ] Command handler
 
-#### 10.4 Error Handling
-- [ ] Handle crate disconnection gracefully
-- [ ] Handle malformed messages
-- [ ] Implement retry logic for cloud failures
-- [ ] Test: Simulate various failure modes
+##### H2-3.4 Command Handlers
+- [ ] PING → PONG
+- [ ] GET_STATUS → STATUS (JSON)
+- [ ] GET_CREDENTIALS → CREDENTIALS (JSON)
+- [ ] START_THREAD → ACK + start
+- [ ] ENABLE_JOINING → ACK + commission
 
-### Deliverables
-- Real crates commission and connect
-- Inventory updates flow to cloud
+##### H2-3.5 Event Sending
+- [ ] Send CRATE_JOINED on Thread join
+- [ ] Send CRATE_LEFT on Thread leave
+- [ ] Send INVENTORY_UPDATE from CoAP
+- [ ] Send CRATE_HEARTBEAT from CoAP
+
+##### H2-3.6 Bootloader Command
+- [ ] ENTER_BOOTLOADER → reset to download mode
+- [ ] Uses GPIO4 boot strapping
+
+#### Deliverables
+- H2 responds to S3 commands
+- H2 sends events to S3
+- Bootloader mode works
+
+---
+
+## Integration Phases
+
+### Phase INT-1: S3↔H2 Integration
+
+**Goal:** Both chips communicate reliably together.
+
+#### Tasks
+
+##### INT-1.1 Physical Connection
+- [ ] Wire S3 UART2 to H2 UART0
+- [ ] Wire S3 GPIO6 to H2 EN
+- [ ] Wire S3 GPIO7 to H2 GPIO4 (boot)
+
+##### INT-1.2 Communication Test
+- [ ] S3 sends PING, H2 responds PONG
+- [ ] S3 sends GET_STATUS, H2 responds with Thread status
+- [ ] H2 sends async events, S3 receives
+
+##### INT-1.3 Thread Control
+- [ ] S3 sends START_THREAD, H2 forms network
+- [ ] S3 sends ENABLE_JOINING, H2 enables commissioner
+- [ ] S3 monitors H2 via periodic PING
+
+##### INT-1.4 Error Recovery
+- [ ] S3 detects H2 not responding
+- [ ] S3 resets H2 via GPIO6
+- [ ] H2 recovers and rejoins Thread network
+
+#### Deliverables
+- Reliable S3↔H2 communication
+- Thread network controlled by S3
+- H2 recovery works
+
+---
+
+### Phase INT-2: Full Pipeline
+
+**Goal:** End-to-end crate → H2 → S3 → Cloud pipeline.
+
+#### Tasks
+
+##### INT-2.1 Mock Crate Testing
+- [ ] Use CoAP client to simulate crate
+- [ ] Send inventory update to H2
+- [ ] Verify reaches S3 via UART
+- [ ] Verify reaches Supabase
+
+##### INT-2.2 Thread Commissioning
+- [ ] S3 receives "add crate" from cloud
+- [ ] S3 sends ENABLE_JOINING to H2
+- [ ] Crate joins Thread network
+- [ ] H2 sends CRATE_JOINED to S3
+- [ ] S3 reports to Supabase
+
+##### INT-2.3 Inventory Flow
+- [ ] Crate sends inventory via CoAP to H2
+- [ ] H2 forwards via UART to S3
+- [ ] S3 sends to Supabase
+- [ ] Verify correct data at each hop
+
+##### INT-2.4 Real Crate Integration
+- [ ] Test with actual crate hardware
+- [ ] Verify join, inventory, heartbeat flows
+
+#### Deliverables
+- Full crate → cloud pipeline works
+- Commissioning works
 - Multiple crates supported
-- Robust error handling
-
-### Testing
-- Add crate to network via commissioning
-- Add/remove records from crate
-- Verify inventory in Supabase matches physical crate
-- Stress test with multiple crates
 
 ---
 
-## Phase 11: OTA Updates
+### Phase INT-3: H2 Firmware Update
 
-**Goal:** Enable over-the-air firmware updates from cloud.
+**Goal:** S3 can flash H2 firmware via UART.
 
-### Tasks
+#### Tasks
 
-#### 11.1 OTA Partition Setup
-- [ ] Configure dual OTA partitions in `partitions.csv`
-- [ ] Verify partition table correct with `idf.py partition-table`
-- [ ] Test: Flash to both partitions manually
+##### INT-3.1 esp-serial-flasher Integration
+- [ ] Add esp-serial-flasher component to S3
+- [ ] Configure for H2 (ESP32-H2 target)
 
-#### 11.2 OTA Client
-- [ ] Create `components/ota/ota_manager.c`
-- [ ] Implement OTA download from HTTPS URL:
-  ```c
-  esp_err_t ota_start_update(const char *url);
-  ota_state_t ota_get_state(void);
-  ```
-- [ ] Show LED pattern during update (magenta pulsing)
-- [ ] Test: Trigger OTA from hardcoded URL
+##### INT-3.2 Bootloader Entry
+- [ ] S3 sends ENTER_BOOTLOADER command
+- [ ] H2 resets into download mode
+- [ ] Verify H2 responds to esptool protocol
 
-#### 11.3 Update Check
-- [ ] Periodically check Supabase for available updates
-- [ ] Compare version strings
-- [ ] Download and apply if newer version available
-- [ ] Test: Upload new firmware to Supabase, verify hub updates
+##### INT-3.3 Flash via UART
+- [ ] S3 receives H2 firmware (from OTA or serial)
+- [ ] S3 flashes H2 via UART2
+- [ ] S3 resets H2 into normal mode
 
-#### 11.4 Rollback
-- [ ] Mark OTA partition as valid after successful boot
-- [ ] Implement automatic rollback on repeated boot failures
-- [ ] Test: Flash bad firmware, verify rollback occurs
+##### INT-3.4 Version Management
+- [ ] S3 stores expected H2 version
+- [ ] On boot, S3 checks H2 version
+- [ ] Update H2 if version mismatch
 
-### Deliverables
-- OTA updates work from cloud
-- Automatic update checking
+#### Deliverables
+- S3 can update H2 firmware
+- Single USB connection flashes both chips
+- Version checking works
+
+---
+
+## Production Phases
+
+### Phase PROD-1: OTA Updates
+
+**Goal:** Over-the-air firmware updates for both S3 and H2.
+
+#### Tasks
+
+##### PROD-1.1 S3 OTA
+- [ ] Dual OTA partitions for S3
+- [ ] Download from Supabase storage
+- [ ] Rollback on boot failure
+
+##### PROD-1.2 H2 OTA via S3
+- [ ] OTA package includes both S3 and H2 firmware
+- [ ] S3 updates itself first
+- [ ] S3 updates H2 after reboot
+- [ ] Verify both versions match expected
+
+##### PROD-1.3 Update Check
+- [ ] Periodic check for updates
+- [ ] Version comparison
+- [ ] Download and apply
+
+#### Deliverables
+- Both chips updatable via cloud
 - Rollback on failure
-- LED indicates update in progress
-
-### Testing
-- Upload new firmware to Supabase storage
-- Verify hub detects and installs update
-- Flash intentionally broken firmware, verify rollback
-- Verify version reported correctly after update
+- Version management
 
 ---
 
-## Phase 12: Hardening
+### Phase PROD-2: Hardening
 
-**Goal:** Production-ready error handling and reliability.
+**Goal:** Production-ready reliability.
 
-### Tasks
+#### Tasks
 
-#### 12.1 Watchdog
-- [ ] Enable task watchdog for critical tasks
-- [ ] Configure timeout (30 seconds)
-- [ ] Test: Block a task, verify watchdog triggers reboot
+##### PROD-2.1 Watchdogs
+- [ ] Task watchdog on S3 critical tasks
+- [ ] H2 monitored by S3 via PING
 
-#### 12.2 Error Recovery
-- [ ] Implement recovery for each error type:
-  - Wi-Fi failures: reconnect with backoff
-  - RFID failures: reset module, continue
-  - Cloud failures: queue and retry
-  - Thread failures: reform network
-- [ ] Log errors to NVS for diagnostics
-- [ ] Test: Inject various failures, verify recovery
+##### PROD-2.2 Error Recovery
+- [ ] WiFi: reconnect with backoff
+- [ ] RFID: reset module
+- [ ] H2: reset via GPIO
+- [ ] Cloud: queue and retry
 
-#### 12.3 Memory Management
-- [ ] Audit heap usage
-- [ ] Identify and fix memory leaks
-- [ ] Set high-water marks for monitoring
-- [ ] Test: Long-running soak test (24+ hours)
+##### PROD-2.3 Memory Management
+- [ ] Audit heap usage on both chips
+- [ ] Fix memory leaks
+- [ ] Monitor free heap in heartbeats
 
-#### 12.4 Edge Cases
-- [ ] Handle rapid tag swapping
-- [ ] Handle >75 records in crate update
-- [ ] Handle network credentials too long
-- [ ] Handle corrupted NVS (recover gracefully)
-- [ ] Test: Each edge case
+##### PROD-2.4 Edge Cases
+- [ ] Rapid tag swapping
+- [ ] H2 crash during cloud sync
+- [ ] Large inventory updates
+- [ ] Corrupted NVS recovery
 
-#### 12.5 Security Audit
-- [ ] Verify all credentials encrypted in NVS
-- [ ] Verify HTTPS certificate validation enabled
-- [ ] Verify BLE pairing required for provisioning
-- [ ] Review for common vulnerabilities
-
-### Deliverables
-- Watchdog protection for all critical paths
-- Graceful recovery from all error types
+#### Deliverables
+- Watchdog protection
+- Graceful error recovery
 - No memory leaks
-- Security review complete
-
-### Testing
-- 24-hour soak test with simulated traffic
-- Inject each error type, verify recovery
-- Run memory analysis tools
-- Security penetration testing (if applicable)
 
 ---
 
-## Phase 13: Production Ready
+### Phase PROD-3: Production Ready
 
-**Goal:** Final polish and release preparation.
+**Goal:** Final polish and release.
 
-### Tasks
+#### Tasks
 
-#### 13.1 Code Cleanup
-- [ ] Remove debug code and test endpoints
-- [ ] Review and clean up logging levels
-- [ ] Ensure consistent code style
-- [ ] Remove unused code and dependencies
+##### PROD-3.1 Code Cleanup
+- [ ] Remove debug code
+- [ ] Review logging levels
+- [ ] Consistent code style
 
-#### 13.2 Documentation
-- [ ] Update developers_guide.md with final details
-- [ ] Document all configuration options
+##### PROD-3.2 Documentation
+- [ ] Update developers_guide.md
+- [ ] Document configuration options
 - [ ] Create troubleshooting guide
-- [ ] Document manufacturing process
 
-#### 13.3 Release Build
-- [ ] Create release build configuration
-- [ ] Optimize for size (-Os)
-- [ ] Strip debug symbols
+##### PROD-3.3 Release Build
+- [ ] Create release configurations for both projects
+- [ ] Optimize for size
 - [ ] Sign firmware (if applicable)
 
-#### 13.4 Final Testing
-- [ ] Full system integration test
-- [ ] Test all provisioning flows
-- [ ] Test with production Supabase environment
-- [ ] Test with production crate hardware
-- [ ] Load testing (many crates, many events)
+##### PROD-3.4 Final Testing
+- [ ] Full system integration
+- [ ] All provisioning flows
+- [ ] Load testing
+- [ ] 24-hour soak test
 
-#### 13.5 Release
-- [ ] Tag version in git
-- [ ] Generate release notes
-- [ ] Upload firmware to Supabase storage
-- [ ] Update Admin app with new firmware
-- [ ] Create rollback plan
-
-### Deliverables
+#### Deliverables
 - Production-quality firmware
 - Complete documentation
 - Release binaries
-- Deployment plan
 
-### Testing
-- Full end-to-end test with all components
-- Sign-off from stakeholders
-- Verification in production environment
+---
+
+## Development Workflow
+
+### Parallel Development
+
+After completing Phase S3-7 and H2-3 (protocol definition), S3 and H2 development can proceed in parallel:
+
+```
+              ┌─────────────┐
+              │  Protocol   │
+              │ Definition  │
+              │   S3-7.1    │
+              └──────┬──────┘
+                     │
+        ┌────────────┴────────────┐
+        ▼                         ▼
+┌───────────────┐         ┌───────────────┐
+│  S3 Firmware  │         │  H2 Firmware  │
+│  Development  │         │  Development  │
+│               │         │               │
+│ S3-0 → S3-7   │         │ H2-0 → H2-3   │
+└───────┬───────┘         └───────┬───────┘
+        │                         │
+        └────────────┬────────────┘
+                     ▼
+              ┌─────────────┐
+              │ Integration │
+              │  INT-1,2,3  │
+              └──────┬──────┘
+                     ▼
+              ┌─────────────┐
+              │ Production  │
+              │ PROD-1,2,3  │
+              └─────────────┘
+```
+
+### Testing Strategy
+
+#### Unit Testing
+- Each component tested independently
+- Mock UART for protocol testing
+- Mock WiFi for cloud testing
+
+#### Integration Testing
+- S3 + H2 communication
+- End-to-end pipeline
+- OTA update flow
+
+#### Hardware-in-the-Loop
+- Real ESP32-S3 + ESP32-H2 boards
+- YRM100 RFID module
+- Thread development kit as mock crate
+- WiFi router for network testing
+
+### Build Commands
+
+```bash
+# Build S3 firmware
+cd s3-master
+idf.py set-target esp32s3
+idf.py build
+
+# Build H2 firmware
+cd h2-thread-br
+idf.py set-target esp32h2
+idf.py build
+
+# Flash S3 (direct USB)
+cd s3-master
+idf.py -p /dev/ttyUSB0 flash monitor
+
+# Flash H2 (direct USB, development only)
+cd h2-thread-br
+idf.py -p /dev/ttyUSB1 flash monitor
+
+# Flash H2 via S3 (production)
+python tools/flash_h2_via_s3.py -p /dev/ttyUSB0 h2-thread-br/build/h2-thread-br.bin
+```
 
 ---
 
@@ -1121,38 +939,41 @@ Two YRM100 module variants are supported with different wire colors:
 ### Critical Path
 
 ```
-Phase 0 → Phase 1 → Phase 2 → Phase 3 → Phase 4 → Phase 5
-                                              ↓
-                                        Phase 6 & 7 (parallel)
-                                              ↓
-                                        Phase 8 → Phase 9 → Phase 10
-                                              ↓
-                                        Phase 11 → Phase 12 → Phase 13
+S3-0 → S3-1 → S3-2 → S3-3 → S3-4 → S3-5 → S3-6 → S3-7 → S3-8
+                                                          │
+H2-0 ─────────────► H2-1 ───────► H2-2 ───────► H2-3 ─────┤
+                                                          │
+                                                          ▼
+                                                     INT-1 → INT-2 → INT-3
+                                                                     │
+                                                                     ▼
+                                                           PROD-1 → PROD-2 → PROD-3
 ```
 
 ### Milestones
 
-| Milestone | Phases Complete | Capability |
-|-----------|-----------------|------------|
-| **M1: Hardware Validated** | 0-1 | All peripherals functional |
-| **M2: Now Playing Works** | 2-3 | Tag detection end-to-end |
-| **M3: Cloud Connected** | 4-5 | Events reach Supabase |
-| **M4: Provisionable** | 6-7 | Factory and consumer setup |
-| **M5: Mesh Capable** | 8-10 | Full crate integration |
-| **M6: Release Candidate** | 11-12 | OTA + hardening |
-| **M7: Production** | 13 | Ship it |
+| Milestone | Phases | Capability |
+|-----------|--------|------------|
+| **M1: S3 Hardware** | S3-0, S3-1 | S3 peripherals work |
+| **M2: Now Playing** | S3-2, S3-3 | RFID detection works |
+| **M3: Cloud Connected** | S3-4, S3-5 | Events reach Supabase |
+| **M4: BLE Provisioning** | S3-6 | Consumer setup works |
+| **M5: H2 Thread BR** | H2-0, H2-1, H2-2 | Thread network operational |
+| **M6: Dual-SoC Integration** | S3-7, H2-3, INT-1 | Both chips communicate |
+| **M7: Service Mode** | S3-8 | Factory provisioning works |
+| **M8: Full Pipeline** | INT-2 | Crate → Cloud works |
+| **M9: Production** | INT-3, PROD-* | Ship ready |
 
-### External Dependencies
+### Hardware Requirements
 
-| Dependency | Required By | Notes |
-|------------|-------------|-------|
-| ESP32-C6 dev boards | Phase 0 | For initial development |
-| YRM100 module (SBComponents 3dBi or Generic 2dBi) | Phase 1 | For RFID testing |
-| Supabase project | Phase 5 | Tables and auth configured |
-| Saturday Admin app | Phase 6 | Serial provisioning support |
-| Saturday Mobile app | Phase 7 | BLE provisioning support |
-| Crate hardware/firmware | Phase 10 | For integration testing |
-| Production hardware | Phase 13 | Final hardware revision |
+| Hardware | Required By | Notes |
+|----------|-------------|-------|
+| ESP32-S3-DevKitC-1 | S3-0 | Master development |
+| ESP32-H2-DevKitM-1 | H2-0 | Slave development |
+| YRM100 module | S3-1 | RFID testing |
+| Thread dev kit | INT-2 | Mock crate |
+| WiFi router | S3-4 | Network testing |
+| Logic analyzer | INT-1 | UART debugging |
 
 ---
 
@@ -1160,31 +981,41 @@ Phase 0 → Phase 1 → Phase 2 → Phase 3 → Phase 4 → Phase 5
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| Thread BR stability issues | High | Test extensively, have fallback mode |
-| YRM100 range too large/small | Medium | RF power tuning (15-26 dBm), antenna selection (2-3 dBi) |
-| BLE + Thread coexistence | Medium | Test radio switching, timing |
-| Memory constraints | Medium | Monitor early, optimize as needed |
-| Supabase rate limits | Low | Implement batching and queuing |
+| UART protocol reliability | High | Checksums, retries, health monitoring |
+| H2 firmware update failure | High | Rollback capability, version checking |
+| Thread BR instability | Medium | Dedicated chip, no radio contention |
+| S3-H2 communication latency | Medium | Keep protocol simple, async events |
+| Memory constraints on H2 | Medium | 320KB SRAM, monitor usage |
+| Hardware cost increase | Low | H2 adds ~$2-3 BOM cost |
 
 ---
 
-## Appendix: Test Hardware
+## Appendix: Pin Mapping Summary
 
-### Development Kit Options
+### ESP32-S3 Pin Assignments
 
-| Board | Pros | Cons |
-|-------|------|------|
-| ESP32-C6-DevKitC-1 | Official, well documented | May need adapters for RFID |
-| ESP32-C6-DevKitM-1 | Smaller footprint | Same |
-| Custom breakout | Match production design | Requires PCB fabrication |
+| GPIO | Function | Direction | Notes |
+|------|----------|-----------|-------|
+| 0 | BUTTON | Input | Internal pull-up |
+| 5 | RFID_EN | Output | Active high |
+| 6 | H2_EN | Output | Active high, resets H2 |
+| 7 | H2_BOOT | Output | High=normal, Low=download |
+| 15 | UART2_TX | Output | To H2 RX |
+| 16 | UART2_RX | Input | From H2 TX |
+| 17 | UART1_TX | Output | To RFID RX |
+| 18 | UART1_RX | Input | From RFID TX |
+| 19 | USB_D- | Bidirectional | Native USB |
+| 20 | USB_D+ | Bidirectional | Native USB |
+| 48 | WS2812 | Output | RGB LED |
 
-### Test Equipment
+### ESP32-H2 Pin Assignments
 
-- Logic analyzer (for UART debugging)
-- Known-good RFID tags with Saturday EPCs
-- Second ESP32-C6 board (for Thread testing)
-- Wi-Fi router (for network testing)
-- USB isolator (optional, for ground loop issues)
+| GPIO | Function | Direction | Notes |
+|------|----------|-----------|-------|
+| 4 | BOOT_MODE | Input | Boot strapping |
+| 5 | STATUS_LED | Output | Optional |
+| 23 | UART0_RX | Input | From S3 TX |
+| 24 | UART0_TX | Output | To S3 RX |
 
 ---
 

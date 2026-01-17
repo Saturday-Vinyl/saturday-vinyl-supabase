@@ -1,8 +1,8 @@
 # Saturday Vinyl Hub - Wiring Reference
 
-**Document Version:** 1.6.0
-**Hardware Revision:** Dev Kit (ESP32-C6-DevKitC-1 + YRM100)
-**Last Updated:** 2025-01-XX
+**Document Version:** 2.0.0
+**Hardware Revision:** Dev Kit (ESP32-S3-DevKitC-1 + ESP32-H2-DevKitM-1 + YRM100)
+**Last Updated:** 2026-01-16
 
 > **Note:** This document provides a quick wiring reference for test harness assembly.
 > For the authoritative schematic, see `hub_schematic.sch` (Fusion/EAGLE format).
@@ -11,76 +11,134 @@
 
 ## Overview
 
-The Saturday Hub test harness connects an ESP32-C6 development board to:
-- **YRM100** - UHF RFID module for "Now Playing" detection
-- **RGB LED** - Status indication (onboard WS2812 addressable LED)
-- **Button** - User input (factory reset, provisioning mode)
-- **USB-C** - Power and debug console
+The Saturday Hub uses a **dual-SoC architecture** to solve WiFi/Thread radio coexistence:
+
+| SoC | Role | Responsibilities |
+|-----|------|------------------|
+| **ESP32-S3** | Master MCU | WiFi, BLE provisioning, RFID, cloud sync, USB service mode, UI |
+| **ESP32-H2** | Thread Co-processor | Thread Border Router, CoAP server for crate communication |
+
+The two SoCs communicate via UART. The S3 controls the H2's power and boot mode.
 
 ---
 
 ## System Block Diagram
 
 ```
-                              ┌─────────────────────────────────────┐
-                              │         Saturday Vinyl Hub          │
-                              │           (ESP32-C6)                │
-┌─────────────┐               │                                     │
-│   USB-C     │───── 5V ──┬──►│ Power (via onboard regulator)       │
-│  Connector  │           │   │                                     │
-│             │◄──── D+/D-┼──►│ GPIO12/13 (USB)                     │
-└─────────────┘           │   │                                     │
-                          │   │                                     │
-┌─────────────┐           │   │                                     │
-│   YRM100    │◄── 5V ────┘   │                                     │
-│    RFID     │◄──── TX ─────►│ GPIO4 (UART1_RX)                    │
-│   Module    │◄──── RX ─────►│ GPIO5 (UART1_TX)                    │
-│             │◄──── EN ─────►│ GPIO6 (Enable)                      │
-└─────────────┘               │                                     │
-                              │                                     │
-┌─────────────┐               │                                     │
-│  WS2812     │◄── Data ─────►│ GPIO8 (RMT)  [Onboard LED]          │
-│  RGB LED    │               │                                     │
-└─────────────┘               │                                     │
-                              │                                     │
-┌─────────────┐               │                                     │
-│   Button    │◄─────────────►│ GPIO18 (Input, internal pull-up)    │
-└─────────────┘               │                                     │
-                              └─────────────────────────────────────┘
+                                    ┌─────────────────────────────────────────────────────────┐
+                                    │                  Saturday Vinyl Hub                      │
+                                    │                                                          │
+┌─────────────┐                     │  ┌───────────────────────────────────────────────────┐  │
+│   USB-C     │───── 5V ──────┬────►│  │              ESP32-S3 (Master)                    │  │
+│  Connector  │               │     │  │                                                   │  │
+│   (S3)      │◄──── USB ────►│     │  │  WiFi 2.4GHz │ BLE 5.0 │ USB Service Mode        │  │
+└─────────────┘               │     │  │                                                   │  │
+                              │     │  │  GPIO0  ◄──── BOOT Button (active low)            │  │
+┌─────────────┐               │     │  │  GPIO5  ────► RFID Enable (active high)           │  │
+│   YRM100    │◄──── 5V ──────┘     │  │  GPIO6  ────► H2 Enable/Reset (active low)        │  │
+│    RFID     │◄──── TX ───────────►│  │  GPIO7  ────► H2 Boot Mode                        │  │
+│   Module    │◄──── RX ───────────►│  │  GPIO15 ────► H2 RX (UART2 TX)                    │  │
+│             │◄──── EN ───────────►│  │  GPIO16 ◄──── H2 TX (UART2 RX)                    │  │
+└─────────────┘                     │  │  GPIO17 ────► RFID RX (UART1 TX)                  │  │
+                                    │  │  GPIO18 ◄──── RFID TX (UART1 RX)                  │  │
+┌─────────────┐                     │  │  GPIO48 ────► WS2812 RGB LED (onboard)            │  │
+│  WS2812     │◄── Onboard ────────►│  │                                                   │  │
+│  RGB LED    │     (GPIO48)        │  └───────────────────────────────────────────────────┘  │
+└─────────────┘                     │                            │                            │
+                                    │                      UART  │                            │
+                                    │                            ▼                            │
+                                    │  ┌───────────────────────────────────────────────────┐  │
+                                    │  │              ESP32-H2 (Thread BR)                  │  │
+                                    │  │                                                   │  │
+                                    │  │  Thread 802.15.4 │ CoAP Server                    │  │
+                                    │  │                                                   │  │
+                                    │  │  GPIO23 ◄──── S3 TX (UART0 RX)                    │  │
+                                    │  │  GPIO24 ────► S3 RX (UART0 TX)                    │  │
+                                    │  │  GPIO4  ◄──── Boot Mode (from S3 GPIO7)           │  │
+                                    │  │  EN     ◄──── Reset (from S3 GPIO6)               │  │
+                                    │  │                                                   │  │
+                                    │  └───────────────────────────────────────────────────┘  │
+                                    │                                                          │
+                                    └──────────────────────────────────────────────────────────┘
 ```
 
-> **Important:** The YRM100 is powered from the USB 5V rail directly, NOT from the
-> ESP32-C6's 3.3V regulator. This ensures adequate current for RF transmission
-> (up to 260mA peak) and meets the module's 3.5V minimum voltage requirement.
-
-> **LED Note:** The ESP32-C6-DevKitC-1 includes an onboard WS2812 addressable RGB LED
-> connected to GPIO8. No external LED wiring is required for the dev kit.
+> **Architecture Note:** The dual-SoC design was chosen because ESP32-C6 cannot run WiFi
+> and Thread 802.15.4 simultaneously (shared radio). The S3 handles WiFi/BLE while the
+> H2 provides dedicated Thread support.
 
 ---
 
-## ESP32-C6 Pin Assignments
+## ESP32-S3 Pin Assignments (Master)
 
-| GPIO | Function     | Direction | Connect To              | Notes                          |
-|------|--------------|-----------|-------------------------|--------------------------------|
-| 0    | UART0_TX     | Output    | USB-C (debug)           | Debug console TX               |
-| 1    | UART0_RX     | Input     | USB-C (debug)           | Debug console RX               |
-| 4    | UART1_RX     | Input     | YRM100 Pin 4 (TXD)      | Hub receives from RFID module  |
-| 5    | UART1_TX     | Output    | YRM100 Pin 3 (RXD)      | Hub transmits to RFID module   |
-| 6    | RFID_EN      | Output    | YRM100 Pin 2 (EN)       | Active HIGH to enable module   |
-| 8    | RMT_DATA     | Output    | Onboard WS2812          | Addressable RGB LED data line  |
-| 12   | USB_D-       | Bidir     | USB-C connector         | USB data minus                 |
-| 13   | USB_D+       | Bidir     | USB-C connector         | USB data plus                  |
-| 18   | BUTTON       | Input     | Momentary switch to GND | Active LOW, internal pull-up   |
+| GPIO | Function      | Direction | Connect To              | Notes                          |
+|------|---------------|-----------|-------------------------|--------------------------------|
+| 0    | BUTTON        | Input     | BOOT button             | Active LOW, internal pull-up   |
+| 5    | RFID_EN       | Output    | YRM100 Pin 2 (EN)       | Active HIGH to enable module   |
+| 6    | H2_EN         | Output    | H2 EN pin               | Active LOW reset               |
+| 7    | H2_BOOT       | Output    | H2 GPIO4                | Boot mode select               |
+| 15   | UART2_TX      | Output    | H2 GPIO23 (RX)          | S3 → H2 commands               |
+| 16   | UART2_RX      | Input     | H2 GPIO24 (TX)          | H2 → S3 responses              |
+| 17   | UART1_TX      | Output    | YRM100 Pin 3 (RXD)      | RFID commands                  |
+| 18   | UART1_RX      | Input     | YRM100 Pin 4 (TXD)      | RFID responses                 |
+| 19   | USB_D-        | Bidir     | USB-C connector         | Native USB data minus          |
+| 20   | USB_D+        | Bidir     | USB-C connector         | Native USB data plus           |
+| 48   | LED_DATA      | Output    | Onboard WS2812          | Addressable RGB LED            |
 
-> **Note:** GPIO8 is a strapping pin but the DevKit's onboard circuit handles this.
-> GPIO9 and GPIO10 are now available for future expansion.
+> **Note:** GPIO48 on ESP32-S3-DevKitC-1 has an onboard WS2812 RGB LED.
+> The BOOT button is on GPIO0.
+
+---
+
+## ESP32-H2 Pin Assignments (Thread Co-processor)
+
+| GPIO | Function      | Direction | Connect To              | Notes                          |
+|------|---------------|-----------|-------------------------|--------------------------------|
+| 4    | BOOT_MODE     | Input     | S3 GPIO7                | Boot mode select (from S3)     |
+| 23   | UART0_RX      | Input     | S3 GPIO15 (TX)          | Commands from S3               |
+| 24   | UART0_TX      | Output    | S3 GPIO16 (RX)          | Responses to S3                |
+| EN   | CHIP_EN       | Input     | S3 GPIO6                | Active LOW reset               |
+
+> **Note:** The H2's UART0 is used for S3 communication. USB is available for
+> debugging/flashing during development but not used in production.
+
+---
+
+## S3 ↔ H2 Interconnect
+
+```
+    ESP32-S3                                ESP32-H2
+    ────────                                ────────
+    GPIO6  (H2_EN)    ──────────────────►   EN (Chip Enable)
+    GPIO7  (H2_BOOT)  ──────────────────►   GPIO4 (Boot Mode)
+    GPIO15 (UART2_TX) ──────────────────►   GPIO23 (UART0_RX)
+    GPIO16 (UART2_RX) ◄──────────────────   GPIO24 (UART0_TX)
+    GND               ──────────────────    GND
+    3V3               ──────────────────►   3V3 (or from separate regulator)
+```
+
+### UART Configuration (S3 ↔ H2)
+
+| Parameter  | Value   |
+|------------|---------|
+| Baud Rate  | 115200  |
+| Data Bits  | 8       |
+| Parity     | None    |
+| Stop Bits  | 1       |
+| Flow Ctrl  | None    |
+
+### H2 Boot Control
+
+| S3 GPIO6 (EN) | S3 GPIO7 (BOOT) | H2 Mode           |
+|---------------|-----------------|-------------------|
+| LOW           | X               | Reset (held)      |
+| HIGH          | LOW             | Normal boot       |
+| HIGH          | HIGH            | Download mode     |
 
 ---
 
 ## YRM100 RFID Module Wiring
 
-The YRM100 is a UHF RFID module using the M100 protocol. Two compatible module variants
-are supported, with different wire color schemes.
+The YRM100 is a UHF RFID module using the M100 protocol.
 
 ### Pinout
 
@@ -103,43 +161,26 @@ are supported, with different wire color schemes.
 | **YRM100 (SBComponents)** | SBComponents | 3 dBi | Larger antenna, original module |
 | **YRM100 (Generic)** | AliExpress generic | 2 dBi | Smaller antenna, compact form factor |
 
-Both modules share identical electrical specifications and protocol:
+Both modules share identical electrical specifications:
 - Working voltage: DC 3.5V - 5V
 - Output power range: 15-26 dBm (**minimum 15 dBm**)
 - Baud rate: 115200 BPS (default)
 - Air interface: EPCglobal UHF Class 1 Gen 2 / ISO 18000-6C
-- Working spectrum: 840-960 MHz
 
-### Connection Tables
+### Connection Table (ESP32-S3)
 
-#### YRM100 (SBComponents) - 3 dBi Antenna
+| YRM100 Pin | Name | Connect To        | Wire Color (SBC) | Wire Color (Generic) |
+|------------|------|-------------------|------------------|----------------------|
+| 1          | GND  | Common GND        | Black            | Blue                 |
+| 2          | EN   | ESP32-S3 GPIO5    | Green            | Green                |
+| 3          | RXD  | ESP32-S3 GPIO17   | Orange           | Yellow               |
+| 4          | TXD  | ESP32-S3 GPIO18   | Yellow           | Black                |
+| 5          | VCC  | USB 5V rail       | Red              | Red                  |
 
-| YRM100 Pin | Name | Connect To        | Wire Color |
-|------------|------|-------------------|------------|
-| 1          | GND  | Common GND        | Black      |
-| 2          | EN   | ESP32-C6 GPIO6    | Green      |
-| 3          | RXD  | ESP32-C6 GPIO5    | Orange     |
-| 4          | TXD  | ESP32-C6 GPIO4    | Yellow     |
-| 5          | VCC  | USB 5V rail       | Red        |
+> **Important:** The YRM100 VCC must be connected to **5V** (from USB), not 3.3V.
+> The module requires 3.5-5V and draws up to 260mA peak during RF transmission.
 
-#### YRM100 (Generic/AliExpress) - 2 dBi Antenna
-
-| YRM100 Pin | Name | Connect To        | Wire Color |
-|------------|------|-------------------|------------|
-| 1          | GND  | Common GND        | Blue       |
-| 2          | EN   | ESP32-C6 GPIO6    | Green      |
-| 3          | RXD  | ESP32-C6 GPIO5    | Yellow     |
-| 4          | TXD  | ESP32-C6 GPIO4    | Black      |
-| 5          | VCC  | USB 5V rail       | Red        |
-
-> **Note:** The YRM100 VCC (Pin 5) must be connected to the 5V rail (from USB), not the
-> ESP32-C6's 3V3 output. The module requires 3.5-5V and draws up to 260mA
-> peak during RF transmission. EN (Pin 2) requires >1.5V to enable the module.
->
-> **Important:** The minimum RF power for YRM100 modules is **15 dBm**. Setting lower values
-> will be accepted but the module silently uses 15 dBm.
-
-### UART Configuration
+### UART Configuration (RFID)
 
 | Parameter  | Value   |
 |------------|---------|
@@ -152,77 +193,38 @@ Both modules share identical electrical specifications and protocol:
 
 ## RGB LED (Onboard WS2812)
 
-The ESP32-C6-DevKitC-1 includes an onboard WS2812 (NeoPixel-compatible) addressable RGB LED.
-**No external wiring is required** for the development kit.
+The ESP32-S3-DevKitC-1 includes an onboard WS2812 addressable RGB LED on **GPIO48**.
+**No external wiring is required.**
 
 ### Specifications
 
 | Parameter       | Value                                    |
 |-----------------|------------------------------------------|
 | Type            | WS2812 (addressable RGB)                 |
-| GPIO            | 8                                        |
+| GPIO            | 48                                       |
 | Protocol        | Single-wire, 800 kHz                     |
 | Driver          | ESP-IDF RMT peripheral + `led_strip`     |
 | LED Count       | 1                                        |
-| Package         | 5050 (5mm x 5mm)                         |
 
-### Schematic (Onboard - DevKit Reference)
+### LED Status Indicators
 
-```
-                    3.3V
-                      │
-              ┌───────┴───────┐
-              │    WS2812     │
-              │   ┌───────┐   │
-              │   │ LED   │   │
-              │   │ Die   │   │
-              │   └───────┘   │
-              │               │
-              │  VDD  DIN DOUT│
-              └───┬────┬────┬─┘
-                  │    │    │
-                 3.3V  │    NC (not connected on single LED)
-                       │
-    ESP32-C6 GPIO8 ────┘
-         (RMT)
-
-    Note: DevKit includes required pull resistors on GPIO8 for strapping
-```
-
-### Firmware Usage
-
-```c
-#include "led_strip.h"
-
-// Initialize
-led_strip_handle_t led_strip;
-led_strip_config_t strip_config = {
-    .strip_gpio_num = 8,
-    .max_leds = 1,
-};
-led_strip_rmt_config_t rmt_config = {
-    .resolution_hz = 10 * 1000 * 1000,  // 10 MHz
-};
-led_strip_new_rmt_device(&strip_config, &rmt_config, &led_strip);
-
-// Set color (R, G, B values 0-255)
-led_strip_set_pixel(led_strip, 0, 255, 0, 0);  // Red
-led_strip_refresh(led_strip);
-
-// Turn off
-led_strip_clear(led_strip);
-```
-
-### Production Considerations
-
-For production PCBs using the ESP32-C6-WROOM module:
-- Add a WS2812B-V5 or SK6812 LED connected to GPIO8
-- Follow Espressif's reference design for GPIO8 strapping resistors (R6: 3.3kΩ, R29: 10kΩ)
-- Consider light pipe routing for enclosure visibility
+| Color | Pattern | Meaning |
+|-------|---------|---------|
+| White | Pulse | Service mode (awaiting provisioning) |
+| Blue | Slow blink | BLE advertising |
+| Blue | Solid | BLE connected |
+| Blue | Fast blink | Connecting to WiFi |
+| Cyan | Flash | WiFi connected |
+| Green | Pulse | Normal operation (WiFi connected) |
+| Yellow | Slow blink | WiFi disconnected |
+| Red | Fast blink | Error / Factory reset |
 
 ---
 
 ## Button Wiring
+
+The ESP32-S3-DevKitC-1 has a **BOOT button on GPIO0**. For production, an external
+button can be wired the same way.
 
 ### Schematic
 
@@ -230,10 +232,10 @@ For production PCBs using the ESP32-C6-WROOM module:
                            3.3V
                              │
                         ┌────┴────┐
-                        │  10kΩ   │  (Optional - ESP32-C6 has internal pull-up)
+                        │  10kΩ   │  (Optional - ESP32-S3 has internal pull-up)
                         └────┬────┘
                              │
-                             ├──────────────────► ESP32-C6 GPIO18 (BUTTON)
+                             ├──────────────────► ESP32-S3 GPIO0 (BUTTON)
                              │
                           ┌──┴──┐
                           │     │
@@ -244,37 +246,26 @@ For production PCBs using the ESP32-C6-WROOM module:
                             GND
 ```
 
-### Configuration
-
-| Parameter       | Value                    |
-|-----------------|--------------------------|
-| GPIO Mode       | Input                    |
-| Pull-up         | Internal (enabled)       |
-| Active State    | LOW (pressed = 0)        |
-| Debounce Time   | 50ms (software)          |
-
-### Button Actions (Firmware)
+### Button Actions
 
 | Press Duration | Action                |
 |----------------|-----------------------|
-| < 500ms        | Short press (future)  |
+| < 500ms        | Short press (confirm) |
 | 3-5 seconds    | Enter BLE provisioning|
 | > 10 seconds   | Factory reset         |
 
 ---
 
-## Power
-
-### Power Distribution
+## Power Distribution
 
 ```
-                                    USB-C 5V Input
+                                    USB-C 5V Input (S3 DevKit)
                                           │
                           ┌───────────────┼───────────────┐
                           │               │               │
                           ▼               ▼               │
                     ┌───────────┐   ┌───────────┐        │
-                    │  ESP32-C6 │   │  YRM100   │        │
+                    │  ESP32-S3 │   │  YRM100   │        │
                     │  Onboard  │   │  (direct) │        │
                     │    LDO    │   │           │        │
                     └─────┬─────┘   └───────────┘        │
@@ -289,131 +280,131 @@ For production PCBs using the ESP32-C6-WROOM module:
           │               │               │              │
           ▼               ▼               ▼              │
     ┌───────────┐   ┌───────────┐   ┌───────────┐       │
-    │  ESP32-C6 │   │  WS2812   │   │  Button   │       │
-    │   (MCU)   │   │ (onboard) │   │ (pullup)  │       │
+    │  ESP32-S3 │   │  WS2812   │   │  ESP32-H2 │       │
+    │   (MCU)   │   │ (onboard) │   │  (3V3 in) │       │
     └───────────┘   └───────────┘   └───────────┘       │
                                                          │
                                     Common GND ◄─────────┘
 ```
 
-### Requirements
-
-| Rail        | Voltage | Current (typical) | Current (max) | Source            |
-|-------------|---------|-------------------|---------------|-------------------|
-| USB Input   | 5V      | 350mA             | 500mA         | USB-C connector   |
-| System (3V3)| 3.3V    | 100mA             | 200mA         | ESP32-C6 onboard LDO |
-
 ### Power Budget
 
-| Component     | Rail | Current (typical) | Current (peak) | Notes                    |
-|---------------|------|-------------------|----------------|--------------------------|
-| ESP32-C6      | 3.3V | 80mA              | 150mA          | Via onboard LDO          |
-| YRM100 (idle) | 5V   | 30mA              | 30mA           | Direct from USB 5V       |
-| YRM100 (TX)   | 5V   | 200mA             | 260mA          | At 26 dBm output         |
-| WS2812 LED    | 3.3V | 1mA               | 60mA           | Onboard, max ~20mA/color |
-| **Total 3.3V**|      | **~81mA**         | **~210mA**     | Well within LDO capacity |
-| **Total 5V**  |      | **~310mA**        | **~420mA**     | Within USB 500mA limit   |
+| Component       | Rail | Current (typical) | Current (peak) | Notes                    |
+|-----------------|------|-------------------|----------------|--------------------------|
+| ESP32-S3        | 3.3V | 100mA             | 350mA          | WiFi + BLE active        |
+| ESP32-H2        | 3.3V | 25mA              | 80mA           | Thread active            |
+| YRM100 (idle)   | 5V   | 30mA              | 30mA           | Direct from USB 5V       |
+| YRM100 (TX)     | 5V   | 200mA             | 260mA          | At 26 dBm output         |
+| WS2812 LED      | 3.3V | 1mA               | 60mA           | Onboard, max ~20mA/color |
+| **Total 3.3V**  |      | **~126mA**        | **~490mA**     | Within LDO capacity      |
+| **Total 5V**    |      | **~330mA**        | **~650mA**     | Need good USB source     |
 
-> **Note:** A quality USB-C cable and 500mA+ source is required. The YRM100 draws
-> significant current during RF transmission.
-
----
-
-## Test Points
-
-For debugging and validation, expose these signals:
-
-| Test Point | Signal      | Purpose                      |
-|------------|-------------|------------------------------|
-| TP1        | UART1_TX    | Scope RFID commands          |
-| TP2        | UART1_RX    | Scope RFID responses         |
-| TP3        | RFID_EN     | Verify enable signal         |
-| TP4        | 5V          | Verify USB power rail        |
-| TP5        | 3V3         | Verify regulated rail        |
-| TP6        | GND         | Ground reference             |
+> **Note:** A quality USB-C cable and 1A+ source is recommended. For development with
+> both DevKits, each can be powered from separate USB ports.
 
 ---
 
-## Breadboard Layout (Suggested)
+## Development Wiring (Two DevKits)
+
+For development, use two separate DevKits connected via jumper wires:
 
 ```
-    USB-C
-      │
-      │ 5V ─────────────────────────────────────┐
-      │                                         │
-┌─────┴─────┐                                   │
-│           │                                   │
-│  ESP32-C6 │                                   │
-│  DevKit   │                                   │
-│           │                                   │
-│  [  ] [ ] │◄─── GPIO4 (UART1_RX) ──────────►  │  YRM100 TX
-│  [  ] [ ] │◄─── GPIO5 (UART1_TX) ──────────►  │  YRM100 RX
-│  [  ] [ ] │◄─── GPIO6 (RFID_EN) ───────────►  │  YRM100 EN
-│  [  ] [ ] │                                   │
-│  [  ] [ ] │     GPIO8 ──► Onboard WS2812 LED (no wiring needed)
-│  [  ] [ ] │                                   │
-│  [  ] [ ] │◄─── GPIO18 (BUTTON) ───────────► Button ──► GND
-│  [  ] [ ] │                                   │
-│  5V   GND │──┬────────────────────────────────┘
-│  3V3      │  │                          ┌───────────────┐
-│           │  │                          │    YRM100     │
-└───────────┘  │                          │ 1  2  3  4  5 │
-               │                          │GND EN RX TX VCC│
-               │                          └─┬──────────┬─┘
-               │                            │          │
-               └── GND ─────────────────────┘          │
-                   5V ─────────────────────────────────┘
+    ESP32-S3-DevKitC-1                    ESP32-H2-DevKitM-1
+    ══════════════════                    ══════════════════
+
+    USB-C ◄─── Power + Flash/Monitor      USB-C ◄─── Power + Flash/Monitor
+
+    GPIO6  ─────────────────────────────► EN pin
+    GPIO7  ─────────────────────────────► GPIO4
+    GPIO15 ─────────────────────────────► GPIO23
+    GPIO16 ◄───────────────────────────── GPIO24
+    GND    ─────────────────────────────► GND
+
+
+    GPIO5  ──────┐
+    GPIO17 ──────┼───────────► YRM100 Module
+    GPIO18 ◄─────┤              (5V from S3 DevKit 5V pin)
+    5V     ──────┤
+    GND    ──────┘
 ```
 
-> **Wiring Notes:**
-> - YRM100 VCC (Pin 5) connects to the **5V pin** on the ESP32-C6 DevKit
-> - YRM100 GND (Pin 1) connects to **common GND**
-> - YRM100 EN (Pin 2) connects to GPIO6 (active HIGH, >1.5V to enable)
-> - All signal lines (RXD, TXD, EN) are 3.3V logic and connect directly to ESP32-C6 GPIOs
-> - **RGB LED uses onboard WS2812** - no external LED wiring required
+### Breadboard Layout
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                            Breadboard                                    │
+│                                                                          │
+│  ┌──────────────────┐              ┌──────────────────┐                 │
+│  │   ESP32-S3       │              │    ESP32-H2      │                 │
+│  │   DevKitC-1      │              │    DevKitM-1     │                 │
+│  │                  │              │                  │                 │
+│  │  USB-C (power)   │              │  USB-C (power)   │                 │
+│  │                  │              │                  │                 │
+│  │  GPIO6  ─────────┼──────────────┼─► EN             │                 │
+│  │  GPIO7  ─────────┼──────────────┼─► GPIO4          │                 │
+│  │  GPIO15 ─────────┼──────────────┼─► GPIO23         │                 │
+│  │  GPIO16 ◄────────┼──────────────┼── GPIO24         │                 │
+│  │  GND    ─────────┼──────────────┼── GND            │                 │
+│  │                  │              │                  │                 │
+│  │  GPIO5  ───┐     │              └──────────────────┘                 │
+│  │  GPIO17 ───┼─────┼──────► YRM100                                     │
+│  │  GPIO18 ◄──┤     │        ┌───────────────┐                          │
+│  │  5V     ───┼─────┼───────►│ 1  2  3  4  5 │                          │
+│  │  GND    ───┴─────┼───────►│GND EN RX TX VCC                          │
+│  │                  │        └───────────────┘                          │
+│  └──────────────────┘                                                    │
+│                                                                          │
+└──────────────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
 ## Bill of Materials (Test Harness)
 
-| Qty | Component              | Part Number / Value      | Notes                     |
-|-----|------------------------|--------------------------|---------------------------|
-| 1   | ESP32-C6 Dev Board     | ESP32-C6-DevKitC-1       | Includes onboard WS2812   |
-| 1   | YRM100 RFID Module     | YRM100 (SBComponents 3dBi or Generic 2dBi) | With antenna |
-| 1   | Momentary Push Button  | 6mm tactile switch       | Normally open             |
-| 1   | Breadboard             | Half-size or full-size   | For prototyping           |
-| 1   | USB-C Cable            | Data-capable             | Power and programming     |
-| 6   | Jumper Wires           | Male-to-male             | Various colors            |
-| 1   | RFID Test Tag          | UHF EPC Gen2             | Saturday prefix: 5356...  |
-
-> **Note:** No external RGB LED or resistors needed - using the onboard WS2812.
+| Qty | Component              | Part Number / Value           | Notes                     |
+|-----|------------------------|-------------------------------|---------------------------|
+| 1   | ESP32-S3 Dev Board     | ESP32-S3-DevKitC-1-N8R8       | 8MB Flash, 8MB PSRAM, onboard WS2812 |
+| 1   | ESP32-H2 Dev Board     | ESP32-H2-DevKitM-1            | Thread/802.15.4 support   |
+| 1   | YRM100 RFID Module     | YRM100 (SBC 3dBi or Generic 2dBi) | With antenna          |
+| 1   | Breadboard             | Half-size or full-size        | For prototyping           |
+| 2   | USB-C Cables           | Data-capable                  | Power and programming     |
+| 10  | Jumper Wires           | Male-to-male                  | Various colors            |
+| 1   | RFID Test Tag          | UHF EPC Gen2                  | Saturday prefix: 5356...  |
 
 ---
 
 ## Troubleshooting
 
-### No Serial Output
+### No Serial Output (S3)
 - Check USB cable supports data (not charge-only)
 - Verify correct COM port selected
-- Try different USB port
+- Try the UART USB port (not the native USB port) for flash/monitor
+
+### No Serial Output (H2)
+- Flash via H2's own USB port for initial programming
+- After integration, H2 UART is used for S3 communication
+- Check S3 GPIO6 is HIGH (H2 not held in reset)
 
 ### RFID Not Responding
-- Verify RFID_EN (GPIO6) is HIGH
-- Check UART wiring (TX↔RX crossover)
+- Verify RFID_EN (S3 GPIO5) is HIGH
+- Check UART wiring (TX↔RX crossover: S3 GPIO17 → YRM100 RXD)
 - Confirm 5V power to YRM100 (not 3.3V!)
 - Check baud rate is 115200
-- Measure current draw - should be ~30mA idle, ~200mA during TX
 
-### LED Not Working (Onboard WS2812)
-- Verify using correct GPIO (GPIO8)
-- Check that `led_strip` component is enabled in menuconfig
-- Ensure RMT peripheral is not conflicting with other uses
-- Try basic test: set full red (255, 0, 0) and call `led_strip_refresh()`
-- Check DevKit board revision (WS2812 circuit varies slightly)
+### H2 Not Responding to S3
+- Check UART crossover: S3 GPIO15 → H2 GPIO23, S3 GPIO16 ← H2 GPIO24
+- Verify S3 GPIO6 is HIGH (H2 not held in reset)
+- Verify S3 GPIO7 is LOW (normal boot, not download mode)
+- Check common GND connection
+
+### LED Not Working (S3 Onboard WS2812)
+- Verify using correct GPIO (GPIO48)
+- Check that `led_strip` component is enabled
+- Ensure RMT peripheral is not conflicting
 
 ### Button Not Detected
 - Verify internal pull-up is enabled in code
-- Check button connects GPIO18 to GND when pressed
+- On DevKitC-1, use the BOOT button (GPIO0)
 - Test with multimeter in continuity mode
 
 ---
@@ -422,13 +413,9 @@ For debugging and validation, expose these signals:
 
 | Version | Date       | Author | Changes                                      |
 |---------|------------|--------|----------------------------------------------|
-| 1.0.0   | 2025-01-XX | -      | Initial version                              |
-| 1.1.0   | 2025-01-XX | -      | Changed YRM100 power from 3.3V to 5V rail    |
-| 1.2.0   | 2025-01-XX | -      | Switched to onboard WS2812 LED (GPIO8)       |
-| 1.3.0   | 2025-01-XX | -      | Fixed UART pin assignments (GPIO4=RX, GPIO5=TX) |
-| 1.4.0   | 2025-01-XX | -      | Fixed USB pin assignments (GPIO12=D-, GPIO13=D+) |
-| 1.5.0   | 2025-01-XX | -      | Fixed YRM100 pinout per manufacturer specs       |
-| 1.6.0   | 2026-01-XX | -      | Added support for two YRM100 module variants (SBComponents 3dBi, Generic 2dBi) |
+| 1.0.0   | 2025-01-XX | -      | Initial version (ESP32-C6 single-SoC)        |
+| 1.6.0   | 2026-01-XX | -      | Added YRM100 module variants                 |
+| 2.0.0   | 2026-01-16 | -      | **Major revision: Dual-SoC architecture (ESP32-S3 + ESP32-H2)** |
 
 ---
 

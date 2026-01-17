@@ -1,7 +1,7 @@
 # Saturday Service Mode Protocol
 
-**Version:** 2.1.0
-**Last Updated:** 2026-01-05
+**Version:** 2.2.0
+**Last Updated:** 2026-01-14
 **Audience:** Saturday Admin App developers, Firmware engineers
 
 ---
@@ -153,6 +153,9 @@ All commands are documented here. Devices only respond to commands they support.
 | `test_rfid` | Test RFID tag scanning | Devices with RFID |
 | `test_audio` | Test audio output | Devices with audio |
 | `test_display` | Test display output | Devices with display |
+| `test_led` | Test LED strip output | Devices with addressable LEDs |
+| `test_motion` | Test motion sensor input | Devices with accelerometer |
+| `test_environment` | Test temperature/humidity sensor | Devices with environmental sensor |
 | `test_button` | Test button input | Devices with buttons |
 | `test_all` | Run all supported tests | All devices |
 
@@ -713,6 +716,171 @@ Test display output by showing a test pattern.
 
 ---
 
+### test_led
+
+Test addressable LED strip functionality by cycling through colors.
+
+**Support:** Devices with addressable LED capability
+
+**Request:**
+```json
+{"cmd": "test_led"}
+```
+
+The device cycles through a color sequence (red, green, blue, white) on the LED strip to verify all LEDs are functioning.
+
+**Response (Success):**
+```json
+{
+  "status": "ok",
+  "message": "LED test complete",
+  "data": {
+    "led_count": 8,
+    "type": "SK6812"
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `led_count` | number | Number of LEDs in the strip |
+| `type` | string | LED type (e.g., "SK6812", "WS2812B") |
+
+**Response (Error):**
+```json
+{
+  "status": "error",
+  "message": "LED strip not responding",
+  "data": {"error_code": "led_comm_failed"}
+}
+```
+
+---
+
+### test_motion
+
+Test motion sensor (accelerometer) by waiting for movement detection.
+
+**Support:** Devices with accelerometer/motion sensor capability
+
+**Request:**
+```json
+{"cmd": "test_motion"}
+```
+
+The device waits for the accelerometer to detect motion (with timeout). The technician should physically move or tilt the device to trigger the sensor.
+
+**Response (Success):**
+```json
+{
+  "status": "ok",
+  "message": "Motion detected",
+  "data": {
+    "sensor_type": "LIS2DH12",
+    "triggered": true,
+    "wait_time_ms": 1250
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `sensor_type` | string | Accelerometer model (e.g., "LIS2DH12") |
+| `triggered` | boolean | Whether motion was detected |
+| `wait_time_ms` | number | Time waited before motion was detected |
+
+**Response (Timeout):**
+```json
+{
+  "status": "error",
+  "message": "No motion detected within timeout",
+  "data": {"error_code": "motion_timeout"}
+}
+```
+
+**Response (Sensor Error):**
+```json
+{
+  "status": "error",
+  "message": "Motion sensor not responding",
+  "data": {"error_code": "motion_comm_failed"}
+}
+```
+
+**Timeout:** Default 30 seconds. Technician should move the device during this window.
+
+---
+
+### test_environment
+
+Test temperature and humidity sensor by reading current environmental conditions.
+
+**Support:** Devices with environmental sensor capability
+
+**Request:**
+```json
+{"cmd": "test_environment"}
+```
+
+The device reads the current temperature and humidity from the sensor.
+
+**Response (Success):**
+```json
+{
+  "status": "ok",
+  "message": "Environment sensor test complete",
+  "data": {
+    "sensor_type": "SHT40",
+    "temperature_c": 21.5,
+    "temperature_f": 70.7,
+    "humidity_pct": 48.2,
+    "in_safe_range": true
+  }
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `sensor_type` | string | Sensor model (e.g., "SHT40", "SHT31") |
+| `temperature_c` | number | Temperature in Celsius |
+| `temperature_f` | number | Temperature in Fahrenheit |
+| `humidity_pct` | number | Relative humidity percentage |
+| `in_safe_range` | boolean | Whether conditions are safe for vinyl storage |
+
+**Response (Warning - Outside Safe Range):**
+```json
+{
+  "status": "ok",
+  "message": "Environment sensor working - conditions outside safe range",
+  "data": {
+    "sensor_type": "SHT40",
+    "temperature_c": 28.5,
+    "temperature_f": 83.3,
+    "humidity_pct": 65.0,
+    "in_safe_range": false,
+    "warnings": ["temperature_high", "humidity_high"]
+  }
+}
+```
+
+**Response (Sensor Error):**
+```json
+{
+  "status": "error",
+  "message": "Environment sensor not responding",
+  "data": {"error_code": "environment_comm_failed"}
+}
+```
+
+**Safe Range Reference:**
+
+| Condition | Safe Range | Warning Threshold |
+|-----------|------------|-------------------|
+| Temperature | 18-21°C (65-70°F) | >24°C (75°F) or <15°C (60°F) |
+| Humidity | 45-50% RH | >60% RH or <30% RH |
+
+---
+
 ### test_button
 
 Test button input by waiting for button press.
@@ -993,6 +1161,9 @@ Each device firmware must define a **Service Mode Manifest** - a machine-readabl
 | `rfid` | Device has RFID reader |
 | `audio` | Device has audio output |
 | `display` | Device has visual display |
+| `led` | Device has addressable LED strip |
+| `motion` | Device has accelerometer/motion sensor |
+| `environment` | Device has temperature/humidity sensor |
 | `battery` | Device is battery-powered |
 | `button` | Device has physical button(s) |
 
@@ -1246,6 +1417,10 @@ static void handle_get_manifest(void)
 | `rfid_comm_failed` | RFID module communication failed |
 | `audio_failed` | Audio test failed |
 | `button_timeout` | Button press not detected within timeout |
+| `led_comm_failed` | LED strip communication failed |
+| `motion_timeout` | Motion not detected within timeout |
+| `motion_comm_failed` | Motion sensor communication failed |
+| `environment_comm_failed` | Temperature/humidity sensor communication failed |
 
 ---
 
@@ -1351,6 +1526,7 @@ For device-specific details beyond what's in the manifest:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 2.2.0 | 2026-01-14 | Added `test_led`, `test_motion`, and `test_environment` commands for Crate support; added `led`, `motion`, `environment` capabilities |
 | 2.1.0 | 2026-01-05 | Added Service Mode Manifest, expanded test commands, renamed cloud commands, clarified reset behaviors, unit_id as core provisioning identifier |
 | 2.0.0 | 2026-01-05 | Major rewrite: Service Mode architecture, explicit entry/exit, separate reset commands |
 | 1.1.0 | 2026-01-04 | Added MAC address to status, updated for ESP32-C6 |

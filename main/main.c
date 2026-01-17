@@ -44,11 +44,13 @@
  * - BLE GATT service for credential exchange
  * - Auto-starts for factory-provisioned devices without Wi-Fi
  *
- * Phase 8: Thread Border Router
+ * Phase 8: Thread Border Router + Radio Coexistence
  * - Thread mesh network for crate communication
  * - Auto-generates network credentials on first boot
  * - Credentials stored in NVS for persistence
- * - LED feedback for Thread network state
+ * - WiFi + Thread coexistence via esp_coexist module
+ * - BLE and WiFi+Thread are mutually exclusive modes
+ * - See docs/radio_coexistence_guide.md for architecture details
  */
 
 #include <stdio.h>
@@ -78,6 +80,12 @@
 #include "ble_prov.h"
 #include "thread_br.h"  /* Conditionally enabled in sdkconfig */
 #include "esp_vfs_eventfd.h"
+#include "esp_netif.h"
+
+/* Radio coexistence for WiFi + Thread simultaneous operation */
+#if defined(CONFIG_ESP_COEX_SW_COEXIST_ENABLE) && CONFIG_ESP_COEX_SW_COEXIST_ENABLE
+#include "esp_coexist.h"
+#endif
 
 static const char *TAG = "SV_HUB";
 
@@ -565,7 +573,7 @@ void app_main(void)
 
     ESP_LOGI(TAG, "===========================================");
     ESP_LOGI(TAG, "  Saturday Vinyl Hub Firmware v%s", FIRMWARE_VERSION);
-    ESP_LOGI(TAG, "  Phase 8: Thread Border Router");
+    ESP_LOGI(TAG, "  Phase 8: Thread BR + Radio Coexistence");
     ESP_LOGI(TAG, "===========================================");
 
     /* Log chip info */
@@ -595,6 +603,19 @@ void app_main(void)
         ESP_LOGE(TAG, "Failed to create event loop: %s", esp_err_to_name(ret));
     } else {
         ESP_LOGI(TAG, "Event loop ready");
+    }
+
+    /*
+     * Initialize Network Interface layer - MUST be called before Thread or WiFi
+     * This initializes LwIP TCP/IP stack which both Thread and WiFi depend on.
+     * Required for radio coexistence mode where Thread starts before WiFi.
+     */
+    ESP_LOGI(TAG, "Initializing network interface layer...");
+    ret = esp_netif_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to init netif: %s", esp_err_to_name(ret));
+    } else {
+        ESP_LOGI(TAG, "Network interface layer initialized");
     }
 
 #if defined(CONFIG_OPENTHREAD_ENABLED) && CONFIG_OPENTHREAD_ENABLED
@@ -843,78 +864,132 @@ void app_main(void)
     }
 
     /*
-     * Initialize BLE Provisioning (Phase 7)
-     * Must be initialized before checking Wi-Fi, as we may need it if no Wi-Fi configured
+     * ==========================================================================
+     * RADIO MODE DECISION: BLE Provisioning vs WiFi+Thread Coexistence
+     * ==========================================================================
+     *
+     * The ESP32-C6 has a single radio shared between WiFi, BLE, and 802.15.4.
+     * We operate in two mutually exclusive modes:
+     *
+     * 1. PROVISIONING MODE (BLE only):
+     *    - When device has no WiFi credentials configured
+     *    - BLE advertising for Saturday mobile app
+     *    - WiFi and Thread disabled
+     *
+     * 2. NORMAL MODE (WiFi + Thread coexistence):
+     *    - WiFi connected for cloud communication
+     *    - Thread Border Router for crate communication
+     *    - BLE disabled
+     *    - Software coexistence manages radio time-sharing
+     *
+     * See docs/radio_coexistence_guide.md for architecture details.
      */
-    ESP_LOGI(TAG, "Initializing BLE provisioning...");
-    ret = ble_prov_init(NULL);  /* Use defaults */
-    if (ret != ESP_OK) {
-        ESP_LOGW(TAG, "BLE provisioning init failed: %s", esp_err_to_name(ret));
-    } else {
-        ESP_LOGI(TAG, "BLE provisioning initialized");
-    }
 
-    /*
-     * Initialize Wi-Fi (Phase 4)
-     */
-    ret = start_wifi();
-    if (ret != ESP_OK && ret != ESP_ERR_NOT_FOUND) {
-        ESP_LOGW(TAG, "Wi-Fi initialization issue - continuing without Wi-Fi");
-    }
+    bool needs_provisioning = config_has_unit_id() && !config_has_wifi();
 
-    /*
-     * BLE Provisioning Mode (Phase 7)
-     * If device is factory-provisioned (has unit_id) but has no Wi-Fi credentials,
-     * automatically enter BLE provisioning mode for consumer setup.
-     */
-    if (config_has_unit_id() && !config_has_wifi()) {
+    if (needs_provisioning) {
+        /*
+         * PROVISIONING MODE: BLE only
+         * Device has unit_id (factory provisioned) but needs WiFi credentials.
+         * Initialize and start BLE provisioning.
+         */
         ESP_LOGI(TAG, "===========================================");
-        ESP_LOGI(TAG, "  BLE PROVISIONING MODE");
+        ESP_LOGI(TAG, "  PROVISIONING MODE (BLE Only)");
         ESP_LOGI(TAG, "  Device needs Wi-Fi configuration");
         ESP_LOGI(TAG, "  Open Saturday app to set up your Hub");
         ESP_LOGI(TAG, "===========================================");
 
-        ret = ble_prov_start();
-        if (ret == ESP_OK) {
-            /* Wait for provisioning to complete or timeout */
-            while (!ble_prov_is_complete() && ble_prov_is_active()) {
-                vTaskDelay(pdMS_TO_TICKS(1000));
-
-                /* Allow factory reset button during BLE provisioning */
-                /* Button callback sets s_ble_prov_requested which we ignore here */
-            }
-
-            if (ble_prov_is_complete()) {
-                ESP_LOGI(TAG, "BLE provisioning completed successfully");
-            } else {
-                ESP_LOGW(TAG, "BLE provisioning timed out or was stopped");
-            }
+        /* Initialize BLE for provisioning */
+        ESP_LOGI(TAG, "Initializing BLE provisioning...");
+        ret = ble_prov_init(NULL);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "BLE provisioning init failed: %s", esp_err_to_name(ret));
         } else {
-            ESP_LOGE(TAG, "Failed to start BLE provisioning: %s", esp_err_to_name(ret));
+            ESP_LOGI(TAG, "BLE provisioning initialized");
+
+            ret = ble_prov_start();
+            if (ret == ESP_OK) {
+                /* Wait for provisioning to complete or timeout */
+                while (!ble_prov_is_complete() && ble_prov_is_active()) {
+                    vTaskDelay(pdMS_TO_TICKS(1000));
+                }
+
+                if (ble_prov_is_complete()) {
+                    ESP_LOGI(TAG, "BLE provisioning completed successfully");
+                    /* Deinit BLE before starting WiFi+Thread */
+                    ble_prov_deinit();
+                    /* Update flag - we now have WiFi credentials */
+                    needs_provisioning = false;
+                } else {
+                    ESP_LOGW(TAG, "BLE provisioning timed out or was stopped");
+                }
+            } else {
+                ESP_LOGE(TAG, "Failed to start BLE provisioning: %s", esp_err_to_name(ret));
+            }
         }
     }
 
     /*
-     * Start Event Reporter (Phase 5)
-     * Must be after Wi-Fi init so we can track initial connection state
+     * NORMAL MODE: WiFi + Thread Coexistence
+     *
+     * IMPORTANT: Initialization order matters for coexistence!
+     * Per ESP-IDF documentation and ot_br example:
+     * 1. Initialize Thread/OpenThread FIRST
+     * 2. Initialize WiFi SECOND
+     * 3. Enable coexistence AFTER both stacks are up
+     *
+     * This ensures proper radio arbitration between protocols.
      */
-    ret = event_reporter_start();
-    if (ret != ESP_OK) {
-        ESP_LOGW(TAG, "Event reporter start failed: %s", esp_err_to_name(ret));
-    } else {
-        ESP_LOGI(TAG, "Event reporter started");
-    }
+    if (!needs_provisioning || config_has_wifi()) {
+        ESP_LOGI(TAG, "===========================================");
+        ESP_LOGI(TAG, "  NORMAL MODE (WiFi + Thread Coexistence)");
+        ESP_LOGI(TAG, "===========================================");
 
 #if defined(CONFIG_OPENTHREAD_ENABLED) && CONFIG_OPENTHREAD_ENABLED
-    /*
-     * Initialize and Start Thread Border Router (Phase 8)
-     * Start after Wi-Fi is up for proper border routing
-     */
-    ret = start_thread_br();
-    if (ret != ESP_OK) {
-        ESP_LOGW(TAG, "Thread BR not started - continuing without Thread");
-    }
+        /*
+         * Step 1: Initialize Thread Border Router FIRST
+         * Thread must be initialized before WiFi for proper coexistence.
+         */
+        ret = start_thread_br();
+        if (ret != ESP_OK) {
+            ESP_LOGW(TAG, "Thread BR not started - continuing without Thread");
+        }
 #endif /* CONFIG_OPENTHREAD_ENABLED */
+
+        /*
+         * Step 2: Initialize Wi-Fi SECOND
+         */
+        ret = start_wifi();
+        if (ret != ESP_OK && ret != ESP_ERR_NOT_FOUND) {
+            ESP_LOGW(TAG, "Wi-Fi initialization issue - continuing without Wi-Fi");
+        }
+
+#if defined(CONFIG_ESP_COEX_SW_COEXIST_ENABLE) && CONFIG_ESP_COEX_SW_COEXIST_ENABLE && \
+    defined(CONFIG_OPENTHREAD_ENABLED) && CONFIG_OPENTHREAD_ENABLED
+        /*
+         * Step 3: Enable WiFi/802.15.4 coexistence AFTER both stacks are up
+         * This enables the coexistence arbitration between WiFi and Thread.
+         */
+        ESP_LOGI(TAG, "Enabling WiFi/802.15.4 radio coexistence...");
+        ret = esp_coex_wifi_i154_enable();
+        if (ret != ESP_OK) {
+            ESP_LOGW(TAG, "Failed to enable coexistence: %s", esp_err_to_name(ret));
+        } else {
+            ESP_LOGI(TAG, "WiFi/Thread coexistence enabled");
+        }
+#endif
+
+        /*
+         * Start Event Reporter (Phase 5)
+         * Now that WiFi is initialized, start the cloud sync task.
+         */
+        ret = event_reporter_start();
+        if (ret != ESP_OK) {
+            ESP_LOGW(TAG, "Event reporter start failed: %s", esp_err_to_name(ret));
+        } else {
+            ESP_LOGI(TAG, "Event reporter started");
+        }
+    }
 
     /* Start RFID polling with Now Playing integration (Phase 2 + 3) */
     ret = start_rfid_polling();
@@ -955,26 +1030,95 @@ void app_main(void)
         /*
          * Handle BLE provisioning request (triggered by button long press).
          * This runs in the main task context for safety.
+         *
+         * IMPORTANT: BLE and WiFi+Thread are mutually exclusive modes.
+         * To enter BLE provisioning, we must:
+         * 1. Stop WiFi and Thread to release the radio
+         * 2. Initialize and start BLE
+         * 3. After provisioning completes, restart WiFi+Thread
          */
         if (s_ble_prov_requested) {
             s_ble_prov_requested = false;
 
-            /* Only enter BLE provisioning if not already active */
-            if (!ble_prov_is_active()) {
-                ESP_LOGI(TAG, "===========================================");
-                ESP_LOGI(TAG, "  BLE PROVISIONING MODE (Button Triggered)");
-                ESP_LOGI(TAG, "  Open Saturday app to configure Wi-Fi");
-                ESP_LOGI(TAG, "===========================================");
+            ESP_LOGI(TAG, "===========================================");
+            ESP_LOGI(TAG, "  BLE PROVISIONING MODE (Button Triggered)");
+            ESP_LOGI(TAG, "  Stopping WiFi and Thread for BLE...");
+            ESP_LOGI(TAG, "===========================================");
 
+            /* Step 1: Stop WiFi and Thread to release the radio */
+            event_reporter_stop();
+            wifi_disconnect();
+
+#if defined(CONFIG_OPENTHREAD_ENABLED) && CONFIG_OPENTHREAD_ENABLED
+            thread_br_stop();
+            s_thread_running = false;
+#endif
+            s_wifi_connected = false;
+
+            /* Small delay for radio to settle */
+            vTaskDelay(pdMS_TO_TICKS(500));
+
+            /* Step 2: Initialize and start BLE provisioning */
+            ESP_LOGI(TAG, "Starting BLE provisioning...");
+            ret = ble_prov_init(NULL);
+            if (ret != ESP_OK) {
+                ESP_LOGE(TAG, "BLE provisioning init failed: %s", esp_err_to_name(ret));
+                led_flash(LED_COLOR_RED, 500);
+            } else {
                 ret = ble_prov_start();
                 if (ret != ESP_OK) {
                     ESP_LOGE(TAG, "Failed to start BLE provisioning: %s", esp_err_to_name(ret));
                     led_flash(LED_COLOR_RED, 500);
+                    ble_prov_deinit();
+                } else {
+                    /* Wait for provisioning to complete or timeout */
+                    ESP_LOGI(TAG, "  Open Saturday app to configure Wi-Fi");
+                    while (!ble_prov_is_complete() && ble_prov_is_active()) {
+                        vTaskDelay(pdMS_TO_TICKS(1000));
+                    }
+
+                    bool prov_success = ble_prov_is_complete();
+
+                    /* Step 3: Stop and deinit BLE */
+                    ble_prov_stop();
+                    ble_prov_deinit();
+
+                    if (prov_success) {
+                        ESP_LOGI(TAG, "BLE provisioning completed - restarting WiFi+Thread");
+                    } else {
+                        ESP_LOGW(TAG, "BLE provisioning timed out - restarting WiFi+Thread");
+                    }
                 }
-                /* BLE provisioning will run in background and update LED state */
-            } else {
-                ESP_LOGW(TAG, "BLE provisioning already active");
             }
+
+            /* Step 4: Restart WiFi+Thread in proper order */
+            ESP_LOGI(TAG, "Restarting normal mode (WiFi + Thread)...");
+
+#if defined(CONFIG_OPENTHREAD_ENABLED) && CONFIG_OPENTHREAD_ENABLED
+            /* Thread first */
+            ret = thread_br_start();
+            if (ret == ESP_OK) {
+                s_thread_running = true;
+            }
+#endif
+
+            /* Then WiFi */
+            if (config_has_wifi()) {
+                wifi_connect_stored();
+            }
+
+#if defined(CONFIG_ESP_COEX_SW_COEXIST_ENABLE) && CONFIG_ESP_COEX_SW_COEXIST_ENABLE && \
+    defined(CONFIG_OPENTHREAD_ENABLED) && CONFIG_OPENTHREAD_ENABLED
+            /* Re-enable coexistence */
+            esp_coex_wifi_i154_enable();
+#endif
+
+            /* Restart event reporter */
+            event_reporter_start();
+
+            /* Return to idle LED state */
+            led_set_state(LED_COLOR_GREEN, LED_PATTERN_SOLID, 0);
+            led_set_brightness(16);
         }
 
         /* Health check every 10 seconds */

@@ -65,10 +65,14 @@ CONFIG_BT_NIMBLE_GAP_DEVICE_NAME_MAX_LEN=32
 CONFIG_OPENTHREAD_ENABLED=y
 CONFIG_OPENTHREAD_BORDER_ROUTER=y
 CONFIG_OPENTHREAD_RADIO_NATIVE=y
+CONFIG_OPENTHREAD_COMMISSIONER=y
 
 # Thread Border Router specific settings
 CONFIG_OPENTHREAD_BR_AUTO_START=n
-CONFIG_OPENTHREAD_DNS64_CLIENT=y
+# DNS clients disabled - they bind to port 53 and interfere with WiFi DNS resolution.
+# Thread crates communicate directly with hub via mesh addresses, no DNS needed.
+CONFIG_OPENTHREAD_DNS_CLIENT=n
+CONFIG_OPENTHREAD_DNS64_CLIENT=n
 CONFIG_OPENTHREAD_SRP_CLIENT=y
 
 # Disable OpenThread CLI - conflicts with serial provisioning on USB Serial JTAG
@@ -117,3 +121,14 @@ CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 # VFS configuration for non-blocking stdin reads
 CONFIG_VFS_SUPPORT_IO=y
 CONFIG_VFS_SUPPORT_SELECT=y
+
+# =============================================================================
+# Radio Coexistence Configuration (WiFi + Thread)
+# =============================================================================
+# Enable software coexistence for multi-protocol operation.
+# This is REQUIRED when using WiFi and 802.15.4 (Thread) simultaneously.
+# See docs/radio_coexistence_guide.md for details.
+CONFIG_ESP_COEX_SW_COEXIST_ENABLE=y
+
+# Increase event task stack for coexistence callbacks
+CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=4096

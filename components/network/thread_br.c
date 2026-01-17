@@ -18,6 +18,8 @@
 #include "nvs_flash.h"
 #include "nvs.h"
 #include <string.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 /* OpenThread includes */
 #include "esp_openthread.h"
@@ -63,6 +65,8 @@ ESP_EVENT_DEFINE_BASE(THREAD_BR_EVENTS);
 /* Module state */
 static bool s_initialized = false;
 static bool s_started = false;
+static bool s_suspended = false;  /* Thread radio suspended for WiFi-exclusive operations */
+static bool s_shutdown_for_wifi = false;  /* Thread completely shutdown for WiFi */
 static thread_br_state_t s_state = THREAD_BR_STATE_DISABLED;
 static int64_t s_attached_time_us = 0;
 static bool s_joining_enabled = false;
@@ -273,14 +277,18 @@ esp_err_t thread_br_stop(void)
         thread_br_disable_joining();
     }
 
+    /* Must hold lock for OpenThread API calls */
+    esp_openthread_lock_acquire(portMAX_DELAY);
+
     /* Disable Thread protocol */
     if (s_ot_instance != NULL) {
         otThreadSetEnabled(s_ot_instance, false);
         otIp6SetEnabled(s_ot_instance, false);
     }
 
-    /* Deinit border router */
-    esp_openthread_border_router_deinit();
+    esp_openthread_lock_release();
+
+    /* Note: Border router cleanup is handled by esp_openthread_stop() in thread_br_deinit() */
 
     s_started = false;
     s_state = THREAD_BR_STATE_DETACHED;
@@ -291,6 +299,129 @@ esp_err_t thread_br_stop(void)
 
     ESP_LOGI(TAG, "Thread Border Router stopped");
     return ESP_OK;
+}
+
+esp_err_t thread_br_suspend(void)
+{
+    if (!s_started) {
+        ESP_LOGW(TAG, "Cannot suspend - Thread not started");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (s_suspended) {
+        ESP_LOGD(TAG, "Already suspended");
+        return ESP_OK;
+    }
+
+    ESP_LOGI(TAG, "Suspending Thread radio for WiFi operation...");
+
+    /* Disable Thread interface - this stops radio activity but keeps stack running */
+    if (s_ot_instance != NULL) {
+        esp_openthread_lock_acquire(portMAX_DELAY);
+        otThreadSetEnabled(s_ot_instance, false);
+        esp_openthread_lock_release();
+    }
+
+    /* Wait for radio coexistence to fully transition to WiFi-only mode.
+     * The 802.15.4 radio may still have pending operations after otThreadSetEnabled(false).
+     * This delay ensures the radio arbitrator gives WiFi full priority before we
+     * attempt TLS handshakes which are sensitive to packet loss. */
+    vTaskDelay(pdMS_TO_TICKS(500));
+
+    s_suspended = true;
+    ESP_LOGI(TAG, "Thread radio suspended");
+    return ESP_OK;
+}
+
+esp_err_t thread_br_resume(void)
+{
+    if (!s_started) {
+        ESP_LOGW(TAG, "Cannot resume - Thread not started");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (!s_suspended) {
+        ESP_LOGD(TAG, "Not suspended");
+        return ESP_OK;
+    }
+
+    ESP_LOGI(TAG, "Resuming Thread radio...");
+
+    /* Re-enable Thread interface */
+    if (s_ot_instance != NULL) {
+        esp_openthread_lock_acquire(portMAX_DELAY);
+        otThreadSetEnabled(s_ot_instance, true);
+        esp_openthread_lock_release();
+    }
+
+    s_suspended = false;
+    ESP_LOGI(TAG, "Thread radio resumed - will re-attach to network");
+    return ESP_OK;
+}
+
+bool thread_br_is_suspended(void)
+{
+    return s_suspended;
+}
+
+esp_err_t thread_br_shutdown_for_wifi(void)
+{
+    if (s_shutdown_for_wifi) {
+        ESP_LOGD(TAG, "Already shutdown for WiFi");
+        return ESP_OK;
+    }
+
+    ESP_LOGI(TAG, "=== THREAD SHUTDOWN for WiFi-exclusive mode ===");
+
+    /* If suspended, clear that state first */
+    s_suspended = false;
+
+    /* Full deinit - this completely stops OpenThread and releases the 802.15.4 radio */
+    esp_err_t ret = thread_br_deinit();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to deinit Thread: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    /* Wait for radio hardware to fully release */
+    vTaskDelay(pdMS_TO_TICKS(1000));
+
+    s_shutdown_for_wifi = true;
+    ESP_LOGI(TAG, "=== Thread completely stopped - WiFi has exclusive radio access ===");
+    return ESP_OK;
+}
+
+esp_err_t thread_br_restart_after_wifi(void)
+{
+    if (!s_shutdown_for_wifi) {
+        ESP_LOGW(TAG, "Thread not shutdown for WiFi");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    ESP_LOGI(TAG, "=== THREAD RESTART after WiFi operation ===");
+
+    /* Reinitialize Thread */
+    esp_err_t ret = thread_br_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to reinit Thread: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    /* Start Thread (will reload credentials from NVS) */
+    ret = thread_br_start();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to restart Thread: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    s_shutdown_for_wifi = false;
+    ESP_LOGI(TAG, "=== Thread restarted - will re-attach to network ===");
+    return ESP_OK;
+}
+
+bool thread_br_is_shutdown_for_wifi(void)
+{
+    return s_shutdown_for_wifi;
 }
 
 esp_err_t thread_br_deinit(void)

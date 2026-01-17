@@ -13,6 +13,7 @@
 #include "supabase_client.h"
 #include "now_playing.h"
 #include "wifi_manager.h"
+#include "thread_br.h"
 #include "rfid_protocol.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -273,6 +274,8 @@ static int format_heartbeat_json(char *buf, size_t buf_len)
 
 /**
  * @brief Send a single event to Supabase
+ *
+ * Suspends Thread radio during the HTTP request for reliable TLS.
  */
 static esp_err_t send_event(const queued_event_t *event)
 {
@@ -283,8 +286,20 @@ static esp_err_t send_event(const queued_event_t *event)
         return ESP_ERR_INVALID_SIZE;
     }
 
+    /* Completely shutdown Thread to give WiFi exclusive radio access.
+     * The suspend approach wasn't reliable enough - full shutdown ensures
+     * no 802.15.4 radio activity during TLS handshake. */
+#if defined(CONFIG_OPENTHREAD_ENABLED) && CONFIG_OPENTHREAD_ENABLED
+    thread_br_shutdown_for_wifi();
+#endif
+
     supabase_response_t response;
     esp_err_t err = supabase_post("now_playing_events", json, &response, 0);
+
+    /* Restart Thread after WiFi operation */
+#if defined(CONFIG_OPENTHREAD_ENABLED) && CONFIG_OPENTHREAD_ENABLED
+    thread_br_restart_after_wifi();
+#endif
 
     if (err == ESP_OK && response.status_code >= 200 && response.status_code < 300) {
         supabase_response_free(&response);
@@ -301,6 +316,11 @@ static esp_err_t send_event(const queued_event_t *event)
 
 /**
  * @brief Send heartbeat to Supabase
+ *
+ * Completely shuts down Thread during the HTTP request to ensure reliable TLS.
+ * With WiFi+Thread coexistence on a single radio, even suspend wasn't enough
+ * to prevent packet loss during TLS handshakes. Full shutdown gives WiFi
+ * exclusive radio access for reliable cloud connectivity.
  */
 static esp_err_t send_heartbeat_internal(void)
 {
@@ -311,8 +331,20 @@ static esp_err_t send_heartbeat_internal(void)
         return ESP_ERR_INVALID_SIZE;
     }
 
+    /* Completely shutdown Thread to give WiFi exclusive radio access.
+     * The suspend approach wasn't reliable enough - full shutdown ensures
+     * no 802.15.4 radio activity during TLS handshake. */
+#if defined(CONFIG_OPENTHREAD_ENABLED) && CONFIG_OPENTHREAD_ENABLED
+    thread_br_shutdown_for_wifi();
+#endif
+
     supabase_response_t response;
     esp_err_t err = supabase_post("hub_heartbeats", json, &response, 0);
+
+    /* Restart Thread after WiFi operation */
+#if defined(CONFIG_OPENTHREAD_ENABLED) && CONFIG_OPENTHREAD_ENABLED
+    thread_br_restart_after_wifi();
+#endif
 
     if (err == ESP_OK && response.status_code >= 200 && response.status_code < 300) {
         s_state.heartbeats_sent++;
