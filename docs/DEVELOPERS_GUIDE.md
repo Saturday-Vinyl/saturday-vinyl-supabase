@@ -522,16 +522,42 @@ Header dropdown showing:
 
 ## Notifications
 
+### Push Notification Architecture
+
+Push notifications are sent via Firebase Cloud Messaging (FCM) and triggered by Supabase database webhooks. The architecture:
+
+```
+Database Event → Database Webhook → Edge Function → FCM → Device
+```
+
+**Key documentation:**
+- `docs/PUSH_NOTIFICATIONS_SETUP.md` - Initial setup and configuration
+- `docs/PUSH_NOTIFICATIONS_DEVELOPMENT.md` - How to add new notification types
+
+**Key files:**
+- `supabase/functions/process-now-playing-event/` - Edge Function that sends Now Playing push notifications
+- `supabase/functions/register-push-token/` - Edge Function for FCM token registration
+- `lib/services/push_token_service.dart` - Flutter service for FCM token management
+- `lib/services/push_notification_handler.dart` - Flutter handler for incoming notifications
+
 ### Notification Types
 
-| Type | Trigger | Urgency | User Configurable |
-|------|---------|---------|-------------------|
-| Flip reminder | Side duration elapsed | Time-sensitive | Timing threshold |
-| Battery low | Device reports < 20% | Important | On/off |
-| Device offline | Device not seen for threshold | Important | On/off |
-| Crate activity | Record added/removed from crate | Informational | On/off (verbose) |
-| Firmware available | New version detected | Low | On/off |
-| Library invitation | User invited to shared library | Informational | On/off |
+| Type | Trigger | Status | Urgency |
+|------|---------|--------|---------|
+| `now_playing` | Record placed on hub | Implemented | Time-sensitive |
+| `flip_reminder` | Side duration elapsed | Planned | Time-sensitive |
+| `device_offline` | Device not seen for threshold | Planned | Important |
+| `battery_low` | Device reports < 20% | Planned | Important |
+| `library_invitation` | User invited to shared library | Planned | Informational |
+
+### Adding New Notification Types
+
+See `docs/PUSH_NOTIFICATIONS_DEVELOPMENT.md` for detailed instructions. In summary:
+
+1. Create or update an Edge Function to send the notification
+2. Configure a database webhook to trigger on the appropriate event
+3. Update `push_notification_handler.dart` to handle the new type
+4. Add the type to the `notification_delivery_log` for tracking
 
 ### Notification Preferences
 

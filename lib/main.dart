@@ -1,3 +1,6 @@
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -9,6 +12,8 @@ import 'package:saturday_consumer_app/providers/intro_splash_provider.dart';
 import 'package:saturday_consumer_app/services/auth_service.dart';
 import 'package:saturday_consumer_app/services/live_activity_service.dart';
 import 'package:saturday_consumer_app/services/notification_service.dart';
+import 'package:saturday_consumer_app/services/push_notification_handler.dart';
+import 'package:saturday_consumer_app/services/push_token_service.dart';
 import 'package:saturday_consumer_app/services/supabase_service.dart';
 import 'package:saturday_consumer_app/utils/deep_link_handler.dart';
 
@@ -30,6 +35,25 @@ void main() async {
   } catch (e) {
     runApp(EnvErrorApp(error: 'Failed to initialize Supabase: $e'));
     return;
+  }
+
+  // Initialize Firebase for push notifications
+  try {
+    await Firebase.initializeApp();
+
+    // Set up background message handler (must be done before any other Firebase calls)
+    FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+
+    // Initialize push notification handler
+    await PushNotificationHandler.instance.initialize();
+
+    // Initialize push token service
+    await PushTokenService.instance.initialize();
+
+    debugPrint('Firebase initialized successfully');
+  } catch (e) {
+    // Firebase initialization is optional - app can run without push notifications
+    debugPrint('Firebase initialization failed (push notifications will be disabled): $e');
   }
 
   // Initialize AuthService (depends on Supabase being initialized)

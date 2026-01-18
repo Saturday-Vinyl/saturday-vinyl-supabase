@@ -3,7 +3,7 @@
     "apps": [],
     "details": [
       {
-        "appID": "6WQAHJU2PD.com.dlatham.saturdayconsumer.dev",
+        "appID": "6WQAHJU2PD.com.saturdayvinyl.consumer",
         "paths": ["/tags/*", "/albums/*", "/invite/*"]
       }
     ]

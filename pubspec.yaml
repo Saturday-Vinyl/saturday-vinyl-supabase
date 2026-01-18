@@ -54,6 +54,13 @@ dependencies:
   flutter_local_notifications: ^18.0.0
   timezone: ^0.10.0
 
+  # Push Notifications (Firebase)
+  firebase_core: ^3.8.1
+  firebase_messaging: ^15.2.1
+
+  # Device Info (for push token registration)
+  device_info_plus: ^11.3.0
+
   # Deep Linking
   app_links: ^6.0.0
 

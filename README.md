@@ -106,7 +106,7 @@ lib/
 
 | Platform | Minimum Version | Package/Bundle ID |
 |----------|-----------------|-------------------|
-| iOS | 14.0 | `com.dlatham.saturdayconsumer.dev` (dev) / `com.saturdayvinyl.consumer` (prod) |
+| iOS | 14.0 | `com.saturdayvinyl.consumer` |
 | Android | API 24 (Android 7.0) | `com.saturdayvinyl.consumer` |
 
 ## Deep Linking Setup
@@ -128,13 +128,19 @@ The deep link verification files are located in `deep-link-files/.well-known/` a
 1. **apple-app-site-association** - iOS Universal Links verification
 2. **assetlinks.json** - Android App Links verification
 
-#### Hosting Setup (Netlify recommended)
+#### Hosting Setup (Cloudflare Pages)
 
-1. Create a Netlify site and upload the `deep-link-files/.well-known/` contents
-2. Add custom domain `app.saturdayvinyl.com` in Netlify
-3. Add a CNAME record in DNSimple:
-   - **Name:** `app`
-   - **Target:** `your-site.netlify.app`
+1. Create a Cloudflare Pages project and upload the `deep-link-files/` contents
+2. Add custom domain `app.saturdayvinyl.com` in Cloudflare Pages settings
+3. DNS is managed through Cloudflare - the CNAME is configured automatically
+
+To update the files:
+```bash
+cd deep-link-files
+wrangler pages deploy . --project-name=YOUR_PROJECT_NAME
+```
+
+Or use the Cloudflare Dashboard → Pages → your project → Create deployment → Upload assets.
 
 #### Android SHA256 Fingerprint
 
@@ -159,13 +165,6 @@ xcrun simctl openurl booted "https://app.saturdayvinyl.com/tags/abc123"
 ```bash
 adb shell am start -a android.intent.action.VIEW -d "https://app.saturdayvinyl.com/albums/123"
 ```
-
-### Current Development Note
-
-iOS is currently using the development bundle ID `com.dlatham.saturdayconsumer.dev` due to Apple Developer credential issues. When switching to production:
-
-1. Update iOS bundle ID to `com.saturdayvinyl.consumer`
-2. Update `apple-app-site-association` to use `6WQAHJU2PD.com.saturdayvinyl.consumer`
 
 ## Brand Colors
 

@@ -8,6 +8,7 @@ import 'package:saturday_consumer_app/widgets/devices/status_badge.dart';
 /// A card widget displaying device information.
 ///
 /// Shows device type icon, name, status, and battery level (for crates).
+/// Uses heartbeat-aware connectivity status for accurate online/offline display.
 class DeviceCard extends StatelessWidget {
   final Device device;
   final VoidCallback? onTap;
@@ -28,14 +29,37 @@ class DeviceCard extends StatelessWidget {
 
   String? get _lastSeenText {
     if (device.lastSeenAt == null) return null;
-    final now = DateTime.now();
-    final diff = now.difference(device.lastSeenAt!);
+    final diff = device.timeSinceLastSeen!;
 
     if (diff.inMinutes < 1) return 'Just now';
     if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
     if (diff.inHours < 24) return '${diff.inHours}h ago';
     if (diff.inDays < 7) return '${diff.inDays}d ago';
     return null;
+  }
+
+  Color get _iconBackgroundColor {
+    switch (device.connectivityStatus) {
+      case ConnectivityStatus.online:
+        return SaturdayColors.success.withValues(alpha: 0.1);
+      case ConnectivityStatus.uncertain:
+        return SaturdayColors.warning.withValues(alpha: 0.1);
+      case ConnectivityStatus.offline:
+      case ConnectivityStatus.setupRequired:
+        return SaturdayColors.secondary.withValues(alpha: 0.1);
+    }
+  }
+
+  Color get _iconColor {
+    switch (device.connectivityStatus) {
+      case ConnectivityStatus.online:
+        return SaturdayColors.success;
+      case ConnectivityStatus.uncertain:
+        return SaturdayColors.warning;
+      case ConnectivityStatus.offline:
+      case ConnectivityStatus.setupRequired:
+        return SaturdayColors.secondary;
+    }
   }
 
   @override
@@ -54,16 +78,12 @@ class DeviceCard extends StatelessWidget {
                 width: 48,
                 height: 48,
                 decoration: BoxDecoration(
-                  color: device.isOnline
-                      ? SaturdayColors.success.withValues(alpha: 0.1)
-                      : SaturdayColors.secondary.withValues(alpha: 0.1),
+                  color: _iconBackgroundColor,
                   borderRadius: AppRadius.mediumRadius,
                 ),
                 child: Icon(
                   _deviceIcon,
-                  color: device.isOnline
-                      ? SaturdayColors.success
-                      : SaturdayColors.secondary,
+                  color: _iconColor,
                   size: 24,
                 ),
               ),
@@ -101,7 +121,7 @@ class DeviceCard extends StatelessWidget {
               Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  StatusBadge(status: device.status),
+                  ConnectivityStatusBadge.fromDevice(device: device),
                   if (device.isCrate && device.batteryLevel != null) ...[
                     const SizedBox(height: 4),
                     BatteryIndicator(
@@ -125,6 +145,7 @@ class DeviceCard extends StatelessWidget {
 }
 
 /// A compact device card for list views.
+/// Uses heartbeat-aware connectivity status for accurate online/offline display.
 class DeviceListTile extends StatelessWidget {
   final Device device;
   final VoidCallback? onTap;
@@ -135,18 +156,38 @@ class DeviceListTile extends StatelessWidget {
     this.onTap,
   });
 
+  Color get _avatarBackgroundColor {
+    switch (device.connectivityStatus) {
+      case ConnectivityStatus.online:
+        return SaturdayColors.success.withValues(alpha: 0.1);
+      case ConnectivityStatus.uncertain:
+        return SaturdayColors.warning.withValues(alpha: 0.1);
+      case ConnectivityStatus.offline:
+      case ConnectivityStatus.setupRequired:
+        return SaturdayColors.secondary.withValues(alpha: 0.1);
+    }
+  }
+
+  Color get _avatarIconColor {
+    switch (device.connectivityStatus) {
+      case ConnectivityStatus.online:
+        return SaturdayColors.success;
+      case ConnectivityStatus.uncertain:
+        return SaturdayColors.warning;
+      case ConnectivityStatus.offline:
+      case ConnectivityStatus.setupRequired:
+        return SaturdayColors.secondary;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListTile(
       leading: CircleAvatar(
-        backgroundColor: device.isOnline
-            ? SaturdayColors.success.withValues(alpha: 0.1)
-            : SaturdayColors.secondary.withValues(alpha: 0.1),
+        backgroundColor: _avatarBackgroundColor,
         child: Icon(
           device.isHub ? Icons.router : Icons.inventory_2_outlined,
-          color: device.isOnline
-              ? SaturdayColors.success
-              : SaturdayColors.secondary,
+          color: _avatarIconColor,
           size: 20,
         ),
       ),
@@ -158,7 +199,11 @@ class DeviceListTile extends StatelessWidget {
           if (device.isCrate && device.batteryLevel != null)
             BatteryIconOnly(level: device.batteryLevel),
           const SizedBox(width: 8),
-          StatusBadge(status: device.status, showLabel: false, size: 10),
+          ConnectivityStatusBadge.fromDevice(
+            device: device,
+            showLabel: false,
+            size: 10,
+          ),
         ],
       ),
       onTap: onTap,

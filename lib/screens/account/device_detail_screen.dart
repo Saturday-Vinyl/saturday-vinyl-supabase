@@ -117,7 +117,21 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
     );
   }
 
+  Color _getConnectivityColor(ConnectivityStatus status) {
+    switch (status) {
+      case ConnectivityStatus.online:
+        return SaturdayColors.success;
+      case ConnectivityStatus.uncertain:
+        return SaturdayColors.warning;
+      case ConnectivityStatus.offline:
+      case ConnectivityStatus.setupRequired:
+        return SaturdayColors.secondary;
+    }
+  }
+
   Widget _buildDeviceHeader(BuildContext context, Device device) {
+    final connectivityColor = _getConnectivityColor(device.connectivityStatus);
+
     return Container(
       padding: Spacing.cardPadding,
       decoration: BoxDecoration(
@@ -131,16 +145,12 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
             width: 64,
             height: 64,
             decoration: BoxDecoration(
-              color: device.isOnline
-                  ? SaturdayColors.success.withValues(alpha: 0.1)
-                  : SaturdayColors.secondary.withValues(alpha: 0.1),
+              color: connectivityColor.withValues(alpha: 0.1),
               borderRadius: AppRadius.mediumRadius,
             ),
             child: Icon(
               device.isHub ? Icons.router : Icons.inventory_2_outlined,
-              color: device.isOnline
-                  ? SaturdayColors.success
-                  : SaturdayColors.secondary,
+              color: connectivityColor,
               size: 32,
             ),
           ),
@@ -174,7 +184,7 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
               ],
             ),
           ),
-          StatusChip(status: device.status),
+          ConnectivityStatusChip.fromDevice(device: device),
         ],
       ),
     );
@@ -207,17 +217,31 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
     );
   }
 
+  String _getConnectivityLabel(ConnectivityStatus status) {
+    switch (status) {
+      case ConnectivityStatus.online:
+        return 'Online';
+      case ConnectivityStatus.uncertain:
+        return 'Connecting...';
+      case ConnectivityStatus.offline:
+        return 'Offline';
+      case ConnectivityStatus.setupRequired:
+        return 'Setup Required';
+    }
+  }
+
   Widget _buildStatusContent(BuildContext context, Device device) {
+    final connectivityColor = _getConnectivityColor(device.connectivityStatus);
+    final connectivityLabel = _getConnectivityLabel(device.connectivityStatus);
+
     return Column(
       children: [
         _buildInfoRow(
           context,
           icon: Icons.circle,
-          iconColor: device.isOnline
-              ? SaturdayColors.success
-              : SaturdayColors.secondary,
+          iconColor: connectivityColor,
           label: 'Connection',
-          value: device.isOnline ? 'Online' : 'Offline',
+          value: connectivityLabel,
         ),
         const Divider(height: 24),
         _buildInfoRow(

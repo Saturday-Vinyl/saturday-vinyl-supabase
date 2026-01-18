@@ -11,6 +11,9 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 /// Table name for devices.
 const _tableName = 'consumer_devices';
 
+/// How often to re-evaluate device connectivity status based on heartbeat staleness.
+const _stalenessCheckInterval = Duration(minutes: 1);
+
 /// State for realtime device updates.
 class RealtimeDeviceState {
   /// All user devices with real-time updates.
@@ -40,13 +43,19 @@ class RealtimeDeviceState {
   List<Device> get crates =>
       devices.where((d) => d.deviceType == DeviceType.crate).toList();
 
-  /// Get online devices.
+  /// Get devices that are effectively online (based on heartbeat staleness).
   List<Device> get onlineDevices =>
-      devices.where((d) => d.status == DeviceStatus.online).toList();
+      devices.where((d) => d.isEffectivelyOnline).toList();
 
-  /// Get offline devices.
-  List<Device> get offlineDevices =>
-      devices.where((d) => d.status == DeviceStatus.offline).toList();
+  /// Get devices that are offline or have stale heartbeats.
+  List<Device> get offlineDevices => devices
+      .where((d) => d.connectivityStatus == ConnectivityStatus.offline)
+      .toList();
+
+  /// Get devices with uncertain connectivity (maybe offline).
+  List<Device> get uncertainDevices => devices
+      .where((d) => d.connectivityStatus == ConnectivityStatus.uncertain)
+      .toList();
 
   /// Get devices needing setup.
   List<Device> get devicesNeedingSetup =>
@@ -89,6 +98,11 @@ class RealtimeDeviceNotifier extends StateNotifier<RealtimeDeviceState> {
 
   final Ref _ref;
   RealtimeChannel? _channel;
+  Timer? _stalenessCheckTimer;
+
+  /// Track which devices we've already sent offline notifications for,
+  /// to avoid duplicate notifications.
+  final Set<String> _notifiedOfflineDevices = {};
 
   /// Initialize the realtime subscription.
   Future<void> _initialize() async {
@@ -103,6 +117,48 @@ class RealtimeDeviceNotifier extends StateNotifier<RealtimeDeviceState> {
 
     // Then subscribe to realtime changes
     _subscribeToDevices(userId);
+
+    // Start periodic staleness checks for heartbeat-based offline detection
+    _startStalenessCheckTimer();
+  }
+
+  /// Start the periodic timer that checks for stale heartbeats.
+  ///
+  /// This ensures the UI updates even when no realtime events are received,
+  /// which is important for detecting devices that went offline without
+  /// sending an explicit disconnect signal.
+  void _startStalenessCheckTimer() {
+    _stalenessCheckTimer?.cancel();
+    _stalenessCheckTimer = Timer.periodic(_stalenessCheckInterval, (_) {
+      _checkHeartbeatStaleness();
+    });
+  }
+
+  /// Check all devices for stale heartbeats and trigger notifications.
+  ///
+  /// This is called periodically to detect devices that have gone offline
+  /// without sending an explicit disconnect signal.
+  void _checkHeartbeatStaleness() {
+    if (state.devices.isEmpty) return;
+
+    for (final device in state.devices) {
+      // Skip devices that are explicitly offline or need setup
+      if (device.status != DeviceStatus.online) continue;
+
+      // Check if device has crossed the offline threshold (10 min)
+      if (device.isHeartbeatCriticallyStale) {
+        // Only notify once per device until they come back online
+        if (!_notifiedOfflineDevices.contains(device.id)) {
+          _notifiedOfflineDevices.add(device.id);
+          _sendDeviceOfflineNotification(device.id, device.name);
+        }
+      }
+    }
+
+    // Trigger a state update to refresh UI (connectivity status is derived)
+    // This forces widgets watching the provider to rebuild and re-evaluate
+    // the connectivityStatus getter on each device.
+    state = state.copyWith(lastUpdated: DateTime.now());
   }
 
   /// Fetch all devices for the user.
@@ -193,6 +249,12 @@ class RealtimeDeviceNotifier extends StateNotifier<RealtimeDeviceState> {
       lastUpdated: DateTime.now(),
     );
 
+    // If device received a heartbeat (lastSeenAt updated), it's back online
+    // Clear it from the notified set so we can notify again if it goes offline
+    if (updatedDevice.isEffectivelyOnline) {
+      _notifiedOfflineDevices.remove(updatedDevice.id);
+    }
+
     // Check for status/battery changes and trigger notifications
     _checkForNotifications(oldRecord, newRecord);
   }
@@ -278,6 +340,7 @@ class RealtimeDeviceNotifier extends StateNotifier<RealtimeDeviceState> {
 
   @override
   void dispose() {
+    _stalenessCheckTimer?.cancel();
     _channel?.unsubscribe();
     super.dispose();
   }
@@ -300,9 +363,14 @@ final realtimeDeviceByIdProvider =
   return ref.watch(realtimeDeviceProvider).getDeviceById(deviceId);
 });
 
-/// Provider for realtime online devices.
+/// Provider for realtime online devices (using heartbeat-aware status).
 final realtimeOnlineDevicesProvider = Provider<List<Device>>((ref) {
   return ref.watch(realtimeDeviceProvider).onlineDevices;
+});
+
+/// Provider for devices with uncertain connectivity (maybe offline).
+final realtimeUncertainDevicesProvider = Provider<List<Device>>((ref) {
+  return ref.watch(realtimeDeviceProvider).uncertainDevices;
 });
 
 /// Provider for realtime low battery devices.

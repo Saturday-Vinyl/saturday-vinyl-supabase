@@ -31,7 +31,7 @@ extension LiveActivitiesAppAttributes {
 }
 
 /// Shared UserDefaults for accessing data from Flutter
-let sharedDefault = UserDefaults(suiteName: "group.com.dlatham.saturdayconsumer.dev")!
+let sharedDefault = UserDefaults(suiteName: "group.com.saturdayvinyl.consumer")!
 
 /// Live Activity for displaying flip timer on Lock Screen and Dynamic Island.
 @available(iOSApplicationExtension 16.1, *)

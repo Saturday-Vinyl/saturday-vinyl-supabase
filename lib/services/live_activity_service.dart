@@ -60,10 +60,8 @@ class LiveActivityService {
 
       if (_areActivitiesEnabled) {
         // Initialize with the app group
-        // Note: For dev builds use 'group.com.dlatham.saturdayconsumer.dev'
-        // For production use 'group.com.saturdayvinyl.consumer'
         await _liveActivities.init(
-            appGroupId: 'group.com.dlatham.saturdayconsumer.dev');
+            appGroupId: 'group.com.saturdayvinyl.consumer');
 
         // Listen for activity state changes
         _activityUpdateSubscription =

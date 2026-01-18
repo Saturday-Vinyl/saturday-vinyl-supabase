@@ -1,104 +1,125 @@
 import 'package:equatable/equatable.dart';
 
-/// Represents a Now Playing detection from a Saturday Hub.
+/// Event type for now playing events.
+enum NowPlayingEventType {
+  /// A record was placed on the hub.
+  placed,
+
+  /// A record was removed from the hub.
+  removed;
+
+  static NowPlayingEventType fromString(String value) {
+    switch (value.toLowerCase()) {
+      case 'placed':
+        return NowPlayingEventType.placed;
+      case 'removed':
+        return NowPlayingEventType.removed;
+      default:
+        return NowPlayingEventType.placed;
+    }
+  }
+}
+
+/// Represents a Now Playing event from a Saturday Hub.
 ///
-/// When a record jacket is placed on the hub, the hub reads the RFID tag
-/// and sends the EPC to the cloud. This model represents that detection event.
-class NowPlayingDetection extends Equatable {
-  /// Unique identifier for this detection record.
+/// When a record jacket is placed on or removed from the hub, the hub reads
+/// the RFID tag and sends the EPC to the cloud. This model represents that event.
+///
+/// Maps to the `now_playing_events` table:
+/// - id: UUID primary key
+/// - unit_id: Serial number of the hub device
+/// - epc: EPC identifier from RFID tag
+/// - event_type: 'placed' or 'removed'
+/// - rssi: Signal strength (optional)
+/// - duration_ms: How long tag was present (only on 'removed' events)
+/// - timestamp: When the event occurred
+/// - created_at: When the row was inserted
+class NowPlayingEvent extends Equatable {
+  /// Unique identifier for this event.
   final String id;
 
-  /// The user who owns this hub.
-  final String userId;
-
-  /// The device (hub) that detected the record.
-  final String deviceId;
+  /// The serial number of the hub that detected this event.
+  /// This maps to `consumer_devices.serial_number` to find the user.
+  final String unitId;
 
   /// The EPC identifier read from the RFID tag.
-  final String epcIdentifier;
+  final String epc;
 
-  /// The library album ID if the EPC was resolved, null if unresolved.
-  final String? libraryAlbumId;
+  /// The type of event (placed or removed).
+  final NowPlayingEventType eventType;
 
-  /// When the detection occurred.
-  final DateTime detectedAt;
+  /// Signal strength of the RFID read (optional).
+  final int? rssi;
 
-  /// When the record was removed (null if still present).
-  final DateTime? removedAt;
+  /// Duration in milliseconds the tag was present (only on removed events).
+  final int? durationMs;
 
-  const NowPlayingDetection({
+  /// When the event occurred.
+  final DateTime timestamp;
+
+  /// When the row was created in the database.
+  final DateTime createdAt;
+
+  const NowPlayingEvent({
     required this.id,
-    required this.userId,
-    required this.deviceId,
-    required this.epcIdentifier,
-    this.libraryAlbumId,
-    required this.detectedAt,
-    this.removedAt,
+    required this.unitId,
+    required this.epc,
+    required this.eventType,
+    this.rssi,
+    this.durationMs,
+    required this.timestamp,
+    required this.createdAt,
   });
 
-  factory NowPlayingDetection.fromJson(Map<String, dynamic> json) {
-    return NowPlayingDetection(
+  factory NowPlayingEvent.fromJson(Map<String, dynamic> json) {
+    return NowPlayingEvent(
       id: json['id'] as String,
-      userId: json['user_id'] as String,
-      deviceId: json['device_id'] as String,
-      epcIdentifier: json['epc_identifier'] as String,
-      libraryAlbumId: json['library_album_id'] as String?,
-      detectedAt: DateTime.parse(json['detected_at'] as String),
-      removedAt: json['removed_at'] != null
-          ? DateTime.parse(json['removed_at'] as String)
-          : null,
+      unitId: json['unit_id'] as String,
+      epc: json['epc'] as String,
+      eventType: NowPlayingEventType.fromString(json['event_type'] as String),
+      rssi: json['rssi'] as int?,
+      durationMs: json['duration_ms'] as int?,
+      timestamp: DateTime.parse(json['timestamp'] as String),
+      createdAt: DateTime.parse(json['created_at'] as String),
     );
   }
 
   Map<String, dynamic> toJson() {
     return {
       'id': id,
-      'user_id': userId,
-      'device_id': deviceId,
-      'epc_identifier': epcIdentifier,
-      'library_album_id': libraryAlbumId,
-      'detected_at': detectedAt.toIso8601String(),
-      'removed_at': removedAt?.toIso8601String(),
+      'unit_id': unitId,
+      'epc': epc,
+      'event_type': eventType.name,
+      'rssi': rssi,
+      'duration_ms': durationMs,
+      'timestamp': timestamp.toIso8601String(),
+      'created_at': createdAt.toIso8601String(),
     };
   }
 
-  NowPlayingDetection copyWith({
-    String? id,
-    String? userId,
-    String? deviceId,
-    String? epcIdentifier,
-    String? libraryAlbumId,
-    DateTime? detectedAt,
-    DateTime? removedAt,
-    bool clearLibraryAlbumId = false,
-    bool clearRemovedAt = false,
-  }) {
-    return NowPlayingDetection(
-      id: id ?? this.id,
-      userId: userId ?? this.userId,
-      deviceId: deviceId ?? this.deviceId,
-      epcIdentifier: epcIdentifier ?? this.epcIdentifier,
-      libraryAlbumId:
-          clearLibraryAlbumId ? null : (libraryAlbumId ?? this.libraryAlbumId),
-      detectedAt: detectedAt ?? this.detectedAt,
-      removedAt: clearRemovedAt ? null : (removedAt ?? this.removedAt),
-    );
-  }
+  /// Whether this is a "placed" event (record put on hub).
+  bool get isPlaced => eventType == NowPlayingEventType.placed;
 
-  /// Whether this detection is currently active (record still on hub).
-  bool get isActive => removedAt == null;
+  /// Whether this is a "removed" event (record taken off hub).
+  bool get isRemoved => eventType == NowPlayingEventType.removed;
 
-  /// Whether the EPC was successfully resolved to a library album.
-  bool get isResolved => libraryAlbumId != null;
+  /// Duration as a Dart Duration object (only meaningful for removed events).
+  Duration? get duration =>
+      durationMs != null ? Duration(milliseconds: durationMs!) : null;
 
   @override
   List<Object?> get props => [
         id,
-        userId,
-        deviceId,
-        epcIdentifier,
-        libraryAlbumId,
-        detectedAt,
-        removedAt,
+        unitId,
+        epc,
+        eventType,
+        rssi,
+        durationMs,
+        timestamp,
+        createdAt,
       ];
 }
+
+// Keep the old class as an alias for backward compatibility during transition
+@Deprecated('Use NowPlayingEvent instead')
+typedef NowPlayingDetection = NowPlayingEvent;

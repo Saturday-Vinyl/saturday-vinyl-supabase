@@ -43,11 +43,11 @@ final deviceCountProvider = Provider<int>((ref) {
   return devices.whenOrNull(data: (d) => d.length) ?? 0;
 });
 
-/// Provider for online devices.
+/// Provider for online devices (using heartbeat-aware connectivity status).
 final onlineDevicesProvider = Provider<List<Device>>((ref) {
   final devices = ref.watch(userDevicesProvider);
   return devices.whenOrNull(
-        data: (d) => d.where((device) => device.isOnline).toList(),
+        data: (d) => d.where((device) => device.isEffectivelyOnline).toList(),
       ) ??
       [];
 });
@@ -71,13 +71,14 @@ final lowBatteryDevicesProvider = Provider<List<Device>>((ref) {
 });
 
 /// Provider for the primary hub (first online hub, or first hub).
+/// Uses heartbeat-aware connectivity status to determine if hub is online.
 final primaryHubProvider = Provider<Device?>((ref) {
   final hubs = ref.watch(userHubsProvider);
   return hubs.whenOrNull(
     data: (h) {
       if (h.isEmpty) return null;
-      // Prefer online hub
-      final online = h.where((hub) => hub.isOnline).toList();
+      // Prefer effectively online hub (accounts for stale heartbeats)
+      final online = h.where((hub) => hub.isEffectivelyOnline).toList();
       if (online.isNotEmpty) return online.first;
       return h.first;
     },
