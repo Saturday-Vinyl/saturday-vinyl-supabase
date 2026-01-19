@@ -96,10 +96,14 @@ The two SoCs communicate via UART. The S3 controls the H2's power and boot mode.
 | 4    | BOOT_MODE     | Input     | S3 GPIO7                | Boot mode select (from S3)     |
 | 23   | UART0_RX      | Input     | S3 GPIO15 (TX)          | Commands from S3               |
 | 24   | UART0_TX      | Output    | S3 GPIO16 (RX)          | Responses to S3                |
-| EN   | CHIP_EN       | Input     | S3 GPIO6                | Active LOW reset               |
+| EN/RST | CHIP_EN     | Input     | S3 GPIO6                | Active LOW reset (labeled "RST" on DevKitM-1) |
 
 > **Note:** The H2's UART0 is used for S3 communication. USB is available for
 > debugging/flashing during development but not used in production.
+>
+> **Pin naming:** The ESP32-H2-DevKitM-1 labels the chip enable pin as "RST" (Reset).
+> This is the same signal that Espressif schematics call "EN" (Chip Enable). Both names
+> refer to the active-low reset line. Connect S3 GPIO6 to the H2's RST pin.
 
 ---
 
@@ -108,7 +112,7 @@ The two SoCs communicate via UART. The S3 controls the H2's power and boot mode.
 ```
     ESP32-S3                                ESP32-H2
     ────────                                ────────
-    GPIO6  (H2_EN)    ──────────────────►   EN (Chip Enable)
+    GPIO6  (H2_EN)    ──────────────────►   EN/RST (Chip Enable, labeled "RST" on DevKitM-1)
     GPIO7  (H2_BOOT)  ──────────────────►   GPIO4 (Boot Mode)
     GPIO15 (UART2_TX) ──────────────────►   GPIO23 (UART0_RX)
     GPIO16 (UART2_RX) ◄──────────────────   GPIO24 (UART0_TX)
@@ -314,7 +318,7 @@ For development, use two separate DevKits connected via jumper wires:
 
     USB-C ◄─── Power + Flash/Monitor      USB-C ◄─── Power + Flash/Monitor
 
-    GPIO6  ─────────────────────────────► EN pin
+    GPIO6  ─────────────────────────────► RST pin (labeled "EN" in schematics)
     GPIO7  ─────────────────────────────► GPIO4
     GPIO15 ─────────────────────────────► GPIO23
     GPIO16 ◄───────────────────────────── GPIO24
@@ -340,7 +344,7 @@ For development, use two separate DevKits connected via jumper wires:
 │  │                  │              │                  │                 │
 │  │  USB-C (power)   │              │  USB-C (power)   │                 │
 │  │                  │              │                  │                 │
-│  │  GPIO6  ─────────┼──────────────┼─► EN             │                 │
+│  │  GPIO6  ─────────┼──────────────┼─► RST            │                 │
 │  │  GPIO7  ─────────┼──────────────┼─► GPIO4          │                 │
 │  │  GPIO15 ─────────┼──────────────┼─► GPIO23         │                 │
 │  │  GPIO16 ◄────────┼──────────────┼── GPIO24         │                 │
