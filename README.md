@@ -31,8 +31,8 @@ chmod +x ~/saturday-vinyl-shared-docs/scripts/setup-shared-docs.sh
 ```bash
 git remote add shared-docs https://github.com/Saturday-Vinyl/saturday-vinyl-shared-docs.git
 git subtree add --prefix=shared-docs shared-docs main --squash
-mkdir -p .claude/commands
-cp shared-docs/templates/claude-commands/*.md .claude/commands/
+mkdir -p ./.claude/commands
+cp ./shared-docs/templates/claude-commands/*.md ./.claude/commands/
 ```
 
 ### Pulling Updates
@@ -45,14 +45,14 @@ git subtree pull --prefix=shared-docs shared-docs main --squash
 
 ### Contributing Changes
 
-Edit docs locally in the `shared-docs/` directory, commit as usual, then push upstream:
+Edit docs locally in the `./shared-docs/` directory, commit as usual, then push upstream:
 
 ```bash
 # 1. Edit the doc
-vim shared-docs/protocols/ble_provisioning_protocol.md
+vim ./shared-docs/protocols/ble_provisioning_protocol.md
 
 # 2. Commit locally
-git add shared-docs/
+git add ./shared-docs/
 git commit -m "Update BLE protocol: add new characteristic"
 
 # 3. Push to central repo
@@ -70,7 +70,7 @@ After setup, these slash commands are available:
 
 You can also reference docs directly in prompts:
 ```
-Read @shared-docs/protocols/ble_provisioning_protocol.md and implement the Status characteristic handler.
+Read @./shared-docs/protocols/ble_provisioning_protocol.md and implement the Status characteristic handler.
 ```
 
 ## Directory Structure
