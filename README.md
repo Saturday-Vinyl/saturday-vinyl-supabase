@@ -15,15 +15,22 @@ Central repository for Saturday Vinyl technical documentation shared across all 
 
 ### Adding to a New Project
 
-Run the setup script from your project root:
-
+**Step 1:** Clone this repo locally (one-time, anywhere on your machine):
 ```bash
-# Option 1: Download and run
-curl -sSL https://raw.githubusercontent.com/saturday-vinyl/saturday-vinyl-shared-docs/main/scripts/setup-shared-docs.sh | bash
+git clone https://github.com/Saturday-Vinyl/saturday-vinyl-shared-docs.git ~/saturday-vinyl-shared-docs
+```
 
-# Option 2: Manual setup
-git remote add shared-docs git@github.com:saturday-vinyl/saturday-vinyl-shared-docs.git
+**Step 2:** Run the setup script from your project root:
+```bash
+# From your project directory (e.g., ~/projects/my-saturday-app)
+~/saturday-vinyl-shared-docs/scripts/setup-shared-docs.sh
+```
+
+**Alternative: Manual setup**
+```bash
+git remote add shared-docs https://github.com/Saturday-Vinyl/saturday-vinyl-shared-docs.git
 git subtree add --prefix=shared-docs shared-docs main --squash
+mkdir -p .claude/commands
 cp shared-docs/templates/claude-commands/*.md .claude/commands/
 ```
 

@@ -1,17 +1,21 @@
 #!/bin/bash
 # Setup shared docs subtree for a new project
-# Run from project root
+# Run from your project root
 #
 # Usage:
-#   curl -sSL https://raw.githubusercontent.com/saturday-vinyl/saturday-vinyl-shared-docs/main/scripts/setup-shared-docs.sh | bash
+#   1. Clone this repo locally (once):
+#      git clone https://github.com/Saturday-Vinyl/saturday-vinyl-shared-docs.git ~/saturday-vinyl-shared-docs
 #
-# Or download and run locally:
-#   ./setup-shared-docs.sh
+#   2. Run from your project directory:
+#      ~/saturday-vinyl-shared-docs/scripts/setup-shared-docs.sh
+#
+# You can also override the remote URL:
+#   SHARED_DOCS_REMOTE_URL=git@github.com:Saturday-Vinyl/saturday-vinyl-shared-docs.git ./setup-shared-docs.sh
 
 set -e
 
-# Configuration - update REMOTE_URL with your actual GitHub org/repo
-REMOTE_URL="${SHARED_DOCS_REMOTE_URL:-git@github.com:saturday-vinyl/saturday-vinyl-shared-docs.git}"
+# Configuration - uses HTTPS by default (works with private repos if you have access)
+REMOTE_URL="${SHARED_DOCS_REMOTE_URL:-https://github.com/Saturday-Vinyl/saturday-vinyl-shared-docs.git}"
 REMOTE_NAME="shared-docs"
 PREFIX="shared-docs"
 BRANCH="main"
