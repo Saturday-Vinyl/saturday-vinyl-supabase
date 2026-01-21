@@ -46,6 +46,15 @@ fi
 echo "Fetching from $REMOTE_NAME..."
 git fetch $REMOTE_NAME
 
+# Check for uncommitted changes and stash if needed
+STASHED=false
+if ! git diff --quiet || ! git diff --cached --quiet || [ -n "$(git ls-files --others --exclude-standard)" ]; then
+    echo ""
+    echo "Stashing uncommitted changes..."
+    git stash --include-untracked
+    STASHED=true
+fi
+
 # Check if subtree already exists
 if [ -d "$PREFIX" ]; then
     echo ""
@@ -55,6 +64,13 @@ else
     echo ""
     echo "Adding subtree at $PREFIX/..."
     git subtree add --prefix=$PREFIX $REMOTE_NAME $BRANCH --squash
+fi
+
+# Restore stashed changes if we stashed them
+if [ "$STASHED" = true ]; then
+    echo ""
+    echo "Restoring stashed changes..."
+    git stash pop
 fi
 
 # Setup Claude commands
