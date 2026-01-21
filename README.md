@@ -18,6 +18,7 @@ Central repository for Saturday Vinyl technical documentation shared across all 
 **Step 1:** Clone this repo locally (one-time, anywhere on your machine):
 ```bash
 git clone https://github.com/Saturday-Vinyl/saturday-vinyl-shared-docs.git ~/saturday-vinyl-shared-docs
+chmod +x ~/saturday-vinyl-shared-docs/scripts/setup-shared-docs.sh
 ```
 
 **Step 2:** Run the setup script from your project root:
