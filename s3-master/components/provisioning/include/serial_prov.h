@@ -199,6 +199,24 @@ bool serial_prov_is_complete(void);
  */
 esp_err_t serial_prov_send_json(const char *json);
 
+/**
+ * @brief Listen for service mode entry command during boot window
+ *
+ * For provisioned devices, this function listens for the "enter_service_mode"
+ * command for a specified timeout period. This allows technicians to enter
+ * service mode on devices returned for repair or diagnostics.
+ *
+ * Per the Service Mode Protocol:
+ * - Fresh devices (no unit_id) should auto-enter service mode
+ * - Provisioned devices should call this function at boot
+ * - If enter_service_mode is received within the window, service mode starts
+ * - If timeout expires, device proceeds to standard operation
+ *
+ * @param timeout_ms Duration to listen for entry command (typically 10000ms)
+ * @return true if service mode was entered, false if timeout expired
+ */
+bool serial_prov_wait_for_entry(uint32_t timeout_ms);
+
 #ifdef __cplusplus
 }
 #endif

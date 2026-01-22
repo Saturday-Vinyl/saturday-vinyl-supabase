@@ -194,6 +194,48 @@ esp_err_t event_reporter_clear_queue(void);
  */
 void event_reporter_set_wifi_state(bool connected);
 
+/*******************************************************************************
+ * H2/Crate Event Reporting (INT-2: Full Pipeline)
+ ******************************************************************************/
+
+/**
+ * @brief Queue a crate inventory update event
+ *
+ * Called when H2 forwards inventory update from a crate.
+ *
+ * @param crate_ext_addr Extended MAC address of crate (8 bytes)
+ * @param epcs Array of EPC values (12 bytes each)
+ * @param epc_count Number of EPCs in array (max 75)
+ * @return ESP_OK on success
+ */
+esp_err_t event_reporter_queue_inventory(const uint8_t *crate_ext_addr,
+                                          const uint8_t (*epcs)[12],
+                                          uint8_t epc_count);
+
+/**
+ * @brief Queue a crate heartbeat event
+ *
+ * Called when H2 forwards heartbeat from a crate.
+ *
+ * @param crate_ext_addr Extended MAC address of crate (8 bytes)
+ * @param battery_percent Battery level (0-100)
+ * @param rssi Signal strength (dBm)
+ * @return ESP_OK on success
+ */
+esp_err_t event_reporter_queue_crate_heartbeat(const uint8_t *crate_ext_addr,
+                                                uint8_t battery_percent,
+                                                int8_t rssi);
+
+/**
+ * @brief Update H2 connection state
+ *
+ * Called when H2 connection state changes. Included in heartbeats.
+ *
+ * @param connected true if H2 is responding
+ * @param thread_state Current Thread BR state (if connected)
+ */
+void event_reporter_set_h2_state(bool connected, uint8_t thread_state);
+
 #ifdef __cplusplus
 }
 #endif

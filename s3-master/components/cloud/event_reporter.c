@@ -240,11 +240,16 @@ static int format_now_playing_json(const queued_event_t *event, char *buf, size_
 
 /**
  * @brief Format heartbeat as JSON
+ *
+ * Uses new device_heartbeats schema:
+ * - device_serial (was unit_id)
+ * - device_type: 'hub'
+ * - device_timestamp (was timestamp)
  */
 static int format_heartbeat_json(char *buf, size_t buf_len)
 {
-    char unit_id[SUPABASE_UNIT_ID_MAX_LEN] = "UNIT-UNKNOWN";
-    supabase_get_unit_id(unit_id, sizeof(unit_id));
+    char device_serial[SUPABASE_UNIT_ID_MAX_LEN] = "UNIT-UNKNOWN";
+    supabase_get_unit_id(device_serial, sizeof(device_serial));
 
     char timestamp[32];
     format_timestamp(esp_timer_get_time(), timestamp, sizeof(timestamp));
@@ -262,10 +267,11 @@ static int format_heartbeat_json(char *buf, size_t buf_len)
     uint32_t uptime_sec = (uint32_t)(esp_timer_get_time() / 1000000);
 
     int len = snprintf(buf, buf_len,
-        "{\"unit_id\":\"%s\",\"firmware_version\":\"0.6.0\","
+        "{\"device_serial\":\"%s\",\"device_type\":\"hub\","
+        "\"firmware_version\":\"0.6.0\","
         "\"wifi_rssi\":%d,\"uptime_sec\":%lu,\"free_heap\":%lu,"
-        "\"events_queued\":%u,\"timestamp\":\"%s\"}",
-        unit_id, wifi_rssi, (unsigned long)uptime_sec,
+        "\"events_queued\":%u,\"device_timestamp\":\"%s\"}",
+        device_serial, wifi_rssi, (unsigned long)uptime_sec,
         (unsigned long)esp_get_free_heap_size(),
         s_state.queue.count, timestamp);
 
@@ -343,7 +349,7 @@ static esp_err_t send_heartbeat_internal(void)
 #endif
 
     supabase_response_t response;
-    esp_err_t err = supabase_post("hub_heartbeats", json, &response, 0);
+    esp_err_t err = supabase_post("device_heartbeats", json, &response, 0);
 
     /* Restart Thread after WiFi operation */
 #if defined(CONFIG_OPENTHREAD_ENABLED) && CONFIG_OPENTHREAD_ENABLED
@@ -801,4 +807,166 @@ void event_reporter_set_wifi_state(bool connected)
     } else if (!connected && was_connected) {
         ESP_LOGI(TAG, "Wi-Fi disconnected - events will be queued");
     }
+}
+
+/*******************************************************************************
+ * H2/Crate Event Reporting (INT-2: Full Pipeline)
+ ******************************************************************************/
+
+/* H2 state tracking for heartbeats */
+static bool s_h2_connected = false;
+static uint8_t s_h2_thread_state = 0;
+
+void event_reporter_set_h2_state(bool connected, uint8_t thread_state)
+{
+    s_h2_connected = connected;
+    s_h2_thread_state = thread_state;
+    ESP_LOGD(TAG, "H2 state updated: connected=%d, thread_state=%d", connected, thread_state);
+}
+
+/**
+ * @brief Format extended MAC address as hex string
+ */
+static void format_ext_addr(const uint8_t *ext_addr, char *buf, size_t buf_len)
+{
+    snprintf(buf, buf_len, "%02X%02X%02X%02X%02X%02X%02X%02X",
+             ext_addr[0], ext_addr[1], ext_addr[2], ext_addr[3],
+             ext_addr[4], ext_addr[5], ext_addr[6], ext_addr[7]);
+}
+
+/**
+ * @brief Send crate inventory event to Supabase directly
+ *
+ * Note: This is called from main context when H2 event is received.
+ * For simplicity, we send immediately rather than queuing.
+ */
+esp_err_t event_reporter_queue_inventory(const uint8_t *crate_ext_addr,
+                                          const uint8_t (*epcs)[12],
+                                          uint8_t epc_count)
+{
+    if (!s_state.initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (!s_state.wifi_connected || !supabase_is_configured()) {
+        ESP_LOGW(TAG, "Cannot send inventory - WiFi or Supabase not ready");
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    if (!wifi_is_time_synced()) {
+        ESP_LOGW(TAG, "Cannot send inventory - time not synced");
+        return ESP_ERR_NOT_FINISHED;
+    }
+
+    char unit_id[SUPABASE_UNIT_ID_MAX_LEN] = "UNIT-UNKNOWN";
+    supabase_get_unit_id(unit_id, sizeof(unit_id));
+
+    char crate_id[20];
+    format_ext_addr(crate_ext_addr, crate_id, sizeof(crate_id));
+
+    char timestamp[32];
+    format_timestamp(esp_timer_get_time(), timestamp, sizeof(timestamp));
+
+    /* Build EPC array JSON */
+    char epcs_json[1024] = "[";
+    size_t epcs_len = 1;
+    for (uint8_t i = 0; i < epc_count && epcs_len < sizeof(epcs_json) - 30; i++) {
+        char epc_hex[25];
+        for (int j = 0; j < 12; j++) {
+            snprintf(&epc_hex[j * 2], 3, "%02X", epcs[i][j]);
+        }
+        if (i > 0) {
+            epcs_len += snprintf(&epcs_json[epcs_len], sizeof(epcs_json) - epcs_len, ",");
+        }
+        epcs_len += snprintf(&epcs_json[epcs_len], sizeof(epcs_json) - epcs_len, "\"%s\"", epc_hex);
+    }
+    snprintf(&epcs_json[epcs_len], sizeof(epcs_json) - epcs_len, "]");
+
+    /* Build full JSON */
+    char json[1500];
+    int len = snprintf(json, sizeof(json),
+        "{\"unit_id\":\"%s\",\"crate_id\":\"%s\",\"epcs\":%s,"
+        "\"epc_count\":%d,\"timestamp\":\"%s\"}",
+        unit_id, crate_id, epcs_json, epc_count, timestamp);
+
+    if (len >= sizeof(json)) {
+        ESP_LOGE(TAG, "Inventory JSON too long");
+        return ESP_ERR_INVALID_SIZE;
+    }
+
+    ESP_LOGI(TAG, "Sending inventory update: crate=%s, epcs=%d", crate_id, epc_count);
+
+    supabase_response_t response;
+    esp_err_t err = supabase_post("crate_inventory_events", json, &response, 0);
+
+    if (err == ESP_OK && response.status_code >= 200 && response.status_code < 300) {
+        ESP_LOGI(TAG, "Inventory update sent successfully");
+        supabase_response_free(&response);
+        return ESP_OK;
+    }
+
+    if (err == ESP_OK) {
+        ESP_LOGW(TAG, "Inventory POST failed with status %d", response.status_code);
+        err = ESP_FAIL;
+    }
+    supabase_response_free(&response);
+    return err;
+}
+
+esp_err_t event_reporter_queue_crate_heartbeat(const uint8_t *crate_ext_addr,
+                                                uint8_t battery_percent,
+                                                int8_t rssi)
+{
+    if (!s_state.initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (!s_state.wifi_connected || !supabase_is_configured()) {
+        ESP_LOGD(TAG, "Cannot send crate heartbeat - WiFi or Supabase not ready");
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    if (!wifi_is_time_synced()) {
+        ESP_LOGD(TAG, "Cannot send crate heartbeat - time not synced");
+        return ESP_ERR_NOT_FINISHED;
+    }
+
+    char unit_id[SUPABASE_UNIT_ID_MAX_LEN] = "UNIT-UNKNOWN";
+    supabase_get_unit_id(unit_id, sizeof(unit_id));
+
+    char crate_id[20];
+    format_ext_addr(crate_ext_addr, crate_id, sizeof(crate_id));
+
+    char timestamp[32];
+    format_timestamp(esp_timer_get_time(), timestamp, sizeof(timestamp));
+
+    char json[256];
+    int len = snprintf(json, sizeof(json),
+        "{\"unit_id\":\"%s\",\"crate_id\":\"%s\",\"battery_percent\":%d,"
+        "\"rssi\":%d,\"timestamp\":\"%s\"}",
+        unit_id, crate_id, battery_percent, rssi, timestamp);
+
+    if (len >= sizeof(json)) {
+        ESP_LOGE(TAG, "Crate heartbeat JSON too long");
+        return ESP_ERR_INVALID_SIZE;
+    }
+
+    ESP_LOGD(TAG, "Sending crate heartbeat: crate=%s, batt=%d%%, rssi=%d",
+             crate_id, battery_percent, rssi);
+
+    supabase_response_t response;
+    esp_err_t err = supabase_post("crate_heartbeats", json, &response, 0);
+
+    if (err == ESP_OK && response.status_code >= 200 && response.status_code < 300) {
+        ESP_LOGD(TAG, "Crate heartbeat sent successfully");
+        supabase_response_free(&response);
+        return ESP_OK;
+    }
+
+    if (err == ESP_OK) {
+        ESP_LOGW(TAG, "Crate heartbeat POST failed with status %d", response.status_code);
+        err = ESP_FAIL;
+    }
+    supabase_response_free(&response);
+    return err;
 }

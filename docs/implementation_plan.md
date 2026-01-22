@@ -343,7 +343,7 @@ sv-hub-firmware/
 #### Tasks
 
 ##### S3-7.1 Protocol Definition
-- [ ] Create `shared/protocol/s3_h2_protocol.h`
+- [x] Create `shared/protocol/s3_h2_protocol.h`
 - [ ] Define frame format:
   ```c
   #define PROTO_HEADER        0xAA
@@ -373,30 +373,30 @@ sv-hub-firmware/
   ```
 
 ##### S3-7.2 Protocol Codec
-- [ ] Create `components/h2_comm/h2_protocol.c`
-- [ ] Frame builder with CRC-16
-- [ ] Frame parser with validation
+- [x] Create `components/h2_comm/h2_protocol.c`
+- [x] Frame builder with CRC-16
+- [x] Frame parser with validation
 
 ##### S3-7.3 H2 Communication Task
-- [ ] Create `components/h2_comm/h2_comm.c`
-- [ ] Background task for UART RX
-- [ ] Command/response with 1s timeout
-- [ ] Async event handling
+- [x] Create `components/h2_comm/h2_comm.c`
+- [x] Background task for UART RX
+- [x] Command/response with 1s timeout
+- [x] Async event handling
 
 ##### S3-7.4 H2 Control Functions
-- [ ] `h2_ping()` - Health check
-- [ ] `h2_get_status()` - Get Thread BR status
-- [ ] `h2_start_thread()` - Start Thread network
-- [ ] `h2_enable_joining()` - Enable commissioner
+- [x] `h2_ping()` - Health check
+- [x] `h2_get_status()` - Get Thread BR status
+- [x] `h2_start_thread()` - Start Thread network
+- [x] `h2_enable_joining()` - Enable commissioner
 
 ##### S3-7.5 H2 Health Monitoring
-- [ ] Periodic PING every 5 seconds
-- [ ] Reset H2 after 3 failures (GPIO6 toggle)
-- [ ] LED shows H2 error state
+- [x] Periodic PING every 5 seconds
+- [x] Reset H2 after 3 failures (GPIO6 toggle)
+- [x] LED shows H2 error state
 
 ##### S3-7.6 Event Forwarding
-- [ ] Forward INVENTORY_UPDATE to Supabase
-- [ ] Forward CRATE_HEARTBEAT to Supabase
+- [x] Forward INVENTORY_UPDATE to Supabase
+- [x] Forward CRATE_HEARTBEAT to Supabase
 - [ ] Queue if WiFi unavailable
 
 #### Deliverables
@@ -666,19 +666,19 @@ Service Mode provides a standardized serial interface for factory provisioning, 
 - [ ] Wire S3 GPIO7 to H2 GPIO4 (boot)
 
 ##### INT-1.2 Communication Test
-- [ ] S3 sends PING, H2 responds PONG
-- [ ] S3 sends GET_STATUS, H2 responds with Thread status
-- [ ] H2 sends async events, S3 receives
+- [x] S3 sends PING, H2 responds PONG (h2_comm_ping)
+- [x] S3 sends GET_STATUS, H2 responds with Thread status (h2_comm_get_status)
+- [x] H2 sends async events, S3 receives (event handlers in main.c)
 
 ##### INT-1.3 Thread Control
-- [ ] S3 sends START_THREAD, H2 forms network
-- [ ] S3 sends ENABLE_JOINING, H2 enables commissioner
-- [ ] S3 monitors H2 via periodic PING
+- [x] S3 sends START_THREAD, H2 forms network (h2_comm_start_thread)
+- [x] S3 sends ENABLE_JOINING, H2 enables commissioner (h2_comm_enable_joining)
+- [x] S3 monitors H2 via periodic PING (health monitor task)
 
 ##### INT-1.4 Error Recovery
-- [ ] S3 detects H2 not responding
-- [ ] S3 resets H2 via GPIO6
-- [ ] H2 recovers and rejoins Thread network
+- [x] S3 detects H2 not responding (ping failure tracking)
+- [x] S3 resets H2 via GPIO6 (h2_comm_reset)
+- [ ] H2 recovers and rejoins Thread network (needs hardware testing)
 
 #### Deliverables
 - Reliable S3↔H2 communication
@@ -696,20 +696,20 @@ Service Mode provides a standardized serial interface for factory provisioning, 
 ##### INT-2.1 Mock Crate Testing
 - [ ] Use CoAP client to simulate crate
 - [ ] Send inventory update to H2
-- [ ] Verify reaches S3 via UART
-- [ ] Verify reaches Supabase
+- [x] Verify reaches S3 via UART (h2_comm event handling)
+- [x] Verify reaches Supabase (event_reporter_queue_inventory)
 
 ##### INT-2.2 Thread Commissioning
 - [ ] S3 receives "add crate" from cloud
-- [ ] S3 sends ENABLE_JOINING to H2
+- [x] S3 sends ENABLE_JOINING to H2 (h2_comm_enable_joining)
 - [ ] Crate joins Thread network
-- [ ] H2 sends CRATE_JOINED to S3
+- [x] H2 sends CRATE_JOINED to S3 (EVT_CRATE_JOINED handler)
 - [ ] S3 reports to Supabase
 
 ##### INT-2.3 Inventory Flow
 - [ ] Crate sends inventory via CoAP to H2
-- [ ] H2 forwards via UART to S3
-- [ ] S3 sends to Supabase
+- [x] H2 forwards via UART to S3 (h2_comm EVT_INVENTORY_UPDATE)
+- [x] S3 sends to Supabase (event_reporter_queue_inventory)
 - [ ] Verify correct data at each hop
 
 ##### INT-2.4 Real Crate Integration

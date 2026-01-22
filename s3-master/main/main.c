@@ -25,6 +25,7 @@
 #include "event_reporter.h"
 #include "ble_prov.h"
 #include "serial_prov.h"
+#include "h2_comm.h"
 
 static const char *TAG = "main";
 
@@ -36,6 +37,9 @@ static bool s_service_mode_active = false;
 
 /* Track if we're in BLE provisioning mode */
 static bool s_ble_prov_active = false;
+
+/* Track H2 connection state */
+static bool s_h2_connected = false;
 
 /**
  * @brief Now Playing event handler - LED feedback for tag place/remove
@@ -218,6 +222,96 @@ static void on_service_mode_state_change(serial_prov_state_t state, void *user_d
 
         case SERIAL_PROV_STATE_IDLE:
             s_service_mode_active = false;
+            break;
+    }
+}
+
+/**
+ * @brief H2 communication event handler - handles Thread/crate events from H2
+ */
+static void on_h2_event(void *handler_args, esp_event_base_t base,
+                        int32_t id, void *event_data)
+{
+    switch (id) {
+        case H2_COMM_EVENT_CONNECTED:
+            ESP_LOGI(TAG, "H2 connected");
+            s_h2_connected = true;
+            /* Update event reporter with H2 state */
+            event_reporter_set_h2_state(true, 0);
+            break;
+
+        case H2_COMM_EVENT_DISCONNECTED:
+            ESP_LOGW(TAG, "H2 disconnected");
+            s_h2_connected = false;
+            event_reporter_set_h2_state(false, 0);
+            /* Show H2 error state on LED */
+            if (!s_ble_prov_active && !s_service_mode_active) {
+                led_set_state(LED_COLOR_RED, LED_PATTERN_BLINK_SLOW, 1000);
+            }
+            break;
+
+        case H2_COMM_EVENT_THREAD_STATE_CHANGED: {
+            h2_comm_thread_state_event_t *evt = (h2_comm_thread_state_event_t *)event_data;
+            ESP_LOGI(TAG, "Thread state: %s -> %s",
+                     h2_comm_thread_state_str(evt->old_state),
+                     h2_comm_thread_state_str(evt->new_state));
+            event_reporter_set_h2_state(true, evt->new_state);
+
+            /* Brief cyan flash when Thread becomes leader/router */
+            if (evt->new_state == S3H2_THREAD_STATE_LEADER ||
+                evt->new_state == S3H2_THREAD_STATE_ROUTER) {
+                if (!s_ble_prov_active && !s_service_mode_active) {
+                    led_flash(LED_COLOR_CYAN, 500);
+                }
+            }
+            break;
+        }
+
+        case H2_COMM_EVENT_CRATE_JOINED: {
+            h2_comm_crate_joined_event_t *evt = (h2_comm_crate_joined_event_t *)event_data;
+            ESP_LOGI(TAG, "Crate joined: rloc16=0x%04X", evt->rloc16);
+            /* Brief magenta flash to indicate new crate */
+            if (!s_ble_prov_active && !s_service_mode_active) {
+                led_flash(LED_COLOR_MAGENTA, 500);
+            }
+            break;
+        }
+
+        case H2_COMM_EVENT_CRATE_LEFT: {
+            ESP_LOGI(TAG, "Crate left network");
+            break;
+        }
+
+        case H2_COMM_EVENT_INVENTORY_UPDATE: {
+            h2_comm_inventory_event_t *evt = (h2_comm_inventory_event_t *)event_data;
+            ESP_LOGI(TAG, "Inventory update: %d EPCs from crate", evt->epc_count);
+            /* Forward to cloud via event_reporter */
+            event_reporter_queue_inventory(evt->ext_addr,
+                                            (const uint8_t (*)[12])evt->epcs,
+                                            evt->epc_count);
+            break;
+        }
+
+        case H2_COMM_EVENT_CRATE_HEARTBEAT: {
+            h2_comm_crate_heartbeat_event_t *evt = (h2_comm_crate_heartbeat_event_t *)event_data;
+            ESP_LOGD(TAG, "Crate heartbeat: batt=%d%%, rssi=%d",
+                     evt->battery_percent, evt->rssi);
+            /* Forward to cloud via event_reporter */
+            event_reporter_queue_crate_heartbeat(evt->ext_addr,
+                                                  evt->battery_percent,
+                                                  evt->rssi);
+            break;
+        }
+
+        case H2_COMM_EVENT_H2_RESET:
+            ESP_LOGW(TAG, "H2 was reset");
+            break;
+
+        case H2_COMM_EVENT_ERROR:
+            ESP_LOGE(TAG, "H2 error event received");
+            break;
+
+        default:
             break;
     }
 }
@@ -449,7 +543,52 @@ void app_main(void)
         ESP_LOGI(TAG, "BLE provisioning initialized");
     }
 
-    /* TODO: Phase S3-7 - Initialize H2 communication interface */
+    /* Phase S3-7/INT-1: Initialize H2 communication interface */
+    ret = h2_comm_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "H2 communication init failed: %s", esp_err_to_name(ret));
+    } else {
+        ESP_LOGI(TAG, "H2 communication initialized");
+
+        /* Register for H2 events */
+        ret = esp_event_handler_register(H2_COMM_EVENTS, ESP_EVENT_ANY_ID,
+                                          on_h2_event, NULL);
+        if (ret != ESP_OK) {
+            ESP_LOGW(TAG, "Failed to register H2 event handler: %s", esp_err_to_name(ret));
+        }
+
+        /* Try initial PING to check if H2 is present */
+        ret = h2_comm_ping(1000);
+        if (ret == ESP_OK) {
+            ESP_LOGI(TAG, "H2 responded to initial PING");
+            s_h2_connected = true;
+
+            /* Get H2 version */
+            s3h2_version_payload_t h2_version;
+            if (h2_comm_get_version(&h2_version, 1000) == ESP_OK) {
+                ESP_LOGI(TAG, "H2 firmware version: %d.%d.%d",
+                         h2_version.major, h2_version.minor, h2_version.patch);
+            }
+
+            /* Start Thread network */
+            ret = h2_comm_start_thread(2000);
+            if (ret == ESP_OK) {
+                ESP_LOGI(TAG, "Thread BR started");
+            } else {
+                ESP_LOGW(TAG, "Failed to start Thread BR: %s", esp_err_to_name(ret));
+            }
+        } else {
+            ESP_LOGW(TAG, "H2 not responding - will retry via health monitor");
+        }
+
+        /* Start H2 health monitoring (periodic PING, auto-reset) */
+        ret = h2_comm_start_health_monitor();
+        if (ret == ESP_OK) {
+            ESP_LOGI(TAG, "H2 health monitor started");
+        } else {
+            ESP_LOGW(TAG, "Failed to start H2 health monitor: %s", esp_err_to_name(ret));
+        }
+    }
 
     /* Phase S3-8: Initialize service mode handler */
     ret = serial_prov_init();
@@ -469,21 +608,43 @@ void app_main(void)
         if (ret != ESP_OK) {
             ESP_LOGE(TAG, "Failed to start service mode: %s", esp_err_to_name(ret));
         }
-    } else if (!config_has_wifi()) {
-        /* Has unit_id but no WiFi = factory provisioned, needs consumer WiFi setup */
-        char unit_id[32];
-        config_get_unit_id(unit_id, sizeof(unit_id));
-        ESP_LOGI(TAG, "Device provisioned (%s) but no WiFi - starting BLE provisioning", unit_id);
-        s_ble_prov_active = true;  /* Set flag before starting to prevent yellow LED race */
-        ret = ble_prov_start();
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to start BLE provisioning: %s", esp_err_to_name(ret));
-            s_ble_prov_active = false;
-        }
     } else {
+        /* Device is provisioned - check for service mode entry during boot window */
         char unit_id[32];
         config_get_unit_id(unit_id, sizeof(unit_id));
         ESP_LOGI(TAG, "Device provisioned: %s", unit_id);
+
+        /* Per Service Mode Protocol: Listen for enter_service_mode for 10 seconds.
+         * This allows technicians to access service mode on provisioned devices. */
+        ESP_LOGI(TAG, "Listening for service mode entry (10 second window)...");
+        led_set_state(LED_COLOR_WHITE, LED_PATTERN_BLINK_SLOW, 1000);
+
+        if (serial_prov_wait_for_entry(10000)) {
+            /* Service mode was entered - stay in service mode */
+            ESP_LOGI(TAG, "Entered service mode via boot window");
+            s_service_mode_active = true;
+        } else {
+            /* No service mode entry - proceed to standard operation */
+            if (!config_has_wifi()) {
+                /* Has unit_id but no WiFi = factory provisioned, needs consumer WiFi setup */
+                ESP_LOGI(TAG, "No WiFi configured - starting BLE provisioning");
+                s_ble_prov_active = true;  /* Set flag before starting to prevent yellow LED race */
+                ret = ble_prov_start();
+                if (ret != ESP_OK) {
+                    ESP_LOGE(TAG, "Failed to start BLE provisioning: %s", esp_err_to_name(ret));
+                    s_ble_prov_active = false;
+                }
+            } else {
+                /* Fully provisioned - proceed to normal operation */
+                ESP_LOGI(TAG, "Proceeding to standard operation");
+                /* Return LED to appropriate state based on WiFi */
+                if (s_wifi_connected) {
+                    led_set_state(LED_COLOR_GREEN, LED_PATTERN_PULSE, 3000);
+                } else {
+                    led_set_state(LED_COLOR_YELLOW, LED_PATTERN_BLINK_SLOW, 1000);
+                }
+            }
+        }
     }
 
     ESP_LOGI(TAG, "Initialization complete - system running");

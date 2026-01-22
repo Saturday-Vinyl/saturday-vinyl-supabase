@@ -310,6 +310,85 @@ bool serial_prov_is_complete(void)
     return s_prov.sequence_complete;
 }
 
+bool serial_prov_wait_for_entry(uint32_t timeout_ms)
+{
+    if (!s_prov.initialized) {
+        ESP_LOGE(TAG, "serial_prov not initialized");
+        return false;
+    }
+
+    ESP_LOGI(TAG, "Listening for service mode entry command (%lu ms window)...",
+             (unsigned long)timeout_ms);
+
+    /* Buffer for reading serial data */
+    char rx_buffer[256];
+    size_t rx_len = 0;
+    uint8_t byte;
+
+    int64_t start_time = esp_timer_get_time();
+    int64_t timeout_us = (int64_t)timeout_ms * 1000;
+
+    while ((esp_timer_get_time() - start_time) < timeout_us) {
+        /* Read from USB Serial JTAG driver with short timeout */
+        int len = usb_serial_jtag_read_bytes(&byte, 1, pdMS_TO_TICKS(50));
+
+        if (len > 0) {
+            if (byte == '\n' || byte == '\r') {
+                /* End of message - check if it's enter_service_mode */
+                if (rx_len > 0) {
+                    rx_buffer[rx_len] = '\0';
+                    ESP_LOGI(TAG, "Received during boot window: %s", rx_buffer);
+
+                    /* Parse JSON and check for enter_service_mode command */
+                    cJSON *root = cJSON_Parse(rx_buffer);
+                    if (root != NULL) {
+                        cJSON *cmd = cJSON_GetObjectItem(root, "cmd");
+                        if (cJSON_IsString(cmd) &&
+                            strcmp(cmd->valuestring, "enter_service_mode") == 0) {
+                            cJSON_Delete(root);
+
+                            ESP_LOGI(TAG, "Service mode entry command received - entering service mode");
+
+                            /* Start service mode */
+                            esp_err_t err = serial_prov_start();
+                            if (err == ESP_OK) {
+                                /* Send acknowledgment */
+                                cJSON *resp = cJSON_CreateObject();
+                                cJSON_AddStringToObject(resp, "status", "ok");
+                                cJSON_AddStringToObject(resp, "message", "Entered service mode");
+                                char *json = cJSON_PrintUnformatted(resp);
+                                if (json) {
+                                    serial_prov_send_json(json);
+                                    cJSON_free(json);
+                                }
+                                cJSON_Delete(resp);
+                                return true;
+                            } else {
+                                ESP_LOGE(TAG, "Failed to start service mode: %s",
+                                         esp_err_to_name(err));
+                            }
+                        }
+                        cJSON_Delete(root);
+                    }
+                    rx_len = 0;
+                }
+            } else if (rx_len < sizeof(rx_buffer) - 1) {
+                /* Add byte to buffer */
+                rx_buffer[rx_len++] = (char)byte;
+            } else {
+                /* Buffer overflow - discard */
+                rx_len = 0;
+            }
+        }
+
+        /* Allow other tasks to run */
+        vTaskDelay(pdMS_TO_TICKS(5));
+    }
+
+    ESP_LOGI(TAG, "Service mode entry window expired - proceeding to standard mode");
+    return false;
+}
+
 esp_err_t serial_prov_send_json(const char *json)
 {
     if (json == NULL) {

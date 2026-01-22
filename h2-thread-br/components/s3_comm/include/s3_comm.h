@@ -32,8 +32,12 @@ extern "C" {
  * Configuration
  ******************************************************************************/
 
-/** UART configuration for S3 communication */
-#define S3_COMM_UART_NUM            UART_NUM_0
+/** UART configuration for S3 communication
+ *
+ * Uses UART1 to avoid conflict with USB-CDC (UART0) used for monitoring/debug.
+ * GPIO 23/24 are the physical connections to S3 on the carrier board.
+ */
+#define S3_COMM_UART_NUM            UART_NUM_1
 #define S3_COMM_UART_BAUD           115200
 #define S3_COMM_UART_TX_PIN         24  /* H2 TX -> S3 RX */
 #define S3_COMM_UART_RX_PIN         23  /* H2 RX <- S3 TX */
