@@ -53,6 +53,11 @@ class ServiceModeService {
         final error = SerialPort.lastError;
         AppLogger.error('Failed to open port $portName: $error');
         _rawLogController.add('[ERROR] Failed to open port: $error');
+        // Clean up the port object on failure
+        try {
+          _port?.dispose();
+        } catch (_) {}
+        _port = null;
         return false;
       }
 
@@ -63,21 +68,39 @@ class ServiceModeService {
         ..parity = SerialPortParity.none
         ..stopBits = 1
         ..setFlowControl(SerialPortFlowControl.none);
-      _port!.config = config;
+
+      try {
+        _port!.config = config;
+      } catch (e) {
+        AppLogger.error('Failed to configure port $portName', e);
+        _rawLogController.add('[ERROR] Failed to configure port: $e');
+        await disconnect();
+        return false;
+      }
+
+      // Small delay to allow port to stabilize before reading
+      await Future.delayed(const Duration(milliseconds: 100));
 
       // Start reading
-      _reader = SerialPortReader(_port!);
-      _readerSubscription = _reader!.stream.listen(
-        _handleData,
-        onError: (error) {
-          AppLogger.error('Serial read error', error);
-          _rawLogController.add('[ERROR] Serial read error: $error');
-        },
-        onDone: () {
-          _rawLogController.add('[INFO] Serial connection closed');
-          _setConnected(false);
-        },
-      );
+      try {
+        _reader = SerialPortReader(_port!);
+        _readerSubscription = _reader!.stream.listen(
+          _handleData,
+          onError: (error) {
+            AppLogger.error('Serial read error', error);
+            _rawLogController.add('[ERROR] Serial read error: $error');
+          },
+          onDone: () {
+            _rawLogController.add('[INFO] Serial connection closed');
+            _setConnected(false);
+          },
+        );
+      } catch (e) {
+        AppLogger.error('Failed to start reading from $portName', e);
+        _rawLogController.add('[ERROR] Failed to start reading: $e');
+        await disconnect();
+        return false;
+      }
 
       _setConnected(true);
       _rawLogController.add('[INFO] Connected to $portName at $_baudRate baud');
@@ -85,21 +108,62 @@ class ServiceModeService {
     } catch (e, stackTrace) {
       AppLogger.error('Failed to connect to $portName', e, stackTrace);
       _rawLogController.add('[ERROR] Failed to connect: $e');
+      // Ensure cleanup on any unexpected error
+      await disconnect();
       return false;
     }
   }
 
   /// Disconnect from device
+  ///
+  /// This method ensures proper cleanup of all serial resources in the correct
+  /// order to prevent resource leaks and allow reconnection.
   Future<void> disconnect() async {
-    await _readerSubscription?.cancel();
+    // Skip if already disconnected
+    if (_port == null && _reader == null && _readerSubscription == null) {
+      return;
+    }
+
+    // First, cancel the subscription to stop receiving data
+    try {
+      await _readerSubscription?.cancel();
+    } catch (e) {
+      AppLogger.error('Error cancelling reader subscription', e);
+    }
     _readerSubscription = null;
+
+    // Close the reader before closing the port
+    // SerialPortReader holds a reference to the port's stream
+    try {
+      _reader?.close();
+    } catch (e) {
+      AppLogger.error('Error closing serial reader', e);
+    }
     _reader = null;
 
-    if (_port != null && _port!.isOpen) {
-      _port!.close();
+    // Close the port
+    if (_port != null) {
+      try {
+        if (_port!.isOpen) {
+          _port!.close();
+        }
+      } catch (e) {
+        AppLogger.error('Error closing serial port', e);
+      }
+
+      // Dispose the port to release native resources
+      try {
+        _port!.dispose();
+      } catch (e) {
+        AppLogger.error('Error disposing serial port', e);
+      }
+      _port = null;
+
+      // Small delay to allow OS to fully release the port handle
+      // This is necessary on some platforms (especially macOS) where the
+      // port handle may still be held briefly after close/dispose
+      await Future.delayed(const Duration(milliseconds: 100));
     }
-    _port?.dispose();
-    _port = null;
 
     _lineBuffer.clear();
     _lastBeaconInfo = null;
@@ -355,19 +419,19 @@ class ServiceModeService {
       final bytes = Uint8List.fromList(utf8.encode(jsonString));
       _port!.write(bytes);
 
-      // Wait for either JSON response or log-based success indicators
+      // Wait for the JSON 'provisioned' response
+      // We prioritize the JSON response over log-based detection to ensure
+      // the response is consumed and won't interfere with subsequent commands
       final completer = Completer<bool>();
 
       late StreamSubscription<ServiceModeMessage> messageSubscription;
-      late StreamSubscription<String> logSubscription;
       Timer? timeoutTimer;
 
-      // Listen for JSON response (preferred)
+      // Listen for JSON response
       messageSubscription = messageStream.listen((message) {
         if (message.status == ServiceModeStatus.provisioned) {
           timeoutTimer?.cancel();
           messageSubscription.cancel();
-          logSubscription.cancel();
           if (!completer.isCompleted) {
             _rawLogController.add('[INFO] Device provisioned successfully');
             completer.complete(true);
@@ -375,33 +439,17 @@ class ServiceModeService {
         } else if (message.isError) {
           timeoutTimer?.cancel();
           messageSubscription.cancel();
-          logSubscription.cancel();
           if (!completer.isCompleted) {
             final errorMsg = ServiceModeErrorCodes.getMessage(message.errorCode);
             _rawLogController.add('[ERROR] Provisioning failed: $errorMsg');
             completer.complete(false);
           }
         }
-      });
-
-      // Listen for ESP-IDF log lines as fallback success indicator
-      logSubscription = rawLogStream.listen((logLine) {
-        if (logLine.contains('Device marked as provisioned') ||
-            logLine.contains('Factory provisioning complete') ||
-            logLine.contains('Provisioning complete')) {
-          timeoutTimer?.cancel();
-          messageSubscription.cancel();
-          logSubscription.cancel();
-          if (!completer.isCompleted) {
-            _rawLogController.add('[INFO] Provisioning confirmed via device logs');
-            completer.complete(true);
-          }
-        }
+        // Ignore beacon messages - keep waiting for provisioned/error response
       });
 
       timeoutTimer = Timer(ServiceModeTimeouts.standardCommand, () {
         messageSubscription.cancel();
-        logSubscription.cancel();
         if (!completer.isCompleted) {
           _rawLogController.add('[TIMEOUT] No provisioning confirmation received');
           completer.complete(false);
@@ -626,8 +674,38 @@ class ServiceModeService {
     }
   }
 
+  /// Dispose the service and release all resources.
+  ///
+  /// Note: This performs synchronous cleanup. For a clean disconnect that
+  /// waits for the OS to release the port, call `await disconnect()` first.
   void dispose() {
-    disconnect();
+    // Synchronous cleanup - cancel subscription and close reader/port
+    _readerSubscription?.cancel();
+    _readerSubscription = null;
+
+    try {
+      _reader?.close();
+    } catch (_) {}
+    _reader = null;
+
+    if (_port != null) {
+      try {
+        if (_port!.isOpen) {
+          _port!.close();
+        }
+      } catch (_) {}
+
+      try {
+        _port!.dispose();
+      } catch (_) {}
+      _port = null;
+    }
+
+    _lineBuffer.clear();
+    _lastBeaconInfo = null;
+    _isConnected = false;
+
+    // Close stream controllers
     _messageController.close();
     _rawLogController.close();
     _beaconController.close();

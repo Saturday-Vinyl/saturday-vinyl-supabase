@@ -2,6 +2,7 @@
 -- Migration: 012_gcode_path_migration.sql
 -- Description: Update gcode_files paths for cnc/laser directory restructure
 -- Date: 2025-10-15
+-- Idempotent: Yes - safe to run multiple times
 --
 -- PURPOSE:
 -- This migration updates existing gcode_files.github_path values to match
@@ -16,6 +17,7 @@
 -- STEP 1: Add temporary column to track migration status
 -- ============================================================================
 
+-- Add column if not exists (already idempotent)
 ALTER TABLE public.gcode_files
   ADD COLUMN IF NOT EXISTS migration_applied BOOLEAN DEFAULT false;
 

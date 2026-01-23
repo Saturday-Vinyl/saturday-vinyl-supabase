@@ -3,19 +3,14 @@
 -- ============================================================================
 -- This migration creates tables for products, variants, production steps,
 -- device types, and their relationships.
+--
+-- Idempotent: Yes - safe to run multiple times
 -- ============================================================================
-
--- Drop existing tables if they exist (in reverse dependency order)
-DROP TABLE IF EXISTS public.product_device_types CASCADE;
-DROP TABLE IF EXISTS public.production_steps CASCADE;
-DROP TABLE IF EXISTS public.product_variants CASCADE;
-DROP TABLE IF EXISTS public.device_types CASCADE;
-DROP TABLE IF EXISTS public.products CASCADE;
 
 -- ============================================================================
 -- PRODUCTS TABLE
 -- ============================================================================
-CREATE TABLE public.products (
+CREATE TABLE IF NOT EXISTS public.products (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     shopify_product_id TEXT NOT NULL UNIQUE,
     shopify_product_handle TEXT NOT NULL,
@@ -29,15 +24,15 @@ CREATE TABLE public.products (
 );
 
 -- Create indexes for products
-CREATE INDEX idx_products_shopify_id ON public.products(shopify_product_id);
-CREATE INDEX idx_products_handle ON public.products(shopify_product_handle);
-CREATE INDEX idx_products_code ON public.products(product_code);
-CREATE INDEX idx_products_active ON public.products(is_active);
+CREATE INDEX IF NOT EXISTS idx_products_shopify_id ON public.products(shopify_product_id);
+CREATE INDEX IF NOT EXISTS idx_products_handle ON public.products(shopify_product_handle);
+CREATE INDEX IF NOT EXISTS idx_products_code ON public.products(product_code);
+CREATE INDEX IF NOT EXISTS idx_products_active ON public.products(is_active);
 
 -- ============================================================================
 -- PRODUCT VARIANTS TABLE
 -- ============================================================================
-CREATE TABLE public.product_variants (
+CREATE TABLE IF NOT EXISTS public.product_variants (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     product_id UUID NOT NULL REFERENCES public.products(id) ON DELETE CASCADE,
     shopify_variant_id TEXT NOT NULL UNIQUE,
@@ -56,15 +51,15 @@ CREATE TABLE public.product_variants (
 );
 
 -- Create indexes for product variants
-CREATE INDEX idx_variants_product_id ON public.product_variants(product_id);
-CREATE INDEX idx_variants_shopify_id ON public.product_variants(shopify_variant_id);
-CREATE INDEX idx_variants_sku ON public.product_variants(sku);
-CREATE INDEX idx_variants_active ON public.product_variants(is_active);
+CREATE INDEX IF NOT EXISTS idx_variants_product_id ON public.product_variants(product_id);
+CREATE INDEX IF NOT EXISTS idx_variants_shopify_id ON public.product_variants(shopify_variant_id);
+CREATE INDEX IF NOT EXISTS idx_variants_sku ON public.product_variants(sku);
+CREATE INDEX IF NOT EXISTS idx_variants_active ON public.product_variants(is_active);
 
 -- ============================================================================
 -- DEVICE TYPES TABLE
 -- ============================================================================
-CREATE TABLE public.device_types (
+CREATE TABLE IF NOT EXISTS public.device_types (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name TEXT NOT NULL,
     description TEXT,
@@ -76,13 +71,13 @@ CREATE TABLE public.device_types (
 );
 
 -- Create indexes for device types
-CREATE INDEX idx_device_types_name ON public.device_types(name);
-CREATE INDEX idx_device_types_active ON public.device_types(is_active);
+CREATE INDEX IF NOT EXISTS idx_device_types_name ON public.device_types(name);
+CREATE INDEX IF NOT EXISTS idx_device_types_active ON public.device_types(is_active);
 
 -- ============================================================================
 -- PRODUCTION STEPS TABLE
 -- ============================================================================
-CREATE TABLE public.production_steps (
+CREATE TABLE IF NOT EXISTS public.production_steps (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     product_id UUID NOT NULL REFERENCES public.products(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
@@ -97,13 +92,13 @@ CREATE TABLE public.production_steps (
 );
 
 -- Create indexes for production steps
-CREATE INDEX idx_production_steps_product_id ON public.production_steps(product_id);
-CREATE INDEX idx_production_steps_order ON public.production_steps(step_order);
+CREATE INDEX IF NOT EXISTS idx_production_steps_product_id ON public.production_steps(product_id);
+CREATE INDEX IF NOT EXISTS idx_production_steps_order ON public.production_steps(step_order);
 
 -- ============================================================================
 -- PRODUCT DEVICE TYPES (JOIN TABLE)
 -- ============================================================================
-CREATE TABLE public.product_device_types (
+CREATE TABLE IF NOT EXISTS public.product_device_types (
     product_id UUID NOT NULL REFERENCES public.products(id) ON DELETE CASCADE,
     device_type_id UUID NOT NULL REFERENCES public.device_types(id) ON DELETE CASCADE,
     quantity INTEGER NOT NULL DEFAULT 1,
@@ -112,8 +107,8 @@ CREATE TABLE public.product_device_types (
 );
 
 -- Create indexes for product device types
-CREATE INDEX idx_product_devices_product ON public.product_device_types(product_id);
-CREATE INDEX idx_product_devices_device ON public.product_device_types(device_type_id);
+CREATE INDEX IF NOT EXISTS idx_product_devices_product ON public.product_device_types(product_id);
+CREATE INDEX IF NOT EXISTS idx_product_devices_device ON public.product_device_types(device_type_id);
 
 -- ============================================================================
 -- TRIGGERS FOR UPDATED_AT
@@ -129,24 +124,28 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Trigger for products
+DROP TRIGGER IF EXISTS update_products_updated_at ON public.products;
 CREATE TRIGGER update_products_updated_at
     BEFORE UPDATE ON public.products
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
 -- Trigger for product_variants
+DROP TRIGGER IF EXISTS update_product_variants_updated_at ON public.product_variants;
 CREATE TRIGGER update_product_variants_updated_at
     BEFORE UPDATE ON public.product_variants
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
 -- Trigger for device_types
+DROP TRIGGER IF EXISTS update_device_types_updated_at ON public.device_types;
 CREATE TRIGGER update_device_types_updated_at
     BEFORE UPDATE ON public.device_types
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
 -- Trigger for production_steps
+DROP TRIGGER IF EXISTS update_production_steps_updated_at ON public.production_steps;
 CREATE TRIGGER update_production_steps_updated_at
     BEFORE UPDATE ON public.production_steps
     FOR EACH ROW
@@ -164,80 +163,95 @@ ALTER TABLE public.production_steps ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.product_device_types ENABLE ROW LEVEL SECURITY;
 
 -- Products policies
+DROP POLICY IF EXISTS "Authenticated users can read products" ON public.products;
 CREATE POLICY "Authenticated users can read products"
     ON public.products FOR SELECT
     TO authenticated
     USING (true);
 
+DROP POLICY IF EXISTS "Authenticated users can insert products" ON public.products;
 CREATE POLICY "Authenticated users can insert products"
     ON public.products FOR INSERT
     TO authenticated
     WITH CHECK (true);
 
+DROP POLICY IF EXISTS "Authenticated users can update products" ON public.products;
 CREATE POLICY "Authenticated users can update products"
     ON public.products FOR UPDATE
     TO authenticated
     USING (true);
 
 -- Product variants policies
+DROP POLICY IF EXISTS "Authenticated users can read variants" ON public.product_variants;
 CREATE POLICY "Authenticated users can read variants"
     ON public.product_variants FOR SELECT
     TO authenticated
     USING (true);
 
+DROP POLICY IF EXISTS "Authenticated users can insert variants" ON public.product_variants;
 CREATE POLICY "Authenticated users can insert variants"
     ON public.product_variants FOR INSERT
     TO authenticated
     WITH CHECK (true);
 
+DROP POLICY IF EXISTS "Authenticated users can update variants" ON public.product_variants;
 CREATE POLICY "Authenticated users can update variants"
     ON public.product_variants FOR UPDATE
     TO authenticated
     USING (true);
 
 -- Device types policies
+DROP POLICY IF EXISTS "Authenticated users can read device types" ON public.device_types;
 CREATE POLICY "Authenticated users can read device types"
     ON public.device_types FOR SELECT
     TO authenticated
     USING (true);
 
+DROP POLICY IF EXISTS "Authenticated users can insert device types" ON public.device_types;
 CREATE POLICY "Authenticated users can insert device types"
     ON public.device_types FOR INSERT
     TO authenticated
     WITH CHECK (true);
 
+DROP POLICY IF EXISTS "Authenticated users can update device types" ON public.device_types;
 CREATE POLICY "Authenticated users can update device types"
     ON public.device_types FOR UPDATE
     TO authenticated
     USING (true);
 
 -- Production steps policies
+DROP POLICY IF EXISTS "Authenticated users can read production steps" ON public.production_steps;
 CREATE POLICY "Authenticated users can read production steps"
     ON public.production_steps FOR SELECT
     TO authenticated
     USING (true);
 
+DROP POLICY IF EXISTS "Authenticated users can insert production steps" ON public.production_steps;
 CREATE POLICY "Authenticated users can insert production steps"
     ON public.production_steps FOR INSERT
     TO authenticated
     WITH CHECK (true);
 
+DROP POLICY IF EXISTS "Authenticated users can update production steps" ON public.production_steps;
 CREATE POLICY "Authenticated users can update production steps"
     ON public.production_steps FOR UPDATE
     TO authenticated
     USING (true);
 
 -- Product device types policies
+DROP POLICY IF EXISTS "Authenticated users can read product device types" ON public.product_device_types;
 CREATE POLICY "Authenticated users can read product device types"
     ON public.product_device_types FOR SELECT
     TO authenticated
     USING (true);
 
+DROP POLICY IF EXISTS "Authenticated users can insert product device types" ON public.product_device_types;
 CREATE POLICY "Authenticated users can insert product device types"
     ON public.product_device_types FOR INSERT
     TO authenticated
     WITH CHECK (true);
 
+DROP POLICY IF EXISTS "Authenticated users can update product device types" ON public.product_device_types;
 CREATE POLICY "Authenticated users can update product device types"
     ON public.product_device_types FOR UPDATE
     TO authenticated
@@ -269,7 +283,7 @@ GRANT SELECT, INSERT, UPDATE ON public.product_device_types TO authenticated;
 
 DO $$
 BEGIN
-    RAISE NOTICE '✅ Products schema migration completed successfully!';
+    RAISE NOTICE 'Products schema migration completed successfully!';
     RAISE NOTICE 'Created tables:';
     RAISE NOTICE '  - products';
     RAISE NOTICE '  - product_variants';

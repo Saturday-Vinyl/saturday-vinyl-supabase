@@ -4,7 +4,8 @@ import 'package:equatable/equatable.dart';
 class DeviceCapabilities extends Equatable {
   final bool wifi;
   final bool bluetooth;
-  final bool thread;
+  final bool thread; // Thread Device (joins existing network)
+  final bool threadBr; // Thread Border Router (creates network, provides credentials)
   final bool cloud;
   final bool rfid;
   final bool audio;
@@ -16,6 +17,7 @@ class DeviceCapabilities extends Equatable {
     this.wifi = false,
     this.bluetooth = false,
     this.thread = false,
+    this.threadBr = false,
     this.cloud = false,
     this.rfid = false,
     this.audio = false,
@@ -29,6 +31,7 @@ class DeviceCapabilities extends Equatable {
       wifi: json['wifi'] as bool? ?? false,
       bluetooth: json['bluetooth'] as bool? ?? false,
       thread: json['thread'] as bool? ?? false,
+      threadBr: json['thread_br'] as bool? ?? false,
       cloud: json['cloud'] as bool? ?? false,
       rfid: json['rfid'] as bool? ?? false,
       audio: json['audio'] as bool? ?? false,
@@ -43,6 +46,7 @@ class DeviceCapabilities extends Equatable {
       'wifi': wifi,
       'bluetooth': bluetooth,
       'thread': thread,
+      'thread_br': threadBr,
       'cloud': cloud,
       'rfid': rfid,
       'audio': audio,
@@ -58,6 +62,7 @@ class DeviceCapabilities extends Equatable {
     if (wifi) enabled.add('wifi');
     if (bluetooth) enabled.add('bluetooth');
     if (thread) enabled.add('thread');
+    if (threadBr) enabled.add('thread_br');
     if (cloud) enabled.add('cloud');
     if (rfid) enabled.add('rfid');
     if (audio) enabled.add('audio');
@@ -72,6 +77,7 @@ class DeviceCapabilities extends Equatable {
         wifi,
         bluetooth,
         thread,
+        threadBr,
         cloud,
         rfid,
         audio,
@@ -333,6 +339,8 @@ class ServiceModeManifest extends Equatable {
         return capabilities.bluetooth;
       case 'thread':
         return capabilities.thread;
+      case 'thread_br':
+        return capabilities.threadBr;
       case 'cloud':
         return capabilities.cloud;
       case 'rfid':

@@ -1,15 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:saturday_app/config/theme.dart';
+import 'package:saturday_app/models/service_mode_manifest.dart';
 import 'package:saturday_app/models/service_mode_state.dart';
 
 /// Card displaying device information from beacon or status
 class DeviceInfoCard extends StatelessWidget {
   final DeviceInfo? deviceInfo;
+  final ServiceModeManifest? manifest;
   final bool isInServiceMode;
 
   const DeviceInfoCard({
     super.key,
     this.deviceInfo,
+    this.manifest,
     this.isInServiceMode = false,
   });
 
@@ -121,7 +124,7 @@ class DeviceInfoCard extends StatelessWidget {
               _buildInfoRow(
                 context,
                 'Firmware ID',
-                info.firmwareId!.substring(0, 8) + '...',
+                '${info.firmwareId!.substring(0, 8)}...',
                 Icons.fingerprint,
                 tooltip: info.firmwareId,
               ),
@@ -151,8 +154,12 @@ class DeviceInfoCard extends StatelessWidget {
               ),
             ],
 
-            // Connectivity status
-            if (info.wifiConfigured || info.cloudConfigured) ...[
+            // Device capabilities (from manifest) with status indicators
+            if (manifest != null && manifest!.capabilities.enabledCapabilities.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              _buildCapabilitiesSection(manifest!.capabilities, info),
+            ] else if (info.wifiConfigured || info.cloudConfigured || info.hasThreadCredentials || info.bluetoothEnabled == true) ...[
+              // Fallback to status-based display if no manifest or no capabilities defined
               const SizedBox(height: 8),
               Wrap(
                 spacing: 8,
@@ -178,8 +185,20 @@ class DeviceInfoCard extends StatelessWidget {
                       Icons.bluetooth,
                       SaturdayColors.info,
                     ),
+                  if (info.hasThreadCredentials)
+                    _buildStatusChip(
+                      'Thread',
+                      Icons.hub,
+                      SaturdayColors.success,
+                    ),
                 ],
               ),
+            ],
+
+            // Thread credentials (for Hubs)
+            if (info.hasThreadCredentials) ...[
+              const Divider(height: 24),
+              _buildThreadSection(context, info.thread!),
             ],
 
             // System info
@@ -266,6 +285,107 @@ class DeviceInfoCard extends StatelessWidget {
     return content;
   }
 
+  /// Build capabilities section showing device capabilities from manifest
+  /// with status indicators from device info
+  Widget _buildCapabilitiesSection(DeviceCapabilities caps, DeviceInfo info) {
+    return Wrap(
+      spacing: 8,
+      runSpacing: 4,
+      children: [
+        if (caps.wifi)
+          _buildCapabilityChip(
+            'Wi-Fi',
+            Icons.wifi,
+            configured: info.wifiConfigured,
+            connected: info.wifiConnected,
+          ),
+        if (caps.cloud)
+          _buildCapabilityChip(
+            'Cloud',
+            Icons.cloud,
+            configured: info.cloudConfigured,
+          ),
+        if (caps.thread)
+          _buildCapabilityChip(
+            'Thread',
+            Icons.hub,
+            configured: info.threadConfigured ?? info.hasThreadCredentials,
+            connected: info.threadConnected ?? false,
+          ),
+        if (caps.bluetooth)
+          _buildCapabilityChip(
+            'Bluetooth',
+            Icons.bluetooth,
+            configured: info.bluetoothEnabled ?? false,
+          ),
+        if (caps.rfid)
+          _buildCapabilityChip(
+            'RFID',
+            Icons.nfc,
+            configured: true, // Always show as available if capability exists
+          ),
+        if (caps.audio)
+          _buildCapabilityChip(
+            'Audio',
+            Icons.volume_up,
+            configured: true,
+          ),
+        if (caps.display)
+          _buildCapabilityChip(
+            'Display',
+            Icons.tv,
+            configured: true,
+          ),
+      ],
+    );
+  }
+
+  /// Build a capability chip showing capability name with status
+  /// - Grey: capability present but not configured
+  /// - Orange: configured but not connected
+  /// - Green: connected/active
+  Widget _buildCapabilityChip(
+    String label,
+    IconData icon, {
+    bool configured = false,
+    bool connected = false,
+  }) {
+    Color color;
+    String statusLabel = label;
+
+    if (connected) {
+      color = SaturdayColors.success;
+    } else if (configured) {
+      color = Colors.orange;
+    } else {
+      color = Colors.grey;
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: color),
+          const SizedBox(width: 4),
+          Text(
+            statusLabel,
+            style: TextStyle(
+              color: color,
+              fontSize: 11,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildStatusChip(String label, IconData icon, Color color) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -312,6 +432,115 @@ class DeviceInfoCard extends StatelessWidget {
         ),
       ],
     );
+  }
+
+  Widget _buildThreadSection(BuildContext context, Map<String, dynamic> thread) {
+    final networkName = thread['network_name'] as String? ?? 'Unknown';
+    final channel = thread['channel'] as int? ?? 0;
+    final panId = thread['pan_id'] as int? ?? 0;
+    final networkKey = thread['network_key'] as String? ?? '';
+    final extendedPanId = thread['extended_pan_id'] as String? ?? '';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.hub, size: 16, color: Colors.grey[600]),
+            const SizedBox(width: 8),
+            Text(
+              'Thread Network',
+              style: TextStyle(
+                color: Colors.grey[600],
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: SaturdayColors.success.withValues(alpha: 0.05),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: SaturdayColors.success.withValues(alpha: 0.2),
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildThreadField('Network', networkName),
+                  ),
+                  _buildThreadField('Channel', channel.toString()),
+                  const SizedBox(width: 16),
+                  _buildThreadField('PAN ID', '0x${panId.toRadixString(16).toUpperCase()}'),
+                ],
+              ),
+              const SizedBox(height: 8),
+              _buildThreadField(
+                'Network Key',
+                _truncateHex(networkKey, 16),
+                tooltip: networkKey,
+                monospace: true,
+              ),
+              const SizedBox(height: 4),
+              _buildThreadField(
+                'Extended PAN ID',
+                extendedPanId,
+                monospace: true,
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildThreadField(
+    String label,
+    String value, {
+    String? tooltip,
+    bool monospace = false,
+  }) {
+    final content = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 10,
+            color: Colors.grey[600],
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          value,
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+            fontFamily: monospace ? 'monospace' : null,
+          ),
+        ),
+      ],
+    );
+
+    if (tooltip != null) {
+      return Tooltip(
+        message: tooltip,
+        child: content,
+      );
+    }
+    return content;
+  }
+
+  String _truncateHex(String hex, int length) {
+    if (hex.length <= length) return hex;
+    return '${hex.substring(0, length)}...';
   }
 
   IconData _getDeviceIcon(String deviceType) {

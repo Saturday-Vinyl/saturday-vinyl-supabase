@@ -2,6 +2,7 @@
 -- Migration: 013_file_library.sql
 -- Description: Create unified file library system for production steps
 -- Date: 2025-10-16
+-- Idempotent: Yes - safe to run multiple times
 --
 -- PURPOSE:
 -- Replace GitHub-synced gcode system with a unified file library where users
@@ -15,7 +16,7 @@
 -- ============================================================================
 
 -- Create table for uploaded files
-CREATE TABLE public.files (
+CREATE TABLE IF NOT EXISTS public.files (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   storage_path TEXT NOT NULL UNIQUE,
   file_name TEXT NOT NULL UNIQUE,
@@ -51,11 +52,12 @@ COMMENT ON COLUMN public.files.uploaded_by_name IS
   'Name of user who uploaded (stored as string, not FK - preserves name even if user deleted)';
 
 -- Create indexes
-CREATE INDEX idx_files_name ON public.files(file_name);
-CREATE INDEX idx_files_mime_type ON public.files(mime_type);
-CREATE INDEX idx_files_created_at ON public.files(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_files_name ON public.files(file_name);
+CREATE INDEX IF NOT EXISTS idx_files_mime_type ON public.files(mime_type);
+CREATE INDEX IF NOT EXISTS idx_files_created_at ON public.files(created_at DESC);
 
--- Add trigger for updated_at timestamp
+-- Add trigger for updated_at timestamp (drop and recreate for idempotency)
+DROP TRIGGER IF EXISTS update_files_updated_at ON public.files;
 CREATE TRIGGER update_files_updated_at
   BEFORE UPDATE ON public.files
   FOR EACH ROW
@@ -66,7 +68,7 @@ CREATE TRIGGER update_files_updated_at
 -- ============================================================================
 
 -- Create junction table for production step file attachments
-CREATE TABLE public.step_files (
+CREATE TABLE IF NOT EXISTS public.step_files (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   step_id UUID NOT NULL REFERENCES public.production_steps(id) ON DELETE CASCADE,
   file_id UUID NOT NULL REFERENCES public.files(id) ON DELETE CASCADE,
@@ -91,9 +93,9 @@ COMMENT ON COLUMN public.step_files.execution_order IS
   'Order in which files should be used (1, 2, 3, etc.) - important for gcode sequencing';
 
 -- Create indexes
-CREATE INDEX idx_step_files_step_id ON public.step_files(step_id);
-CREATE INDEX idx_step_files_file_id ON public.step_files(file_id);
-CREATE INDEX idx_step_files_execution_order ON public.step_files(step_id, execution_order);
+CREATE INDEX IF NOT EXISTS idx_step_files_step_id ON public.step_files(step_id);
+CREATE INDEX IF NOT EXISTS idx_step_files_file_id ON public.step_files(file_id);
+CREATE INDEX IF NOT EXISTS idx_step_files_execution_order ON public.step_files(step_id, execution_order);
 
 -- ============================================================================
 -- Row Level Security (RLS) Policies
@@ -102,6 +104,12 @@ CREATE INDEX idx_step_files_execution_order ON public.step_files(step_id, execut
 -- Enable RLS on new tables
 ALTER TABLE public.files ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.step_files ENABLE ROW LEVEL SECURITY;
+
+-- Drop existing policies if they exist (for idempotency)
+DROP POLICY IF EXISTS "Authenticated users can read files" ON public.files;
+DROP POLICY IF EXISTS "Authenticated users can insert files" ON public.files;
+DROP POLICY IF EXISTS "Authenticated users can update files" ON public.files;
+DROP POLICY IF EXISTS "Authenticated users can delete files" ON public.files;
 
 -- Policies for files (all authenticated users can manage files)
 CREATE POLICY "Authenticated users can read files"
@@ -127,6 +135,12 @@ CREATE POLICY "Authenticated users can delete files"
   FOR DELETE
   TO authenticated
   USING (true);
+
+-- Drop existing policies if they exist (for idempotency)
+DROP POLICY IF EXISTS "Authenticated users can read step files" ON public.step_files;
+DROP POLICY IF EXISTS "Authenticated users can insert step files" ON public.step_files;
+DROP POLICY IF EXISTS "Authenticated users can update step files" ON public.step_files;
+DROP POLICY IF EXISTS "Authenticated users can delete step files" ON public.step_files;
 
 -- Policies for step_files (all authenticated users can manage)
 CREATE POLICY "Authenticated users can read step files"

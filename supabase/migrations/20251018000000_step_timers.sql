@@ -2,6 +2,7 @@
 -- Migration: 014_step_timers.sql
 -- Description: Add timer support for production steps
 -- Date: 2025-10-17
+-- Idempotent: Yes - safe to run multiple times
 -- ============================================================================
 
 -- ============================================================================
@@ -108,14 +109,11 @@ CREATE TRIGGER update_unit_timers_updated_at
 -- Enable RLS
 ALTER TABLE public.step_timers ENABLE ROW LEVEL SECURITY;
 
--- Drop existing policies if they exist
-DO $$ BEGIN
-  DROP POLICY IF EXISTS "Allow authenticated users to read step timers" ON public.step_timers;
-  DROP POLICY IF EXISTS "Authenticated users can insert step timers" ON public.step_timers;
-  DROP POLICY IF EXISTS "Authenticated users can update step timers" ON public.step_timers;
-  DROP POLICY IF EXISTS "Authenticated users can delete step timers" ON public.step_timers;
-EXCEPTION WHEN OTHERS THEN NULL;
-END $$;
+-- Drop existing policies if they exist (for idempotency)
+DROP POLICY IF EXISTS "Allow authenticated users to read step timers" ON public.step_timers;
+DROP POLICY IF EXISTS "Authenticated users can insert step timers" ON public.step_timers;
+DROP POLICY IF EXISTS "Authenticated users can update step timers" ON public.step_timers;
+DROP POLICY IF EXISTS "Authenticated users can delete step timers" ON public.step_timers;
 
 -- Policy: Allow authenticated users to read step timers
 CREATE POLICY "Allow authenticated users to read step timers"
@@ -152,14 +150,11 @@ CREATE POLICY "Authenticated users can delete step timers"
 -- Enable RLS
 ALTER TABLE public.unit_timers ENABLE ROW LEVEL SECURITY;
 
--- Drop existing policies if they exist
-DO $$ BEGIN
-  DROP POLICY IF EXISTS "Allow authenticated users to read unit timers" ON public.unit_timers;
-  DROP POLICY IF EXISTS "Authenticated users can insert unit timers" ON public.unit_timers;
-  DROP POLICY IF EXISTS "Authenticated users can update unit timers" ON public.unit_timers;
-  DROP POLICY IF EXISTS "Authenticated users can delete unit timers" ON public.unit_timers;
-EXCEPTION WHEN OTHERS THEN NULL;
-END $$;
+-- Drop existing policies if they exist (for idempotency)
+DROP POLICY IF EXISTS "Allow authenticated users to read unit timers" ON public.unit_timers;
+DROP POLICY IF EXISTS "Authenticated users can insert unit timers" ON public.unit_timers;
+DROP POLICY IF EXISTS "Authenticated users can update unit timers" ON public.unit_timers;
+DROP POLICY IF EXISTS "Authenticated users can delete unit timers" ON public.unit_timers;
 
 -- Policy: Allow authenticated users to read unit timers
 CREATE POLICY "Allow authenticated users to read unit timers"

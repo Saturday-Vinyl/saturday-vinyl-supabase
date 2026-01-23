@@ -1,6 +1,7 @@
 -- Migration: Products and Product Variants
 -- Description: Creates tables for products synced from Shopify and their variants
 -- Dependencies: None (base tables)
+-- Idempotent: Yes - safe to run multiple times
 
 -- =====================================================
 -- Products Table
@@ -70,44 +71,52 @@ ALTER TABLE products ENABLE ROW LEVEL SECURITY;
 ALTER TABLE product_variants ENABLE ROW LEVEL SECURITY;
 
 -- Products policies
+DROP POLICY IF EXISTS "Products are viewable by authenticated users" ON products;
 CREATE POLICY "Products are viewable by authenticated users"
   ON products FOR SELECT
   TO authenticated
   USING (true);
 
+DROP POLICY IF EXISTS "Products are insertable by authenticated users" ON products;
 CREATE POLICY "Products are insertable by authenticated users"
   ON products FOR INSERT
   TO authenticated
   WITH CHECK (true);
 
+DROP POLICY IF EXISTS "Products are updatable by authenticated users" ON products;
 CREATE POLICY "Products are updatable by authenticated users"
   ON products FOR UPDATE
   TO authenticated
   USING (true)
   WITH CHECK (true);
 
+DROP POLICY IF EXISTS "Products are deletable by authenticated users" ON products;
 CREATE POLICY "Products are deletable by authenticated users"
   ON products FOR DELETE
   TO authenticated
   USING (true);
 
 -- Product variants policies
+DROP POLICY IF EXISTS "Variants are viewable by authenticated users" ON product_variants;
 CREATE POLICY "Variants are viewable by authenticated users"
   ON product_variants FOR SELECT
   TO authenticated
   USING (true);
 
+DROP POLICY IF EXISTS "Variants are insertable by authenticated users" ON product_variants;
 CREATE POLICY "Variants are insertable by authenticated users"
   ON product_variants FOR INSERT
   TO authenticated
   WITH CHECK (true);
 
+DROP POLICY IF EXISTS "Variants are updatable by authenticated users" ON product_variants;
 CREATE POLICY "Variants are updatable by authenticated users"
   ON product_variants FOR UPDATE
   TO authenticated
   USING (true)
   WITH CHECK (true);
 
+DROP POLICY IF EXISTS "Variants are deletable by authenticated users" ON product_variants;
 CREATE POLICY "Variants are deletable by authenticated users"
   ON product_variants FOR DELETE
   TO authenticated
@@ -127,12 +136,14 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Trigger for products
+DROP TRIGGER IF EXISTS update_products_updated_at ON products;
 CREATE TRIGGER update_products_updated_at
   BEFORE UPDATE ON products
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at_column();
 
 -- Trigger for product_variants
+DROP TRIGGER IF EXISTS update_product_variants_updated_at ON product_variants;
 CREATE TRIGGER update_product_variants_updated_at
   BEFORE UPDATE ON product_variants
   FOR EACH ROW

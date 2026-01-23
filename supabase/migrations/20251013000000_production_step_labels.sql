@@ -2,6 +2,7 @@
 -- Migration: 009_production_step_labels.sql
 -- Description: Add multiple label support for production steps
 -- Date: 2025-10-11
+-- Idempotent: Yes - safe to run multiple times
 -- ============================================================================
 
 -- Drop existing policies if they exist (for idempotency)

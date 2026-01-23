@@ -1,25 +1,28 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:saturday_app/config/theme.dart';
 import 'package:saturday_app/models/service_mode_manifest.dart';
 import 'package:saturday_app/models/service_mode_state.dart';
+import 'package:saturday_app/models/thread_credentials.dart';
+import 'package:saturday_app/providers/service_mode_provider.dart';
 
 /// Panel displaying action buttons based on device state and manifest
 class ActionButtonsPanel extends StatelessWidget {
   final ServiceModeState state;
   final ServiceModeManifest? manifest;
 
-  // Callbacks
-  final VoidCallback? onConnect;
-  final VoidCallback? onConnectMonitorOnly;
-  final VoidCallback? onDisconnect;
-  final VoidCallback? onEnterServiceMode;
-  final VoidCallback? onExitServiceMode;
-  final VoidCallback? onProvision;
-  final VoidCallback? onTestAll;
+  // Callbacks - using Future-returning functions for async operations
+  final Future<void> Function()? onConnect;
+  final Future<void> Function()? onConnectMonitorOnly;
+  final Future<void> Function()? onDisconnect;
+  final Future<void> Function()? onEnterServiceMode;
+  final Future<void> Function()? onExitServiceMode;
+  final Future<void> Function()? onProvision;
+  final Future<void> Function()? onTestAll;
   final void Function(String testName, {Map<String, dynamic>? data})? onRunTest;
-  final VoidCallback? onCustomerReset;
-  final VoidCallback? onFactoryReset;
-  final VoidCallback? onReboot;
+  final Future<void> Function()? onCustomerReset;
+  final Future<void> Function()? onFactoryReset;
+  final Future<void> Function()? onReboot;
 
   const ActionButtonsPanel({
     super.key,
@@ -496,94 +499,40 @@ class ActionButtonsPanel extends StatelessWidget {
       return;
     }
 
+    // Thread test: non-BR devices need credentials to join network
+    if (testName == 'thread') {
+      // Check if device has thread capability but NOT thread_br
+      // Thread BR devices create their own network, non-BR devices need credentials
+      final hasThread = manifest?.capabilities.thread ?? false;
+      final hasThreadBr = manifest?.capabilities.threadBr ?? false;
+
+      if (hasThread && !hasThreadBr) {
+        final credentials = await _showThreadCredentialsDialog(context);
+        if (credentials != null) {
+          onRunTest?.call(testName, data: credentials);
+        }
+        return;
+      }
+      // Thread BR devices can test without provided credentials
+    }
+
     // Default: run test without data
     onRunTest?.call(testName);
   }
 
   Future<Map<String, dynamic>?> _showWifiCredentialsDialog(
       BuildContext context) async {
-    final ssidController = TextEditingController();
-    final passwordController = TextEditingController();
-    final formKey = GlobalKey<FormState>();
-
     return showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Row(
-          children: [
-            Icon(Icons.wifi, color: SaturdayColors.info),
-            SizedBox(width: 8),
-            Text('WiFi Test Credentials'),
-          ],
-        ),
-        content: Form(
-          key: formKey,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text(
-                'Enter WiFi credentials for the connection test.',
-                style: TextStyle(fontSize: 14),
-              ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: ssidController,
-                decoration: const InputDecoration(
-                  labelText: 'SSID',
-                  hintText: 'Network name',
-                  prefixIcon: Icon(Icons.wifi),
-                  border: OutlineInputBorder(),
-                ),
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Please enter the network SSID';
-                  }
-                  return null;
-                },
-              ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: passwordController,
-                decoration: const InputDecoration(
-                  labelText: 'Password',
-                  hintText: 'Network password',
-                  prefixIcon: Icon(Icons.lock),
-                  border: OutlineInputBorder(),
-                ),
-                obscureText: true,
-                validator: (value) {
-                  if (value == null || value.isEmpty) {
-                    return 'Please enter the network password';
-                  }
-                  return null;
-                },
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(null),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton.icon(
-            onPressed: () {
-              if (formKey.currentState!.validate()) {
-                Navigator.of(context).pop({
-                  'ssid': ssidController.text,
-                  'password': passwordController.text,
-                });
-              }
-            },
-            icon: const Icon(Icons.play_arrow),
-            label: const Text('Run Test'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: SaturdayColors.info,
-              foregroundColor: Colors.white,
-            ),
-          ),
-        ],
-      ),
+      builder: (context) => const _WifiCredentialsDialog(),
+    );
+  }
+
+  Future<Map<String, dynamic>?> _showThreadCredentialsDialog(
+      BuildContext context) async {
+    return showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (context) => const _ThreadCredentialsDialog(),
     );
   }
 
@@ -731,5 +680,571 @@ class _TestButton extends StatelessWidget {
       if (word.isEmpty) return word;
       return '${word[0].toUpperCase()}${word.substring(1).toLowerCase()}';
     }).join(' ');
+  }
+}
+
+/// Dialog for entering WiFi credentials for the connection test.
+///
+/// This is a StatefulWidget to properly manage TextEditingControllers
+/// and ensure text input works correctly on all platforms.
+class _WifiCredentialsDialog extends StatefulWidget {
+  const _WifiCredentialsDialog();
+
+  @override
+  State<_WifiCredentialsDialog> createState() => _WifiCredentialsDialogState();
+}
+
+class _WifiCredentialsDialogState extends State<_WifiCredentialsDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _ssidController = TextEditingController();
+  final _passwordController = TextEditingController();
+  final _ssidFocusNode = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    // Request focus on the SSID field after the dialog is built
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _ssidFocusNode.requestFocus();
+    });
+  }
+
+  @override
+  void dispose() {
+    _ssidController.dispose();
+    _passwordController.dispose();
+    _ssidFocusNode.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Row(
+        children: [
+          Icon(Icons.wifi, color: SaturdayColors.info),
+          SizedBox(width: 8),
+          Text('WiFi Test Credentials'),
+        ],
+      ),
+      content: Form(
+        key: _formKey,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Enter WiFi credentials for the connection test.',
+              style: TextStyle(fontSize: 14),
+            ),
+            const SizedBox(height: 16),
+            TextFormField(
+              controller: _ssidController,
+              focusNode: _ssidFocusNode,
+              autofocus: true,
+              decoration: const InputDecoration(
+                labelText: 'SSID',
+                hintText: 'Network name',
+                prefixIcon: Icon(Icons.wifi),
+                border: OutlineInputBorder(),
+              ),
+              textInputAction: TextInputAction.next,
+              validator: (value) {
+                if (value == null || value.isEmpty) {
+                  return 'Please enter the network SSID';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _passwordController,
+              decoration: const InputDecoration(
+                labelText: 'Password',
+                hintText: 'Network password',
+                prefixIcon: Icon(Icons.lock),
+                border: OutlineInputBorder(),
+              ),
+              obscureText: true,
+              textInputAction: TextInputAction.done,
+              onFieldSubmitted: (_) => _submit(),
+              validator: (value) {
+                if (value == null || value.isEmpty) {
+                  return 'Please enter the network password';
+                }
+                return null;
+              },
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(null),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton.icon(
+          onPressed: _submit,
+          icon: const Icon(Icons.play_arrow),
+          label: const Text('Run Test'),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: SaturdayColors.info,
+            foregroundColor: Colors.white,
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _submit() {
+    if (_formKey.currentState!.validate()) {
+      Navigator.of(context).pop({
+        'ssid': _ssidController.text,
+        'password': _passwordController.text,
+      });
+    }
+  }
+}
+
+/// Dialog for selecting/entering Thread credentials for non-BR device testing.
+///
+/// Non-BR Thread devices (like Crates) need to join an existing Thread network,
+/// so they require credentials from a provisioned Thread Border Router (Hub).
+class _ThreadCredentialsDialog extends ConsumerStatefulWidget {
+  const _ThreadCredentialsDialog();
+
+  @override
+  ConsumerState<_ThreadCredentialsDialog> createState() =>
+      _ThreadCredentialsDialogState();
+}
+
+class _ThreadCredentialsDialogState
+    extends ConsumerState<_ThreadCredentialsDialog> {
+  final _formKey = GlobalKey<FormState>();
+  bool _manualEntry = false;
+  ThreadCredentialsWithUnit? _selectedCredentials;
+
+  // Manual entry controllers
+  final _networkNameController = TextEditingController();
+  final _panIdController = TextEditingController();
+  final _channelController = TextEditingController(text: '15');
+  final _networkKeyController = TextEditingController();
+  final _extendedPanIdController = TextEditingController();
+  final _meshLocalPrefixController = TextEditingController();
+  final _pskcController = TextEditingController();
+
+  @override
+  void dispose() {
+    _networkNameController.dispose();
+    _panIdController.dispose();
+    _channelController.dispose();
+    _networkKeyController.dispose();
+    _extendedPanIdController.dispose();
+    _meshLocalPrefixController.dispose();
+    _pskcController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final credentialsAsync = ref.watch(availableThreadCredentialsProvider);
+
+    return AlertDialog(
+      title: const Row(
+        children: [
+          Icon(Icons.hub, color: SaturdayColors.info),
+          SizedBox(width: 8),
+          Text('Thread Test Credentials'),
+        ],
+      ),
+      content: SizedBox(
+        width: 400,
+        child: Form(
+          key: _formKey,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Select Thread network credentials from a provisioned Hub, '
+                  'or enter credentials manually.',
+                  style: TextStyle(fontSize: 13),
+                ),
+                const SizedBox(height: 16),
+
+                // Mode toggle
+                Row(
+                  children: [
+                    Expanded(
+                      child: _ModeButton(
+                        label: 'Select from Hub',
+                        icon: Icons.list,
+                        isSelected: !_manualEntry,
+                        onTap: () => setState(() => _manualEntry = false),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _ModeButton(
+                        label: 'Manual Entry',
+                        icon: Icons.edit,
+                        isSelected: _manualEntry,
+                        onTap: () => setState(() => _manualEntry = true),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+
+                if (_manualEntry)
+                  _buildManualEntryForm()
+                else
+                  _buildCredentialsSelector(credentialsAsync),
+              ],
+            ),
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(null),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton.icon(
+          onPressed: _canSubmit() ? _submit : null,
+          icon: const Icon(Icons.play_arrow),
+          label: const Text('Run Test'),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: SaturdayColors.info,
+            foregroundColor: Colors.white,
+          ),
+        ),
+      ],
+    );
+  }
+
+  bool _canSubmit() {
+    if (_manualEntry) {
+      return _networkNameController.text.isNotEmpty &&
+          _networkKeyController.text.isNotEmpty;
+    }
+    return _selectedCredentials != null;
+  }
+
+  Widget _buildCredentialsSelector(
+      AsyncValue<List<ThreadCredentialsWithUnit>> credentialsAsync) {
+    return credentialsAsync.when(
+      data: (credentials) {
+        if (credentials.isEmpty) {
+          return Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.orange.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.orange.withValues(alpha: 0.3)),
+            ),
+            child: const Row(
+              children: [
+                Icon(Icons.warning_amber, color: Colors.orange, size: 20),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'No Thread credentials available. Provision a Hub first, '
+                    'or use manual entry.',
+                    style: TextStyle(fontSize: 13),
+                  ),
+                ),
+              ],
+            ),
+          );
+        }
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            DropdownButtonFormField<ThreadCredentialsWithUnit>(
+              value: _selectedCredentials,
+              decoration: const InputDecoration(
+                labelText: 'Select Network',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.hub),
+              ),
+              items: credentials.map((cred) {
+                return DropdownMenuItem(
+                  value: cred,
+                  child: Text(
+                    cred.displayLabel,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                );
+              }).toList(),
+              onChanged: (value) {
+                setState(() => _selectedCredentials = value);
+              },
+              validator: (value) {
+                if (value == null) {
+                  return 'Please select a network';
+                }
+                return null;
+              },
+            ),
+            if (_selectedCredentials != null) ...[
+              const SizedBox(height: 12),
+              _buildCredentialsPreview(_selectedCredentials!.credentials),
+            ],
+          ],
+        );
+      },
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (error, _) => Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: SaturdayColors.error.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.error, color: SaturdayColors.error, size: 20),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Failed to load credentials: $error',
+                style: const TextStyle(fontSize: 13),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCredentialsPreview(ThreadCredentials credentials) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.grey[100],
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildPreviewRow('Network', credentials.networkName),
+          _buildPreviewRow('Channel', credentials.channel.toString()),
+          _buildPreviewRow(
+              'PAN ID', '0x${credentials.panId.toRadixString(16).toUpperCase()}'),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPreviewRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: TextStyle(color: Colors.grey[600], fontSize: 12)),
+          Text(value,
+              style:
+                  const TextStyle(fontFamily: 'monospace', fontSize: 12)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildManualEntryForm() {
+    return Column(
+      children: [
+        TextFormField(
+          controller: _networkNameController,
+          decoration: const InputDecoration(
+            labelText: 'Network Name *',
+            border: OutlineInputBorder(),
+            hintText: 'e.g., SaturdayVinyl',
+          ),
+          validator: (value) {
+            if (value == null || value.isEmpty) {
+              return 'Required';
+            }
+            if (value.length > 16) {
+              return 'Max 16 characters';
+            }
+            return null;
+          },
+          onChanged: (_) => setState(() {}),
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: TextFormField(
+                controller: _channelController,
+                decoration: const InputDecoration(
+                  labelText: 'Channel *',
+                  border: OutlineInputBorder(),
+                  hintText: '11-26',
+                ),
+                keyboardType: TextInputType.number,
+                validator: (value) {
+                  if (value == null || value.isEmpty) return 'Required';
+                  final channel = int.tryParse(value);
+                  if (channel == null || channel < 11 || channel > 26) {
+                    return '11-26';
+                  }
+                  return null;
+                },
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: TextFormField(
+                controller: _panIdController,
+                decoration: const InputDecoration(
+                  labelText: 'PAN ID',
+                  border: OutlineInputBorder(),
+                  hintText: '0-65534',
+                ),
+                keyboardType: TextInputType.number,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        TextFormField(
+          controller: _networkKeyController,
+          decoration: const InputDecoration(
+            labelText: 'Network Key (32 hex chars) *',
+            border: OutlineInputBorder(),
+            hintText: 'a1b2c3d4...',
+          ),
+          validator: (value) {
+            if (value == null || value.isEmpty) return 'Required';
+            if (value.length != 32 ||
+                !RegExp(r'^[0-9a-fA-F]+$').hasMatch(value)) {
+              return '32 hex characters required';
+            }
+            return null;
+          },
+          onChanged: (_) => setState(() {}),
+        ),
+        const SizedBox(height: 12),
+        TextFormField(
+          controller: _extendedPanIdController,
+          decoration: const InputDecoration(
+            labelText: 'Extended PAN ID (16 hex chars)',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextFormField(
+          controller: _meshLocalPrefixController,
+          decoration: const InputDecoration(
+            labelText: 'Mesh Local Prefix (16 hex chars)',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextFormField(
+          controller: _pskcController,
+          decoration: const InputDecoration(
+            labelText: 'PSKC (32 hex chars)',
+            border: OutlineInputBorder(),
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _submit() {
+    if (!_formKey.currentState!.validate()) return;
+
+    Map<String, dynamic> credentials;
+
+    if (_manualEntry) {
+      credentials = {
+        'network_name': _networkNameController.text,
+        'channel': int.tryParse(_channelController.text) ?? 15,
+        if (_panIdController.text.isNotEmpty)
+          'pan_id': int.tryParse(_panIdController.text) ?? 0,
+        'network_key': _networkKeyController.text,
+        if (_extendedPanIdController.text.isNotEmpty)
+          'extended_pan_id': _extendedPanIdController.text,
+        if (_meshLocalPrefixController.text.isNotEmpty)
+          'mesh_local_prefix': _meshLocalPrefixController.text,
+        if (_pskcController.text.isNotEmpty) 'pskc': _pskcController.text,
+      };
+    } else {
+      final cred = _selectedCredentials!.credentials;
+      credentials = {
+        'network_name': cred.networkName,
+        'pan_id': cred.panId,
+        'channel': cred.channel,
+        'network_key': cred.networkKey,
+        'extended_pan_id': cred.extendedPanId,
+        'mesh_local_prefix': cred.meshLocalPrefix,
+        'pskc': cred.pskc,
+      };
+    }
+
+    Navigator.of(context).pop(credentials);
+  }
+}
+
+/// Mode toggle button for Thread credentials dialog
+class _ModeButton extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  const _ModeButton({
+    required this.label,
+    required this.icon,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: isSelected
+          ? SaturdayColors.info.withValues(alpha: 0.1)
+          : Colors.grey[100],
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: isSelected
+                  ? SaturdayColors.info
+                  : Colors.grey[300]!,
+            ),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                icon,
+                size: 16,
+                color: isSelected ? SaturdayColors.info : Colors.grey[600],
+              ),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
+                  color: isSelected ? SaturdayColors.info : Colors.grey[700],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }

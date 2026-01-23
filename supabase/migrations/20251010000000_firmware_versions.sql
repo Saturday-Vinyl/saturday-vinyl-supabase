@@ -1,6 +1,7 @@
 -- Migration 006: Firmware Versions
 -- Created: 2025-10-10
 -- Description: Create firmware_versions table for managing device firmware binaries
+-- Idempotent: Yes - safe to run multiple times
 
 -- Create firmware_versions table
 CREATE TABLE IF NOT EXISTS firmware_versions (
@@ -18,10 +19,10 @@ CREATE TABLE IF NOT EXISTS firmware_versions (
 );
 
 -- Create indexes
-CREATE INDEX idx_firmware_versions_device_type ON firmware_versions(device_type_id);
-CREATE INDEX idx_firmware_versions_production ON firmware_versions(is_production_ready);
-CREATE INDEX idx_firmware_versions_version ON firmware_versions(version);
-CREATE INDEX idx_firmware_versions_created_at ON firmware_versions(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_firmware_versions_device_type ON firmware_versions(device_type_id);
+CREATE INDEX IF NOT EXISTS idx_firmware_versions_production ON firmware_versions(is_production_ready);
+CREATE INDEX IF NOT EXISTS idx_firmware_versions_version ON firmware_versions(version);
+CREATE INDEX IF NOT EXISTS idx_firmware_versions_created_at ON firmware_versions(created_at DESC);
 
 -- Enable RLS
 ALTER TABLE firmware_versions ENABLE ROW LEVEL SECURITY;
@@ -29,6 +30,7 @@ ALTER TABLE firmware_versions ENABLE ROW LEVEL SECURITY;
 -- RLS Policies
 
 -- Allow all authenticated users to read firmware versions
+DROP POLICY IF EXISTS "Allow authenticated reads" ON firmware_versions;
 CREATE POLICY "Allow authenticated reads"
   ON firmware_versions
   FOR SELECT
@@ -36,6 +38,7 @@ CREATE POLICY "Allow authenticated reads"
   USING (true);
 
 -- Allow authenticated users to create firmware versions
+DROP POLICY IF EXISTS "Allow authenticated creates" ON firmware_versions;
 CREATE POLICY "Allow authenticated creates"
   ON firmware_versions
   FOR INSERT
@@ -43,6 +46,7 @@ CREATE POLICY "Allow authenticated creates"
   WITH CHECK (true);
 
 -- Allow authenticated users to update firmware versions
+DROP POLICY IF EXISTS "Allow authenticated updates" ON firmware_versions;
 CREATE POLICY "Allow authenticated updates"
   ON firmware_versions
   FOR UPDATE
@@ -51,6 +55,7 @@ CREATE POLICY "Allow authenticated updates"
   WITH CHECK (true);
 
 -- Allow authenticated users to delete firmware versions
+DROP POLICY IF EXISTS "Allow authenticated deletes" ON firmware_versions;
 CREATE POLICY "Allow authenticated deletes"
   ON firmware_versions
   FOR DELETE

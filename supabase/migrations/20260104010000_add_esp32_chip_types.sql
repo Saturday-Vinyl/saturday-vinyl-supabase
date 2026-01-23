@@ -2,6 +2,7 @@
 -- Migration: 018_add_esp32_chip_types.sql
 -- Description: Add ESP32-C6 and ESP32-H2 chip types
 -- Date: 2026-01-04
+-- Idempotent: Yes - safe to run multiple times
 -- ============================================================================
 
 -- Drop and recreate the constraint to include new chip types

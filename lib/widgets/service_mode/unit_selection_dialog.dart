@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:saturday_app/config/theme.dart';
 import 'package:saturday_app/models/production_unit.dart';
+import 'package:saturday_app/models/production_unit_with_consumer_info.dart';
+import 'package:saturday_app/providers/production_unit_provider.dart';
 import 'package:saturday_app/providers/service_mode_provider.dart';
 
 /// Dialog for selecting a production unit for a fresh device
@@ -30,10 +32,87 @@ class _UnitSelectionDialogState extends ConsumerState<UnitSelectionDialog> {
     super.dispose();
   }
 
+  Future<void> _handleUnitSelection(ProductionUnitWithConsumerInfo unitInfo) async {
+    if (unitInfo.hasConsumerDevice) {
+      // Show confirmation dialog for re-provisioning
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 28),
+              SizedBox(width: 12),
+              Text('Re-provision Unit?'),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'This unit (${unitInfo.unit.unitId}) is already linked to a consumer device.',
+              ),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: Colors.orange.withValues(alpha: 0.3),
+                  ),
+                ),
+                child: const Text(
+                  'Re-provisioning will delete the existing consumer device '
+                  'association. The user will need to set up this device again '
+                  'via the consumer app.',
+                  style: TextStyle(fontSize: 13),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              style: FilledButton.styleFrom(
+                backgroundColor: Colors.orange,
+              ),
+              child: const Text('Re-provision'),
+            ),
+          ],
+        ),
+      );
+
+      if (confirmed != true || !mounted) return;
+
+      // Delete the consumer device record
+      try {
+        final repository = ref.read(productionUnitRepositoryProvider);
+        await repository.deleteConsumerDevice(unitInfo.consumerDeviceId!);
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to delete consumer device: $e'),
+            backgroundColor: SaturdayColors.error,
+          ),
+        );
+        return;
+      }
+    }
+
+    if (!mounted) return;
+    Navigator.of(context).pop(unitInfo.unit);
+  }
+
   @override
   Widget build(BuildContext context) {
-    // Get units without MAC address (prioritize these)
-    final unitsWithoutMacAsync = ref.watch(unitsWithoutMacProvider(null));
+    // Get all units for provisioning (includes consumer device info)
+    final unitsAsync = ref.watch(unitsForProvisioningProvider(null));
 
     return Dialog(
       child: ConstrainedBox(
@@ -123,7 +202,7 @@ class _UnitSelectionDialogState extends ConsumerState<UnitSelectionDialog> {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        'Showing units without MAC address (not yet provisioned)',
+                        'Units with ⚠️ are linked to consumer devices and will require re-provisioning',
                         style: TextStyle(
                           color: SaturdayColors.info,
                           fontSize: 12,
@@ -137,14 +216,16 @@ class _UnitSelectionDialogState extends ConsumerState<UnitSelectionDialog> {
 
               // Unit list
               Expanded(
-                child: unitsWithoutMacAsync.when(
+                child: unitsAsync.when(
                   data: (units) {
                     final filteredUnits = _searchQuery.isEmpty
                         ? units
                         : units
                             .where((u) =>
-                                u.unitId.toLowerCase().contains(_searchQuery) ||
-                                (u.customerName
+                                u.unit.unitId
+                                    .toLowerCase()
+                                    .contains(_searchQuery) ||
+                                (u.unit.customerName
                                         ?.toLowerCase()
                                         .contains(_searchQuery) ??
                                     false))
@@ -176,10 +257,10 @@ class _UnitSelectionDialogState extends ConsumerState<UnitSelectionDialog> {
                       itemCount: filteredUnits.length,
                       separatorBuilder: (_, __) => const Divider(height: 1),
                       itemBuilder: (context, index) {
-                        final unit = filteredUnits[index];
+                        final unitInfo = filteredUnits[index];
                         return _UnitListTile(
-                          unit: unit,
-                          onTap: () => Navigator.of(context).pop(unit),
+                          unitInfo: unitInfo,
+                          onTap: () => _handleUnitSelection(unitInfo),
                         );
                       },
                     );
@@ -204,7 +285,7 @@ class _UnitSelectionDialogState extends ConsumerState<UnitSelectionDialog> {
                         const SizedBox(height: 8),
                         TextButton(
                           onPressed: () =>
-                              ref.invalidate(unitsWithoutMacProvider(null)),
+                              ref.invalidate(unitsForProvisioningProvider(null)),
                           child: const Text('Retry'),
                         ),
                       ],
@@ -221,16 +302,20 @@ class _UnitSelectionDialogState extends ConsumerState<UnitSelectionDialog> {
 }
 
 class _UnitListTile extends StatelessWidget {
-  final ProductionUnit unit;
+  final ProductionUnitWithConsumerInfo unitInfo;
   final VoidCallback onTap;
 
   const _UnitListTile({
-    required this.unit,
+    required this.unitInfo,
     required this.onTap,
   });
 
+  ProductionUnit get unit => unitInfo.unit;
+
   @override
   Widget build(BuildContext context) {
+    final hasConsumer = unitInfo.hasConsumerDevice;
+
     return ListTile(
       onTap: onTap,
       contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -238,21 +323,45 @@ class _UnitListTile extends StatelessWidget {
         width: 40,
         height: 40,
         decoration: BoxDecoration(
-          color: SaturdayColors.info.withValues(alpha: 0.1),
+          color: hasConsumer
+              ? Colors.orange.withValues(alpha: 0.1)
+              : SaturdayColors.info.withValues(alpha: 0.1),
           borderRadius: BorderRadius.circular(8),
         ),
-        child: const Icon(
-          Icons.qr_code,
-          color: SaturdayColors.info,
+        child: Icon(
+          hasConsumer ? Icons.warning_amber_rounded : Icons.qr_code,
+          color: hasConsumer ? Colors.orange : SaturdayColors.info,
           size: 20,
         ),
       ),
-      title: Text(
-        unit.unitId,
-        style: const TextStyle(
-          fontWeight: FontWeight.w600,
-          fontFamily: 'monospace',
-        ),
+      title: Row(
+        children: [
+          Text(
+            unit.unitId,
+            style: const TextStyle(
+              fontWeight: FontWeight.w600,
+              fontFamily: 'monospace',
+            ),
+          ),
+          if (hasConsumer) ...[
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: Colors.orange.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: const Text(
+                'In Use',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.orange,
+                ),
+              ),
+            ),
+          ],
+        ],
       ),
       subtitle: Row(
         children: [

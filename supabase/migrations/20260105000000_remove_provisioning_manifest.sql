@@ -3,6 +3,7 @@
 -- Reason: Provisioning manifests are now embedded in firmware binaries and retrieved
 --         via the get_manifest command in Service Mode. The database no longer stores
 --         manifest data - the firmware binary is the source of truth.
+-- Idempotent: Yes - safe to run multiple times
 
 -- Remove provisioning_manifest column from firmware_versions
 ALTER TABLE public.firmware_versions

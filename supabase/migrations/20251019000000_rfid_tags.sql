@@ -1,5 +1,6 @@
 -- RFID Tags Table
 -- Stores UHF RFID tags for vinyl record tracking
+-- Idempotent: Yes - safe to run multiple times
 
 -- ============================================================================
 -- RFID_TAGS TABLE
@@ -35,6 +36,7 @@ ALTER TABLE public.rfid_tags ENABLE ROW LEVEL SECURITY;
 -- ============================================================================
 
 -- Allow authenticated users to read all tags
+DROP POLICY IF EXISTS "Authenticated users can read rfid_tags" ON public.rfid_tags;
 CREATE POLICY "Authenticated users can read rfid_tags"
     ON public.rfid_tags
     FOR SELECT
@@ -42,6 +44,7 @@ CREATE POLICY "Authenticated users can read rfid_tags"
     USING (true);
 
 -- Allow authenticated users to insert tags (permission check done in app)
+DROP POLICY IF EXISTS "Authenticated users can insert rfid_tags" ON public.rfid_tags;
 CREATE POLICY "Authenticated users can insert rfid_tags"
     ON public.rfid_tags
     FOR INSERT
@@ -49,6 +52,7 @@ CREATE POLICY "Authenticated users can insert rfid_tags"
     WITH CHECK (true);
 
 -- Allow authenticated users to update tags (permission check done in app)
+DROP POLICY IF EXISTS "Authenticated users can update rfid_tags" ON public.rfid_tags;
 CREATE POLICY "Authenticated users can update rfid_tags"
     ON public.rfid_tags
     FOR UPDATE

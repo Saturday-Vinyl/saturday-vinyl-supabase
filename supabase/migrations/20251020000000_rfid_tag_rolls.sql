@@ -1,5 +1,6 @@
 -- RFID Tag Rolls Table
 -- Stores roll metadata for batch RFID tag writing and printing workflows
+-- Idempotent: Yes - safe to run multiple times
 
 -- ============================================================================
 -- RFID_TAG_ROLLS TABLE
@@ -34,22 +35,54 @@ ALTER TABLE public.rfid_tag_rolls ENABLE ROW LEVEL SECURITY;
 -- ============================================================================
 -- UPDATE RFID_TAGS TABLE WITH ROLL COLUMNS
 -- ============================================================================
-ALTER TABLE public.rfid_tags
-    ADD COLUMN IF NOT EXISTS roll_id UUID REFERENCES public.rfid_tag_rolls(id) ON DELETE SET NULL,
-    ADD COLUMN IF NOT EXISTS roll_position INTEGER;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public'
+        AND table_name = 'rfid_tags'
+        AND column_name = 'roll_id'
+    ) THEN
+        ALTER TABLE public.rfid_tags
+            ADD COLUMN roll_id UUID REFERENCES public.rfid_tag_rolls(id) ON DELETE SET NULL;
+    END IF;
+END $$;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public'
+        AND table_name = 'rfid_tags'
+        AND column_name = 'roll_position'
+    ) THEN
+        ALTER TABLE public.rfid_tags
+            ADD COLUMN roll_position INTEGER;
+    END IF;
+END $$;
 
 -- Index for efficient roll-based queries
 CREATE INDEX IF NOT EXISTS idx_rfid_tags_roll ON public.rfid_tags(roll_id, roll_position);
 
 -- Constraint: roll_position must be positive when set
-ALTER TABLE public.rfid_tags
-    ADD CONSTRAINT valid_roll_position CHECK (roll_position IS NULL OR roll_position > 0);
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'valid_roll_position'
+        AND conrelid = 'public.rfid_tags'::regclass
+    ) THEN
+        ALTER TABLE public.rfid_tags
+            ADD CONSTRAINT valid_roll_position CHECK (roll_position IS NULL OR roll_position > 0);
+    END IF;
+END $$;
 
 -- ============================================================================
 -- RLS POLICIES FOR RFID_TAG_ROLLS
 -- ============================================================================
 
 -- Allow authenticated users to read all rolls
+DROP POLICY IF EXISTS "Authenticated users can read rfid_tag_rolls" ON public.rfid_tag_rolls;
 CREATE POLICY "Authenticated users can read rfid_tag_rolls"
     ON public.rfid_tag_rolls
     FOR SELECT
@@ -57,6 +90,7 @@ CREATE POLICY "Authenticated users can read rfid_tag_rolls"
     USING (true);
 
 -- Allow authenticated users to insert rolls (permission check done in app)
+DROP POLICY IF EXISTS "Authenticated users can insert rfid_tag_rolls" ON public.rfid_tag_rolls;
 CREATE POLICY "Authenticated users can insert rfid_tag_rolls"
     ON public.rfid_tag_rolls
     FOR INSERT
@@ -64,6 +98,7 @@ CREATE POLICY "Authenticated users can insert rfid_tag_rolls"
     WITH CHECK (true);
 
 -- Allow authenticated users to update rolls (permission check done in app)
+DROP POLICY IF EXISTS "Authenticated users can update rfid_tag_rolls" ON public.rfid_tag_rolls;
 CREATE POLICY "Authenticated users can update rfid_tag_rolls"
     ON public.rfid_tag_rolls
     FOR UPDATE
@@ -72,6 +107,7 @@ CREATE POLICY "Authenticated users can update rfid_tag_rolls"
     WITH CHECK (true);
 
 -- Allow authenticated users to delete rolls (permission check done in app)
+DROP POLICY IF EXISTS "Authenticated users can delete rfid_tag_rolls" ON public.rfid_tag_rolls;
 CREATE POLICY "Authenticated users can delete rfid_tag_rolls"
     ON public.rfid_tag_rolls
     FOR DELETE

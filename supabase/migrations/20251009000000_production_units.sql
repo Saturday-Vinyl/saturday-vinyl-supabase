@@ -1,6 +1,7 @@
 -- Migration 005: Production Units
 -- Created: 2025-10-09
 -- Description: Create production_units and unit_step_completions tables
+-- Idempotent: Yes - safe to run multiple times
 
 -- Create production_units table
 CREATE TABLE IF NOT EXISTS production_units (
@@ -33,18 +34,18 @@ CREATE TABLE IF NOT EXISTS unit_step_completions (
 );
 
 -- Create indexes for production_units
-CREATE INDEX idx_production_units_uuid ON production_units(uuid);
-CREATE INDEX idx_production_units_unit_id ON production_units(unit_id);
-CREATE INDEX idx_production_units_product_id ON production_units(product_id);
-CREATE INDEX idx_production_units_variant_id ON production_units(variant_id);
-CREATE INDEX idx_production_units_shopify_order_id ON production_units(shopify_order_id);
-CREATE INDEX idx_production_units_is_completed ON production_units(is_completed);
-CREATE INDEX idx_production_units_created_at ON production_units(created_at);
+CREATE INDEX IF NOT EXISTS idx_production_units_uuid ON production_units(uuid);
+CREATE INDEX IF NOT EXISTS idx_production_units_unit_id ON production_units(unit_id);
+CREATE INDEX IF NOT EXISTS idx_production_units_product_id ON production_units(product_id);
+CREATE INDEX IF NOT EXISTS idx_production_units_variant_id ON production_units(variant_id);
+CREATE INDEX IF NOT EXISTS idx_production_units_shopify_order_id ON production_units(shopify_order_id);
+CREATE INDEX IF NOT EXISTS idx_production_units_is_completed ON production_units(is_completed);
+CREATE INDEX IF NOT EXISTS idx_production_units_created_at ON production_units(created_at);
 
 -- Create indexes for unit_step_completions
-CREATE INDEX idx_unit_step_completions_unit_id ON unit_step_completions(unit_id);
-CREATE INDEX idx_unit_step_completions_step_id ON unit_step_completions(step_id);
-CREATE INDEX idx_unit_step_completions_completed_by ON unit_step_completions(completed_by);
+CREATE INDEX IF NOT EXISTS idx_unit_step_completions_unit_id ON unit_step_completions(unit_id);
+CREATE INDEX IF NOT EXISTS idx_unit_step_completions_step_id ON unit_step_completions(step_id);
+CREATE INDEX IF NOT EXISTS idx_unit_step_completions_completed_by ON unit_step_completions(completed_by);
 
 -- Enable RLS
 ALTER TABLE production_units ENABLE ROW LEVEL SECURITY;
@@ -53,6 +54,7 @@ ALTER TABLE unit_step_completions ENABLE ROW LEVEL SECURITY;
 -- RLS Policies for production_units
 
 -- Allow authenticated users to read all production units
+DROP POLICY IF EXISTS "Allow authenticated reads on production_units" ON production_units;
 CREATE POLICY "Allow authenticated reads on production_units"
   ON production_units
   FOR SELECT
@@ -60,6 +62,7 @@ CREATE POLICY "Allow authenticated reads on production_units"
   USING (true);
 
 -- Allow authenticated users to create production units
+DROP POLICY IF EXISTS "Allow authenticated creates on production_units" ON production_units;
 CREATE POLICY "Allow authenticated creates on production_units"
   ON production_units
   FOR INSERT
@@ -67,6 +70,7 @@ CREATE POLICY "Allow authenticated creates on production_units"
   WITH CHECK (true);
 
 -- Allow authenticated users to update production units
+DROP POLICY IF EXISTS "Allow authenticated updates on production_units" ON production_units;
 CREATE POLICY "Allow authenticated updates on production_units"
   ON production_units
   FOR UPDATE
@@ -75,6 +79,7 @@ CREATE POLICY "Allow authenticated updates on production_units"
   WITH CHECK (true);
 
 -- Allow authenticated users to delete production units
+DROP POLICY IF EXISTS "Allow authenticated deletes on production_units" ON production_units;
 CREATE POLICY "Allow authenticated deletes on production_units"
   ON production_units
   FOR DELETE
@@ -84,6 +89,7 @@ CREATE POLICY "Allow authenticated deletes on production_units"
 -- RLS Policies for unit_step_completions
 
 -- Allow authenticated users to read all step completions
+DROP POLICY IF EXISTS "Allow authenticated reads on unit_step_completions" ON unit_step_completions;
 CREATE POLICY "Allow authenticated reads on unit_step_completions"
   ON unit_step_completions
   FOR SELECT
@@ -91,6 +97,7 @@ CREATE POLICY "Allow authenticated reads on unit_step_completions"
   USING (true);
 
 -- Allow authenticated users to create step completions
+DROP POLICY IF EXISTS "Allow authenticated creates on unit_step_completions" ON unit_step_completions;
 CREATE POLICY "Allow authenticated creates on unit_step_completions"
   ON unit_step_completions
   FOR INSERT
@@ -98,6 +105,7 @@ CREATE POLICY "Allow authenticated creates on unit_step_completions"
   WITH CHECK (true);
 
 -- Allow authenticated users to update step completions
+DROP POLICY IF EXISTS "Allow authenticated updates on unit_step_completions" ON unit_step_completions;
 CREATE POLICY "Allow authenticated updates on unit_step_completions"
   ON unit_step_completions
   FOR UPDATE
@@ -106,6 +114,7 @@ CREATE POLICY "Allow authenticated updates on unit_step_completions"
   WITH CHECK (true);
 
 -- Allow authenticated users to delete step completions
+DROP POLICY IF EXISTS "Allow authenticated deletes on unit_step_completions" ON unit_step_completions;
 CREATE POLICY "Allow authenticated deletes on unit_step_completions"
   ON unit_step_completions
   FOR DELETE

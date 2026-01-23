@@ -1,6 +1,7 @@
 -- Migration 008: Orders and Customers
 -- Created: 2025-10-10
 -- Description: Create customers, orders, and order_line_items tables for Shopify order sync
+-- Idempotent: Yes - safe to run multiple times
 
 -- =====================================================
 -- Customers Table
@@ -210,12 +211,14 @@ CREATE POLICY "Order line items are deletable by authenticated users"
 -- =====================================================
 
 -- Trigger for customers
+DROP TRIGGER IF EXISTS update_customers_updated_at ON customers;
 CREATE TRIGGER update_customers_updated_at
   BEFORE UPDATE ON customers
   FOR EACH ROW
   EXECUTE FUNCTION update_updated_at_column();
 
 -- Trigger for orders
+DROP TRIGGER IF EXISTS update_orders_updated_at ON orders;
 CREATE TRIGGER update_orders_updated_at
   BEFORE UPDATE ON orders
   FOR EACH ROW

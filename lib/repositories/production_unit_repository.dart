@@ -1,6 +1,8 @@
 import 'package:saturday_app/models/firmware_version.dart';
 import 'package:saturday_app/models/production_step.dart';
 import 'package:saturday_app/models/production_unit.dart';
+import 'package:saturday_app/models/production_unit_with_consumer_info.dart';
+import 'package:saturday_app/models/thread_credentials.dart';
 import 'package:saturday_app/models/unit_firmware_history.dart';
 import 'package:saturday_app/models/unit_step_completion.dart';
 import 'package:saturday_app/services/qr_service.dart';
@@ -639,6 +641,63 @@ class ProductionUnitRepository {
     }
   }
 
+  /// Get all production units for provisioning (with consumer device info)
+  ///
+  /// Returns all incomplete units regardless of MAC address status, with
+  /// information about whether each unit has an associated consumer device.
+  /// Used for the re-provisioning flow that allows re-provisioning any unit.
+  Future<List<ProductionUnitWithConsumerInfo>> getUnitsForProvisioning({
+    String? productId,
+  }) async {
+    try {
+      AppLogger.info('Fetching units for provisioning');
+
+      var query = _supabase.from('production_units').select('''
+            *,
+            consumer_devices!production_unit_id (
+              id
+            )
+          ''').eq('is_completed', false);
+
+      if (productId != null) {
+        query = query.eq('product_id', productId);
+      }
+
+      final response =
+          await query.order('created_at', ascending: false).limit(100);
+
+      final units = (response as List)
+          .map((json) => ProductionUnitWithConsumerInfo.fromJson(json))
+          .toList();
+
+      AppLogger.info('Found ${units.length} units for provisioning');
+      return units;
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to fetch units for provisioning', error, stackTrace);
+      rethrow;
+    }
+  }
+
+  /// Delete a consumer device record (for re-provisioning workflow)
+  ///
+  /// When re-provisioning a unit that already has a consumer device linked,
+  /// the old consumer device record must be deleted first.
+  Future<void> deleteConsumerDevice(String consumerDeviceId) async {
+    try {
+      AppLogger.info('Deleting consumer device: $consumerDeviceId');
+
+      await _supabase
+          .from('consumer_devices')
+          .delete()
+          .eq('id', consumerDeviceId);
+
+      AppLogger.info('Consumer device deleted successfully');
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to delete consumer device', error, stackTrace);
+      rethrow;
+    }
+  }
+
   /// Get a unit by its serial number (unit_id field like "SV-HUB-000001")
   ///
   /// Used to look up a unit from a device's reported unit_id
@@ -744,6 +803,162 @@ class ProductionUnitRepository {
       return units;
     } catch (error, stackTrace) {
       AppLogger.error('Failed to get units with firmware', error, stackTrace);
+      rethrow;
+    }
+  }
+
+  // ============================================================================
+  // Thread Credentials
+  // ============================================================================
+
+  /// Save Thread Border Router credentials for a production unit (Hub)
+  ///
+  /// These credentials are captured during Hub provisioning and used by the
+  /// mobile app to provision crates to join the Thread network.
+  ///
+  /// If credentials already exist for this unit, they will be updated.
+  Future<ThreadCredentials> saveThreadCredentials(
+    ThreadCredentials credentials,
+  ) async {
+    try {
+      AppLogger.info('Saving Thread credentials for unit: ${credentials.unitId}');
+
+      // Validate credentials before saving
+      final validationError = credentials.validate();
+      if (validationError != null) {
+        throw Exception('Invalid Thread credentials: $validationError');
+      }
+
+      // Use upsert to handle both insert and update
+      final response = await _supabase
+          .from('thread_credentials')
+          .upsert(
+            credentials.toInsertJson(),
+            onConflict: 'unit_id',
+          )
+          .select()
+          .single();
+
+      final saved = ThreadCredentials.fromJson(response);
+      AppLogger.info('Thread credentials saved successfully');
+      return saved;
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to save Thread credentials', error, stackTrace);
+      rethrow;
+    }
+  }
+
+  /// Get Thread credentials for a production unit by unit database ID
+  Future<ThreadCredentials?> getThreadCredentials(String unitId) async {
+    try {
+      AppLogger.info('Fetching Thread credentials for unit: $unitId');
+
+      final response = await _supabase
+          .from('thread_credentials')
+          .select()
+          .eq('unit_id', unitId)
+          .maybeSingle();
+
+      if (response == null) {
+        AppLogger.info('No Thread credentials found for unit: $unitId');
+        return null;
+      }
+
+      final credentials = ThreadCredentials.fromJson(response);
+      AppLogger.info('Found Thread credentials: ${credentials.networkName}');
+      return credentials;
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to fetch Thread credentials', error, stackTrace);
+      rethrow;
+    }
+  }
+
+  /// Get Thread credentials by unit serial number (e.g., "SV-HUB-00001")
+  ///
+  /// This is useful when the mobile app knows the Hub's serial number
+  /// and needs to get the Thread credentials to provision a crate.
+  Future<ThreadCredentials?> getThreadCredentialsBySerialNumber(
+    String serialNumber,
+  ) async {
+    try {
+      AppLogger.info('Fetching Thread credentials by serial: $serialNumber');
+
+      // First get the unit ID
+      final unit = await getUnitBySerialNumber(serialNumber);
+      if (unit == null) {
+        AppLogger.info('Unit not found: $serialNumber');
+        return null;
+      }
+
+      return await getThreadCredentials(unit.id);
+    } catch (error, stackTrace) {
+      AppLogger.error(
+        'Failed to fetch Thread credentials by serial',
+        error,
+        stackTrace,
+      );
+      rethrow;
+    }
+  }
+
+  /// Delete Thread credentials for a production unit
+  Future<void> deleteThreadCredentials(String unitId) async {
+    try {
+      AppLogger.info('Deleting Thread credentials for unit: $unitId');
+
+      await _supabase.from('thread_credentials').delete().eq('unit_id', unitId);
+
+      AppLogger.info('Thread credentials deleted successfully');
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to delete Thread credentials', error, stackTrace);
+      rethrow;
+    }
+  }
+
+  /// Check if a production unit has Thread credentials stored
+  Future<bool> hasThreadCredentials(String unitId) async {
+    try {
+      final response = await _supabase
+          .from('thread_credentials')
+          .select('id')
+          .eq('unit_id', unitId)
+          .maybeSingle();
+
+      return response != null;
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to check Thread credentials', error, stackTrace);
+      rethrow;
+    }
+  }
+
+  /// Get all available Thread credentials (from provisioned Hubs)
+  ///
+  /// Used when testing Thread on non-BR devices that need to join
+  /// an existing Thread network. Returns credentials with the associated
+  /// Hub's serial number for display purposes.
+  Future<List<ThreadCredentialsWithUnit>> getAllThreadCredentials() async {
+    try {
+      AppLogger.info('Fetching all Thread credentials');
+
+      final response = await _supabase.from('thread_credentials').select('''
+            *,
+            production_units!inner (
+              unit_id
+            )
+          ''').order('created_at', ascending: false);
+
+      final credentials = (response as List).map((json) {
+        final unitData = json['production_units'] as Map<String, dynamic>?;
+        return ThreadCredentialsWithUnit(
+          credentials: ThreadCredentials.fromJson(json),
+          hubSerialNumber: unitData?['unit_id'] as String? ?? 'Unknown',
+        );
+      }).toList();
+
+      AppLogger.info('Found ${credentials.length} Thread credential sets');
+      return credentials;
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to fetch all Thread credentials', error, stackTrace);
       rethrow;
     }
   }

@@ -43,6 +43,7 @@ class _ManifestEditorScreenState extends ConsumerState<ManifestEditorScreen>
   bool _wifiCapability = false;
   bool _bluetoothCapability = false;
   bool _threadCapability = false;
+  bool _threadBrCapability = false; // Thread Border Router
   bool _cloudCapability = false;
   bool _rfidCapability = false;
   bool _audioCapability = false;
@@ -57,8 +58,8 @@ class _ManifestEditorScreenState extends ConsumerState<ManifestEditorScreen>
   // Supported tests
   List<String> _supportedTests = [];
 
-  // Status fields
-  List<String> _statusFields = [];
+  // Status fields (split into auto-populated and additional)
+  List<String> _additionalStatusFields = [];
 
   // Custom commands
   List<CustomCommand> _customCommands = [];
@@ -72,7 +73,7 @@ class _ManifestEditorScreenState extends ConsumerState<ManifestEditorScreen>
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 5, vsync: this);
+    _tabController = TabController(length: 6, vsync: this);
 
     // Initialize controllers
     _deviceTypeController = TextEditingController();
@@ -93,6 +94,7 @@ class _ManifestEditorScreenState extends ConsumerState<ManifestEditorScreen>
       _wifiCapability = m.capabilities.wifi;
       _bluetoothCapability = m.capabilities.bluetooth;
       _threadCapability = m.capabilities.thread;
+      _threadBrCapability = m.capabilities.threadBr;
       _cloudCapability = m.capabilities.cloud;
       _rfidCapability = m.capabilities.rfid;
       _audioCapability = m.capabilities.audio;
@@ -106,7 +108,11 @@ class _ManifestEditorScreenState extends ConsumerState<ManifestEditorScreen>
 
       // Tests and status
       _supportedTests = List.from(m.supportedTests);
-      _statusFields = List.from(m.statusFields);
+      // Extract additional status fields (those not auto-generated from capabilities)
+      final autoFields = _computeAutoStatusFields();
+      _additionalStatusFields = m.statusFields
+          .where((f) => !autoFields.contains(f))
+          .toList();
 
       // Custom commands
       _customCommands = List.from(m.customCommands);
@@ -119,13 +125,8 @@ class _ManifestEditorScreenState extends ConsumerState<ManifestEditorScreen>
       _requiredFields = ['unit_id'];
       _optionalFields = ['wifi_ssid', 'wifi_password'];
       _supportedTests = ['wifi', 'cloud'];
-      _statusFields = [
-        'wifi_connected',
-        'wifi_rssi',
-        'cloud_connected',
-        'uptime_ms',
-        'free_heap'
-      ];
+      // Additional status fields beyond auto-populated ones (empty by default)
+      _additionalStatusFields = [];
     }
   }
 
@@ -137,6 +138,60 @@ class _ManifestEditorScreenState extends ConsumerState<ManifestEditorScreen>
     _firmwareIdController.dispose();
     _firmwareVersionController.dispose();
     super.dispose();
+  }
+
+  /// Compute auto-populated status fields based on enabled capabilities
+  List<String> _computeAutoStatusFields() {
+    final autoFields = <String>[
+      // Always present
+      'device_type',
+      'firmware_version',
+      'mac_address',
+      'unit_id',
+      'uptime_ms',
+      'free_heap',
+      'last_tests',
+    ];
+
+    if (_wifiCapability) {
+      autoFields.addAll([
+        'wifi_configured',
+        'wifi_connected',
+        'wifi_ssid',
+        'wifi_rssi',
+        'ip_address',
+      ]);
+    }
+
+    if (_threadCapability || _threadBrCapability) {
+      autoFields.addAll(['thread_configured', 'thread_connected']);
+    }
+
+    if (_threadBrCapability) {
+      autoFields.add('thread'); // Thread credentials object
+    }
+
+    if (_batteryCapability) {
+      autoFields.addAll(['battery_level', 'battery_charging']);
+    }
+
+    if (_cloudCapability) {
+      autoFields.addAll(['cloud_configured', 'cloud_url']);
+    }
+
+    if (_bluetoothCapability) {
+      autoFields.add('bluetooth_enabled');
+    }
+
+    return autoFields;
+  }
+
+  /// Compute all status fields (auto + additional)
+  List<String> _computeAllStatusFields() {
+    final autoFields = _computeAutoStatusFields();
+    // Merge with additional fields, preserving order and avoiding duplicates
+    final allFields = <String>{...autoFields, ..._additionalStatusFields};
+    return allFields.toList();
   }
 
   ServiceModeManifest _buildManifest() {
@@ -152,6 +207,7 @@ class _ManifestEditorScreenState extends ConsumerState<ManifestEditorScreen>
         wifi: _wifiCapability,
         bluetooth: _bluetoothCapability,
         thread: _threadCapability,
+        threadBr: _threadBrCapability,
         cloud: _cloudCapability,
         rfid: _rfidCapability,
         audio: _audioCapability,
@@ -164,7 +220,7 @@ class _ManifestEditorScreenState extends ConsumerState<ManifestEditorScreen>
         optional: _optionalFields,
       ),
       supportedTests: _supportedTests,
-      statusFields: _statusFields,
+      statusFields: _computeAllStatusFields(),
       customCommands: _customCommands,
       ledPatterns: _ledPatterns,
     );
@@ -186,6 +242,7 @@ class _ManifestEditorScreenState extends ConsumerState<ManifestEditorScreen>
             Tab(text: 'Capabilities'),
             Tab(text: 'Provisioning'),
             Tab(text: 'Tests'),
+            Tab(text: 'Status Fields'),
             Tab(text: 'Advanced'),
           ],
         ),
@@ -234,6 +291,7 @@ class _ManifestEditorScreenState extends ConsumerState<ManifestEditorScreen>
                       _buildCapabilitiesTab(),
                       _buildProvisioningTab(),
                       _buildTestsTab(),
+                      _buildStatusFieldsTab(),
                       _buildAdvancedTab(),
                     ],
                   ),
@@ -463,8 +521,18 @@ class _ManifestEditorScreenState extends ConsumerState<ManifestEditorScreen>
                   (v) => setState(() => _wifiCapability = v)),
               _buildCapabilitySwitch('Bluetooth', _bluetoothCapability,
                   (v) => setState(() => _bluetoothCapability = v)),
-              _buildCapabilitySwitch('Thread', _threadCapability,
-                  (v) => setState(() => _threadCapability = v)),
+              _buildCapabilitySwitchWithHint(
+                'Thread (Border Router)',
+                'Creates Thread network, provides credentials during provisioning',
+                _threadBrCapability,
+                (v) => setState(() => _threadBrCapability = v),
+              ),
+              _buildCapabilitySwitchWithHint(
+                'Thread (Device)',
+                'Joins existing Thread network, requires credentials for testing',
+                _threadCapability,
+                (v) => setState(() => _threadCapability = v),
+              ),
               _buildCapabilitySwitch('Cloud', _cloudCapability,
                   (v) => setState(() => _cloudCapability = v)),
             ],
@@ -532,6 +600,21 @@ class _ManifestEditorScreenState extends ConsumerState<ManifestEditorScreen>
       String label, bool value, ValueChanged<bool> onChanged) {
     return SwitchListTile(
       title: Text(label),
+      value: value,
+      onChanged: onChanged,
+      contentPadding: EdgeInsets.zero,
+      dense: true,
+    );
+  }
+
+  Widget _buildCapabilitySwitchWithHint(
+      String label, String hint, bool value, ValueChanged<bool> onChanged) {
+    return SwitchListTile(
+      title: Text(label),
+      subtitle: Text(
+        hint,
+        style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+      ),
       value: value,
       onChanged: onChanged,
       contentPadding: EdgeInsets.zero,
@@ -627,20 +710,6 @@ class _ManifestEditorScreenState extends ConsumerState<ManifestEditorScreen>
 
           const SizedBox(height: 24),
 
-          _buildSectionHeader(
-            'Status Fields',
-            'Fields returned in get_status response',
-          ),
-          const SizedBox(height: 12),
-          _buildStringListEditor(
-            items: _statusFields,
-            onChanged: (items) => setState(() => _statusFields = items),
-            addLabel: 'Add Status Field',
-            hintText: 'e.g., wifi_connected, uptime_ms',
-          ),
-
-          const SizedBox(height: 24),
-
           // Common tests helper
           _buildHelperChips(
             'Common Tests',
@@ -651,6 +720,8 @@ class _ManifestEditorScreenState extends ConsumerState<ManifestEditorScreen>
                   (l) => setState(() => _supportedTests = l))),
               ('cloud', () => _addToListIfNotExists('cloud', _supportedTests,
                   (l) => setState(() => _supportedTests = l))),
+              ('thread', () => _addToListIfNotExists('thread', _supportedTests,
+                  (l) => setState(() => _supportedTests = l))),
               ('rfid', () => _addToListIfNotExists('rfid', _supportedTests,
                   (l) => setState(() => _supportedTests = l))),
               ('audio', () => _addToListIfNotExists('audio', _supportedTests,
@@ -659,26 +730,112 @@ class _ManifestEditorScreenState extends ConsumerState<ManifestEditorScreen>
                   (l) => setState(() => _supportedTests = l))),
             ],
           ),
+        ],
+      ),
+    );
+  }
 
-          const SizedBox(height: 16),
+  // ===========================================
+  // Tab 5: Status Fields
+  // ===========================================
+  Widget _buildStatusFieldsTab() {
+    final autoFields = _computeAutoStatusFields();
 
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildSectionHeader(
+            'Auto-populated Status Fields',
+            'Based on device capabilities (read-only)',
+          ),
+          const SizedBox(height: 12),
+
+          // Auto-populated fields (read-only display)
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.grey[100],
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.grey[300]!),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (autoFields.isEmpty)
+                  Text(
+                    'Enable capabilities to see auto-populated status fields',
+                    style: TextStyle(
+                      color: Colors.grey[600],
+                      fontStyle: FontStyle.italic,
+                    ),
+                  )
+                else
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: autoFields.map((field) {
+                      return Chip(
+                        label: Text(
+                          field,
+                          style: const TextStyle(
+                            fontFamily: 'monospace',
+                            fontSize: 12,
+                          ),
+                        ),
+                        backgroundColor: Colors.grey[200],
+                      );
+                    }).toList(),
+                  ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 8),
+          Text(
+            'These fields are automatically expected based on enabled capabilities.',
+            style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+          ),
+
+          const SizedBox(height: 24),
+
+          _buildSectionHeader(
+            'Additional Status Fields',
+            'Custom status fields specific to this device',
+          ),
+          const SizedBox(height: 12),
+          _buildStringListEditor(
+            items: _additionalStatusFields,
+            onChanged: (items) =>
+                setState(() => _additionalStatusFields = items),
+            addLabel: 'Add Status Field',
+            hintText: 'e.g., custom_sensor_value',
+          ),
+
+          const SizedBox(height: 24),
+
+          // Helper chips for less common fields that might be additional
           _buildHelperChips(
-            'Common Status Fields',
-            Icons.info_outline,
+            'Common Additional Fields',
+            Icons.add_circle_outline,
             Colors.blue,
             [
-              ('wifi_connected', () => _addToListIfNotExists('wifi_connected', _statusFields,
-                  (l) => setState(() => _statusFields = l))),
-              ('wifi_rssi', () => _addToListIfNotExists('wifi_rssi', _statusFields,
-                  (l) => setState(() => _statusFields = l))),
-              ('cloud_connected', () => _addToListIfNotExists('cloud_connected', _statusFields,
-                  (l) => setState(() => _statusFields = l))),
-              ('uptime_ms', () => _addToListIfNotExists('uptime_ms', _statusFields,
-                  (l) => setState(() => _statusFields = l))),
-              ('free_heap', () => _addToListIfNotExists('free_heap', _statusFields,
-                  (l) => setState(() => _statusFields = l))),
-              ('battery_level', () => _addToListIfNotExists('battery_level', _statusFields,
-                  (l) => setState(() => _statusFields = l))),
+              ('rssi', () => _addToListIfNotExists(
+                  'rssi', _additionalStatusFields,
+                  (l) => setState(() => _additionalStatusFields = l))),
+              ('temperature', () => _addToListIfNotExists(
+                  'temperature', _additionalStatusFields,
+                  (l) => setState(() => _additionalStatusFields = l))),
+              ('humidity', () => _addToListIfNotExists(
+                  'humidity', _additionalStatusFields,
+                  (l) => setState(() => _additionalStatusFields = l))),
+              ('tag_count', () => _addToListIfNotExists(
+                  'tag_count', _additionalStatusFields,
+                  (l) => setState(() => _additionalStatusFields = l))),
+              ('last_tag_epc', () => _addToListIfNotExists(
+                  'last_tag_epc', _additionalStatusFields,
+                  (l) => setState(() => _additionalStatusFields = l))),
             ],
           ),
         ],
@@ -687,7 +844,7 @@ class _ManifestEditorScreenState extends ConsumerState<ManifestEditorScreen>
   }
 
   // ===========================================
-  // Tab 5: Advanced
+  // Tab 6: Advanced
   // ===========================================
   Widget _buildAdvancedTab() {
     return SingleChildScrollView(

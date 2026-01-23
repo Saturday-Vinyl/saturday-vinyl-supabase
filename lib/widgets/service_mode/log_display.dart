@@ -5,24 +5,38 @@ import 'package:saturday_app/config/theme.dart';
 class LogDisplay extends StatelessWidget {
   final List<String> logLines;
   final ScrollController? scrollController;
+  final bool hideBeacons;
 
   const LogDisplay({
     super.key,
     required this.logLines,
     this.scrollController,
+    this.hideBeacons = false,
   });
+
+  /// Check if a line is a service mode beacon
+  static bool isBeaconLine(String line) {
+    return line.contains('"status":"service_mode"');
+  }
 
   @override
   Widget build(BuildContext context) {
+    // Filter out beacon lines if hideBeacons is true
+    final displayLines = hideBeacons
+        ? logLines.where((line) => !isBeaconLine(line)).toList()
+        : logLines;
+
     return Container(
       decoration: BoxDecoration(
         color: Colors.grey[900],
         borderRadius: BorderRadius.circular(8),
       ),
-      child: logLines.isEmpty
+      child: displayLines.isEmpty
           ? Center(
               child: Text(
-                'No logs yet. Connect to a device to see serial output.',
+                hideBeacons && logLines.isNotEmpty
+                    ? 'All visible logs are beacons (hidden)'
+                    : 'No logs yet. Connect to a device to see serial output.',
                 style: TextStyle(
                   color: Colors.grey[600],
                   fontFamily: 'monospace',
@@ -32,9 +46,9 @@ class LogDisplay extends StatelessWidget {
           : ListView.builder(
               controller: scrollController,
               padding: const EdgeInsets.all(12),
-              itemCount: logLines.length,
+              itemCount: displayLines.length,
               itemBuilder: (context, index) {
-                final line = logLines[index];
+                final line = displayLines[index];
                 return SelectableText(
                   line,
                   style: TextStyle(

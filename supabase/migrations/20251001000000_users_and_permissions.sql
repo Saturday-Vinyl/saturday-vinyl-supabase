@@ -1,5 +1,6 @@
 -- Saturday! Admin App Database Schema
 -- This file contains all the table definitions for the admin application
+-- Idempotent: Yes - safe to run multiple times
 
 -- ============================================================================
 -- USERS TABLE
@@ -27,6 +28,7 @@ ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
 -- RLS Policies for users table
 -- Allow authenticated users to read all users (we'll handle permissions in app)
 -- This avoids infinite recursion when checking if a user is an admin
+DROP POLICY IF EXISTS "Authenticated users can read users" ON public.users;
 CREATE POLICY "Authenticated users can read users"
     ON public.users
     FOR SELECT
@@ -34,6 +36,7 @@ CREATE POLICY "Authenticated users can read users"
     USING (true);
 
 -- Only allow users to update their own last_login
+DROP POLICY IF EXISTS "Users can update own last_login" ON public.users;
 CREATE POLICY "Users can update own last_login"
     ON public.users
     FOR UPDATE
@@ -41,6 +44,7 @@ CREATE POLICY "Users can update own last_login"
     WITH CHECK (auth.jwt() ->> 'email' = email);
 
 -- Allow insert for new users (needed for getOrCreateUser)
+DROP POLICY IF EXISTS "Allow insert for authenticated users" ON public.users;
 CREATE POLICY "Allow insert for authenticated users"
     ON public.users
     FOR INSERT
@@ -69,6 +73,7 @@ ON CONFLICT (name) DO NOTHING;
 ALTER TABLE public.permissions ENABLE ROW LEVEL SECURITY;
 
 -- RLS Policy: Anyone authenticated can read permissions
+DROP POLICY IF EXISTS "Authenticated users can read permissions" ON public.permissions;
 CREATE POLICY "Authenticated users can read permissions"
     ON public.permissions
     FOR SELECT
@@ -98,6 +103,7 @@ ALTER TABLE public.user_permissions ENABLE ROW LEVEL SECURITY;
 -- RLS Policies for user_permissions table
 -- Allow authenticated users to read all user permissions
 -- (Permission checking is done at the application level)
+DROP POLICY IF EXISTS "Authenticated users can read user permissions" ON public.user_permissions;
 CREATE POLICY "Authenticated users can read user permissions"
     ON public.user_permissions
     FOR SELECT

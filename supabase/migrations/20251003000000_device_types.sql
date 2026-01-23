@@ -2,6 +2,7 @@
 -- Created: 2025-10-09
 -- Description: Adds current_firmware_version column to existing device_types table
 -- Note: device_types table already exists from migration 001_products_schema.sql
+-- Idempotent: Yes - safe to run multiple times
 
 -- Add current_firmware_version column if it doesn't exist
 DO $$

@@ -2,6 +2,7 @@
 -- Migration: 010_production_step_types.sql
 -- Description: Add step types and machine integration support
 -- Date: 2025-10-12
+-- Idempotent: Yes - safe to run multiple times
 -- ============================================================================
 
 -- ============================================================================
@@ -9,7 +10,12 @@
 -- ============================================================================
 
 -- Create step_type enum for discriminating step functionality
-CREATE TYPE public.step_type AS ENUM ('general', 'cnc_milling', 'laser_cutting');
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'step_type') THEN
+    CREATE TYPE public.step_type AS ENUM ('general', 'cnc_milling', 'laser_cutting');
+  END IF;
+END $$;
 
 COMMENT ON TYPE public.step_type IS
   'Type of production step: general (manual work), cnc_milling (CNC machine), or laser_cutting (laser machine)';
@@ -19,23 +25,77 @@ COMMENT ON TYPE public.step_type IS
 -- ============================================================================
 
 -- Add step_type column (default to 'general' for existing steps)
-ALTER TABLE public.production_steps
-  ADD COLUMN step_type public.step_type NOT NULL DEFAULT 'general';
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'production_steps' AND column_name = 'step_type') THEN
+    ALTER TABLE public.production_steps ADD COLUMN step_type public.step_type NOT NULL DEFAULT 'general';
+  END IF;
+END $$;
 
 -- Add QR engraving parameters for laser cutting steps
-ALTER TABLE public.production_steps
-  ADD COLUMN engrave_qr BOOLEAN NOT NULL DEFAULT false,
-  ADD COLUMN qr_x_offset NUMERIC(10, 3),
-  ADD COLUMN qr_y_offset NUMERIC(10, 3),
-  ADD COLUMN qr_size NUMERIC(10, 3),
-  ADD COLUMN qr_power_percent INTEGER,
-  ADD COLUMN qr_speed_mm_min INTEGER;
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'production_steps' AND column_name = 'engrave_qr') THEN
+    ALTER TABLE public.production_steps ADD COLUMN engrave_qr BOOLEAN NOT NULL DEFAULT false;
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'production_steps' AND column_name = 'qr_x_offset') THEN
+    ALTER TABLE public.production_steps ADD COLUMN qr_x_offset NUMERIC(10, 3);
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'production_steps' AND column_name = 'qr_y_offset') THEN
+    ALTER TABLE public.production_steps ADD COLUMN qr_y_offset NUMERIC(10, 3);
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'production_steps' AND column_name = 'qr_size') THEN
+    ALTER TABLE public.production_steps ADD COLUMN qr_size NUMERIC(10, 3);
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'production_steps' AND column_name = 'qr_power_percent') THEN
+    ALTER TABLE public.production_steps ADD COLUMN qr_power_percent INTEGER;
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'production_steps' AND column_name = 'qr_speed_mm_min') THEN
+    ALTER TABLE public.production_steps ADD COLUMN qr_speed_mm_min INTEGER;
+  END IF;
+END $$;
 
 -- Add constraints for QR parameters
-ALTER TABLE public.production_steps
-  ADD CONSTRAINT qr_power_range CHECK (qr_power_percent IS NULL OR (qr_power_percent >= 0 AND qr_power_percent <= 100)),
-  ADD CONSTRAINT qr_speed_positive CHECK (qr_speed_mm_min IS NULL OR qr_speed_mm_min > 0),
-  ADD CONSTRAINT qr_size_positive CHECK (qr_size IS NULL OR qr_size > 0);
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'qr_power_range') THEN
+    ALTER TABLE public.production_steps ADD CONSTRAINT qr_power_range CHECK (qr_power_percent IS NULL OR (qr_power_percent >= 0 AND qr_power_percent <= 100));
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'qr_speed_positive') THEN
+    ALTER TABLE public.production_steps ADD CONSTRAINT qr_speed_positive CHECK (qr_speed_mm_min IS NULL OR qr_speed_mm_min > 0);
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'qr_size_positive') THEN
+    ALTER TABLE public.production_steps ADD CONSTRAINT qr_size_positive CHECK (qr_size IS NULL OR qr_size > 0);
+  END IF;
+END $$;
 
 -- Add comments
 COMMENT ON COLUMN public.production_steps.step_type IS
@@ -60,14 +120,14 @@ COMMENT ON COLUMN public.production_steps.qr_speed_mm_min IS
   'Laser speed for QR engraving (mm/min)';
 
 -- Create index for step_type queries
-CREATE INDEX idx_production_steps_step_type ON public.production_steps(step_type);
+CREATE INDEX IF NOT EXISTS idx_production_steps_step_type ON public.production_steps(step_type);
 
 -- ============================================================================
 -- gCode Files Table
 -- ============================================================================
 
 -- Create table for gCode files from GitHub repository
-CREATE TABLE public.gcode_files (
+CREATE TABLE IF NOT EXISTS public.gcode_files (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   github_path TEXT NOT NULL UNIQUE,
   file_name TEXT NOT NULL,
@@ -94,10 +154,11 @@ COMMENT ON COLUMN public.gcode_files.machine_type IS
   'Type of machine: cnc or laser';
 
 -- Create indexes
-CREATE INDEX idx_gcode_files_machine_type ON public.gcode_files(machine_type);
-CREATE INDEX idx_gcode_files_github_path ON public.gcode_files(github_path);
+CREATE INDEX IF NOT EXISTS idx_gcode_files_machine_type ON public.gcode_files(machine_type);
+CREATE INDEX IF NOT EXISTS idx_gcode_files_github_path ON public.gcode_files(github_path);
 
 -- Add trigger for updated_at timestamp
+DROP TRIGGER IF EXISTS update_gcode_files_updated_at ON public.gcode_files;
 CREATE TRIGGER update_gcode_files_updated_at
   BEFORE UPDATE ON public.gcode_files
   FOR EACH ROW
@@ -108,7 +169,7 @@ CREATE TRIGGER update_gcode_files_updated_at
 -- ============================================================================
 
 -- Create junction table for many-to-many relationship
-CREATE TABLE public.step_gcode_files (
+CREATE TABLE IF NOT EXISTS public.step_gcode_files (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   step_id UUID NOT NULL REFERENCES public.production_steps(id) ON DELETE CASCADE,
   gcode_file_id UUID NOT NULL REFERENCES public.gcode_files(id) ON DELETE CASCADE,
@@ -133,9 +194,9 @@ COMMENT ON COLUMN public.step_gcode_files.execution_order IS
   'Order in which to execute gCode files (1, 2, 3, etc.)';
 
 -- Create indexes
-CREATE INDEX idx_step_gcode_step_id ON public.step_gcode_files(step_id);
-CREATE INDEX idx_step_gcode_file_id ON public.step_gcode_files(gcode_file_id);
-CREATE INDEX idx_step_gcode_execution_order ON public.step_gcode_files(step_id, execution_order);
+CREATE INDEX IF NOT EXISTS idx_step_gcode_step_id ON public.step_gcode_files(step_id);
+CREATE INDEX IF NOT EXISTS idx_step_gcode_file_id ON public.step_gcode_files(gcode_file_id);
+CREATE INDEX IF NOT EXISTS idx_step_gcode_execution_order ON public.step_gcode_files(step_id, execution_order);
 
 -- ============================================================================
 -- Row Level Security (RLS) Policies
@@ -146,24 +207,28 @@ ALTER TABLE public.gcode_files ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.step_gcode_files ENABLE ROW LEVEL SECURITY;
 
 -- Policies for gcode_files
+DROP POLICY IF EXISTS "Allow authenticated users to read gcode files" ON public.gcode_files;
 CREATE POLICY "Allow authenticated users to read gcode files"
   ON public.gcode_files
   FOR SELECT
   TO authenticated
   USING (true);
 
+DROP POLICY IF EXISTS "Authenticated users can insert gcode files" ON public.gcode_files;
 CREATE POLICY "Authenticated users can insert gcode files"
   ON public.gcode_files
   FOR INSERT
   TO authenticated
   WITH CHECK (true);
 
+DROP POLICY IF EXISTS "Authenticated users can update gcode files" ON public.gcode_files;
 CREATE POLICY "Authenticated users can update gcode files"
   ON public.gcode_files
   FOR UPDATE
   TO authenticated
   USING (true);
 
+DROP POLICY IF EXISTS "Authenticated users can delete gcode files" ON public.gcode_files;
 CREATE POLICY "Authenticated users can delete gcode files"
   ON public.gcode_files
   FOR DELETE
@@ -171,24 +236,28 @@ CREATE POLICY "Authenticated users can delete gcode files"
   USING (true);
 
 -- Policies for step_gcode_files
+DROP POLICY IF EXISTS "Allow authenticated users to read step gcode files" ON public.step_gcode_files;
 CREATE POLICY "Allow authenticated users to read step gcode files"
   ON public.step_gcode_files
   FOR SELECT
   TO authenticated
   USING (true);
 
+DROP POLICY IF EXISTS "Authenticated users can insert step gcode files" ON public.step_gcode_files;
 CREATE POLICY "Authenticated users can insert step gcode files"
   ON public.step_gcode_files
   FOR INSERT
   TO authenticated
   WITH CHECK (true);
 
+DROP POLICY IF EXISTS "Authenticated users can update step gcode files" ON public.step_gcode_files;
 CREATE POLICY "Authenticated users can update step gcode files"
   ON public.step_gcode_files
   FOR UPDATE
   TO authenticated
   USING (true);
 
+DROP POLICY IF EXISTS "Authenticated users can delete step gcode files" ON public.step_gcode_files;
 CREATE POLICY "Authenticated users can delete step gcode files"
   ON public.step_gcode_files
   FOR DELETE

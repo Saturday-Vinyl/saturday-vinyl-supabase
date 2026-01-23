@@ -1,6 +1,7 @@
 import 'package:equatable/equatable.dart';
 import 'package:saturday_app/models/production_unit.dart';
 import 'package:saturday_app/models/service_mode_manifest.dart';
+import 'package:saturday_app/models/thread_credentials.dart';
 
 /// Phases of service mode operation
 enum ServiceModePhase {
@@ -81,6 +82,7 @@ class DeviceInfo extends Equatable {
   final bool? bluetoothEnabled;
   final bool? threadConfigured;
   final bool? threadConnected;
+  final Map<String, dynamic>? thread; // Thread Border Router credentials
   final int? freeHeap;
   final int? uptimeMs;
   final int? batteryLevel;
@@ -103,6 +105,7 @@ class DeviceInfo extends Equatable {
     this.bluetoothEnabled,
     this.threadConfigured,
     this.threadConnected,
+    this.thread,
     this.freeHeap,
     this.uptimeMs,
     this.batteryLevel,
@@ -127,6 +130,12 @@ class DeviceInfo extends Equatable {
       }
     }
 
+    // Parse thread credentials if present
+    Map<String, dynamic>? thread;
+    if (json['thread'] is Map<String, dynamic>) {
+      thread = json['thread'] as Map<String, dynamic>;
+    }
+
     return DeviceInfo(
       deviceType: json['device_type'] as String? ?? 'unknown',
       firmwareId: json['firmware_id'] as String?,
@@ -143,6 +152,7 @@ class DeviceInfo extends Equatable {
       bluetoothEnabled: json['bluetooth_enabled'] as bool?,
       threadConfigured: json['thread_configured'] as bool?,
       threadConnected: json['thread_connected'] as bool?,
+      thread: thread,
       freeHeap: json['free_heap'] as int?,
       uptimeMs: json['uptime_ms'] as int?,
       batteryLevel: json['battery_level'] as int?,
@@ -168,6 +178,7 @@ class DeviceInfo extends Equatable {
       if (bluetoothEnabled != null) 'bluetooth_enabled': bluetoothEnabled,
       if (threadConfigured != null) 'thread_configured': threadConfigured,
       if (threadConnected != null) 'thread_connected': threadConnected,
+      if (thread != null) 'thread': thread,
       if (freeHeap != null) 'free_heap': freeHeap,
       if (uptimeMs != null) 'uptime_ms': uptimeMs,
       if (batteryLevel != null) 'battery_level': batteryLevel,
@@ -199,6 +210,21 @@ class DeviceInfo extends Equatable {
     return '$freeHeap bytes';
   }
 
+  /// Whether device has Thread credentials available
+  bool get hasThreadCredentials => thread != null;
+
+  /// Get ThreadCredentials object if thread data is present and unit_id is known
+  ///
+  /// Note: This returns a ThreadCredentials with the provided unitId, not the device's unit_id
+  ThreadCredentials? getThreadCredentials(String unitId) {
+    if (thread == null) return null;
+    try {
+      return ThreadCredentials.fromDeviceJson(thread!, unitId);
+    } catch (e) {
+      return null;
+    }
+  }
+
   @override
   List<Object?> get props => [
         deviceType,
@@ -216,6 +242,7 @@ class DeviceInfo extends Equatable {
         bluetoothEnabled,
         threadConfigured,
         threadConnected,
+        thread,
         freeHeap,
         uptimeMs,
         batteryLevel,

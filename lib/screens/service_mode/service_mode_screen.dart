@@ -37,6 +37,8 @@ class ServiceModeScreen extends ConsumerStatefulWidget {
 }
 
 class _ServiceModeScreenState extends ConsumerState<ServiceModeScreen> {
+  bool _hideBeacons = true; // Default to hiding beacons for cleaner logs
+
   @override
   void initState() {
     super.initState();
@@ -49,6 +51,14 @@ class _ServiceModeScreenState extends ConsumerState<ServiceModeScreen> {
             .setProductionUnit(widget._initialUnit);
       }
     });
+  }
+
+  @override
+  void dispose() {
+    // Disconnect from the serial port when leaving the screen
+    // This ensures resources are properly released
+    ref.read(serviceModeStateProvider.notifier).disconnect();
+    super.dispose();
   }
 
   @override
@@ -119,6 +129,7 @@ class _ServiceModeScreenState extends ConsumerState<ServiceModeScreen> {
                   // Device info card
                   DeviceInfoCard(
                     deviceInfo: state.deviceInfo,
+                    manifest: state.manifest,
                     isInServiceMode: state.isInServiceMode,
                   ),
                   const SizedBox(height: 16),
@@ -201,12 +212,38 @@ class _ServiceModeScreenState extends ConsumerState<ServiceModeScreen> {
                           foregroundColor: SaturdayColors.secondaryGrey,
                         ),
                       ),
+                      const SizedBox(width: 8),
+                      Tooltip(
+                        message: _hideBeacons
+                            ? 'Show beacon messages'
+                            : 'Hide beacon messages',
+                        child: TextButton.icon(
+                          onPressed: () {
+                            setState(() {
+                              _hideBeacons = !_hideBeacons;
+                            });
+                          },
+                          icon: Icon(
+                            _hideBeacons
+                                ? Icons.visibility_off
+                                : Icons.visibility,
+                            size: 18,
+                          ),
+                          label: const Text('Beacons'),
+                          style: TextButton.styleFrom(
+                            foregroundColor: _hideBeacons
+                                ? SaturdayColors.secondaryGrey
+                                : SaturdayColors.info,
+                          ),
+                        ),
+                      ),
                     ],
                   ),
                   const SizedBox(height: 8),
                   Expanded(
                     child: LogDisplay(
                       logLines: state.logLines,
+                      hideBeacons: _hideBeacons,
                     ),
                   ),
                 ],

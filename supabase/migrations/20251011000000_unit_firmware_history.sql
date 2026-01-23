@@ -1,6 +1,7 @@
 -- Migration 007: Unit Firmware History
 -- Created: 2025-10-10
 -- Description: Create unit_firmware_history table for tracking firmware installations during production
+-- Idempotent: Yes - safe to run multiple times
 
 -- Create unit_firmware_history table
 CREATE TABLE IF NOT EXISTS unit_firmware_history (
@@ -15,10 +16,10 @@ CREATE TABLE IF NOT EXISTS unit_firmware_history (
 );
 
 -- Create indexes
-CREATE INDEX idx_unit_firmware_history_unit_id ON unit_firmware_history(unit_id);
-CREATE INDEX idx_unit_firmware_history_device_type ON unit_firmware_history(device_type_id);
-CREATE INDEX idx_unit_firmware_history_firmware_version ON unit_firmware_history(firmware_version_id);
-CREATE INDEX idx_unit_firmware_history_installed_at ON unit_firmware_history(installed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_unit_firmware_history_unit_id ON unit_firmware_history(unit_id);
+CREATE INDEX IF NOT EXISTS idx_unit_firmware_history_device_type ON unit_firmware_history(device_type_id);
+CREATE INDEX IF NOT EXISTS idx_unit_firmware_history_firmware_version ON unit_firmware_history(firmware_version_id);
+CREATE INDEX IF NOT EXISTS idx_unit_firmware_history_installed_at ON unit_firmware_history(installed_at DESC);
 
 -- Enable RLS
 ALTER TABLE unit_firmware_history ENABLE ROW LEVEL SECURITY;
@@ -26,6 +27,7 @@ ALTER TABLE unit_firmware_history ENABLE ROW LEVEL SECURITY;
 -- RLS Policies
 
 -- Allow all authenticated users to read firmware installation history
+DROP POLICY IF EXISTS "Allow authenticated reads" ON unit_firmware_history;
 CREATE POLICY "Allow authenticated reads"
   ON unit_firmware_history
   FOR SELECT
@@ -33,6 +35,7 @@ CREATE POLICY "Allow authenticated reads"
   USING (true);
 
 -- Allow authenticated users to record firmware installations
+DROP POLICY IF EXISTS "Allow authenticated creates" ON unit_firmware_history;
 CREATE POLICY "Allow authenticated creates"
   ON unit_firmware_history
   FOR INSERT
@@ -40,6 +43,7 @@ CREATE POLICY "Allow authenticated creates"
   WITH CHECK (true);
 
 -- Allow authenticated users to update installation records (for corrections)
+DROP POLICY IF EXISTS "Allow authenticated updates" ON unit_firmware_history;
 CREATE POLICY "Allow authenticated updates"
   ON unit_firmware_history
   FOR UPDATE

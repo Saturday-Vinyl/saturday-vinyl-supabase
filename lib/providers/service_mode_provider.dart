@@ -9,6 +9,8 @@ import 'package:saturday_app/models/production_step.dart';
 import 'package:saturday_app/models/production_unit.dart';
 import 'package:saturday_app/models/service_mode_manifest.dart';
 import 'package:saturday_app/models/service_mode_state.dart';
+import 'package:saturday_app/models/thread_credentials.dart';
+import 'package:saturday_app/models/production_unit_with_consumer_info.dart';
 import 'package:saturday_app/providers/firmware_provider.dart';
 import 'package:saturday_app/providers/production_unit_provider.dart';
 import 'package:saturday_app/repositories/firmware_repository.dart';
@@ -63,6 +65,28 @@ final unitsWithoutMacProvider =
     FutureProvider.family<List<ProductionUnit>, String?>((ref, productId) async {
   final repository = ref.read(productionUnitRepositoryProvider);
   return await repository.getUnitsWithoutMacAddress(productId: productId);
+});
+
+/// Provider for available Thread credentials (for non-BR device testing)
+///
+/// Used when testing Thread connectivity on devices that need to join an
+/// existing Thread network (not border routers that create their own).
+final availableThreadCredentialsProvider =
+    FutureProvider<List<ThreadCredentialsWithUnit>>((ref) async {
+  final repository = ref.read(productionUnitRepositoryProvider);
+  return await repository.getAllThreadCredentials();
+});
+
+/// Provider for units available for provisioning (all units, with consumer device info)
+///
+/// Returns all incomplete production units with information about whether
+/// they have a linked consumer device. Used for the new provisioning flow
+/// that allows re-provisioning units that may already be linked.
+final unitsForProvisioningProvider =
+    FutureProvider.family<List<ProductionUnitWithConsumerInfo>, String?>(
+        (ref, productId) async {
+  final repository = ref.read(productionUnitRepositoryProvider);
+  return await repository.getUnitsForProvisioning(productId: productId);
 });
 
 /// Provider for units by firmware ID
@@ -123,6 +147,54 @@ class ServiceModeStateNotifier extends StateNotifier<ServiceModeState> {
 
   void _addLog(String line) {
     state = state.addLog(line);
+  }
+
+  // ============================================
+  // Device Info Merging
+  // ============================================
+
+  /// Merge beacon info with existing device info, preserving fields that
+  /// beacons don't include (like thread credentials and configuration flags
+  /// from get_status)
+  DeviceInfo _mergeDeviceInfo(DeviceInfo? existing, DeviceInfo beacon) {
+    if (existing == null) return beacon;
+
+    // Beacon provides real-time updates for some fields, but doesn't include
+    // everything that get_status provides (like thread credentials and
+    // configuration flags). Beacons typically only report current connection
+    // state, not configuration state.
+    //
+    // Configuration flags (cloudConfigured, wifiConfigured, etc.) should be
+    // preserved from get_status since beacons don't reliably include them.
+    // Connection state (wifiConnected, threadConnected) can be updated from
+    // beacon if the beacon includes wifi/thread info.
+    return DeviceInfo(
+      deviceType: beacon.deviceType,
+      firmwareId: beacon.firmwareId ?? existing.firmwareId,
+      firmwareVersion: beacon.firmwareVersion,
+      macAddress: beacon.macAddress.isNotEmpty ? beacon.macAddress : existing.macAddress,
+      unitId: beacon.unitId ?? existing.unitId,
+      // Preserve configuration flags - beacons don't reliably include these
+      cloudConfigured: existing.cloudConfigured || beacon.cloudConfigured,
+      cloudUrl: beacon.cloudUrl ?? existing.cloudUrl,
+      wifiConfigured: existing.wifiConfigured || beacon.wifiConfigured,
+      // Connection state can be updated by beacon if it has wifi info
+      wifiConnected: beacon.wifiSsid != null ? beacon.wifiConnected : existing.wifiConnected,
+      wifiSsid: beacon.wifiSsid ?? existing.wifiSsid,
+      wifiRssi: beacon.wifiRssi ?? existing.wifiRssi,
+      ipAddress: beacon.ipAddress ?? existing.ipAddress,
+      bluetoothEnabled: beacon.bluetoothEnabled ?? existing.bluetoothEnabled,
+      // Preserve thread configuration, update connection state if beacon has thread info
+      threadConfigured: existing.threadConfigured ?? beacon.threadConfigured,
+      threadConnected: beacon.threadConnected ?? existing.threadConnected,
+      // Preserve thread credentials - beacons don't include these
+      thread: existing.thread,
+      freeHeap: beacon.freeHeap ?? existing.freeHeap,
+      uptimeMs: beacon.uptimeMs ?? existing.uptimeMs,
+      batteryLevel: beacon.batteryLevel ?? existing.batteryLevel,
+      batteryCharging: beacon.batteryCharging ?? existing.batteryCharging,
+      lastTests: beacon.lastTests ?? existing.lastTests,
+    );
   }
 
   void clearLogs() {
@@ -245,9 +317,13 @@ class ServiceModeStateNotifier extends StateNotifier<ServiceModeState> {
     });
 
     _beaconSubscription?.cancel();
-    _beaconSubscription = _service.beaconStream.listen((info) {
+    _beaconSubscription = _service.beaconStream.listen((beaconInfo) {
+      // Merge beacon info with existing device info to preserve fields
+      // that beacons don't include (like thread credentials)
+      final existingInfo = state.deviceInfo;
+      final mergedInfo = _mergeDeviceInfo(existingInfo, beaconInfo);
       state = state.copyWith(
-        deviceInfo: info,
+        deviceInfo: mergedInfo,
         lastBeaconAt: DateTime.now(),
       );
     });
@@ -442,6 +518,14 @@ class ServiceModeStateNotifier extends StateNotifier<ServiceModeState> {
           await _saveMacAddress(unit.id, state.deviceInfo!.macAddress);
         }
 
+        // Save Thread credentials if present AND device has thread_br capability
+        // Only Thread Border Routers create/provide thread credentials
+        final hasThreadBrCapability = manifest?.capabilities.threadBr ?? false;
+        if (hasThreadBrCapability &&
+            (state.deviceInfo?.hasThreadCredentials ?? false)) {
+          await _saveThreadCredentials(unit.id);
+        }
+
         state = state.copyWith(
           phase: ServiceModePhase.inServiceMode,
           clearCurrentCommand: true,
@@ -473,6 +557,38 @@ class ServiceModeStateNotifier extends StateNotifier<ServiceModeState> {
       ref.invalidate(unitByIdProvider(unitId));
     } catch (e) {
       _addLog('[WARN] Failed to save MAC address: $e');
+    }
+  }
+
+  /// Save Thread Border Router credentials from device status
+  ///
+  /// Called during Hub provisioning when the device reports Thread credentials
+  /// in its get_status response. These credentials are used by the mobile app
+  /// to provision crates to join the Hub's Thread network.
+  Future<void> _saveThreadCredentials(String unitId) async {
+    final deviceInfo = state.deviceInfo;
+    if (deviceInfo == null || !deviceInfo.hasThreadCredentials) {
+      return;
+    }
+
+    try {
+      final credentials = deviceInfo.getThreadCredentials(unitId);
+      if (credentials == null) {
+        _addLog('[WARN] Failed to parse Thread credentials from device');
+        return;
+      }
+
+      // Validate before saving
+      final validationError = credentials.validate();
+      if (validationError != null) {
+        _addLog('[WARN] Invalid Thread credentials: $validationError');
+        return;
+      }
+
+      await _unitRepository.saveThreadCredentials(credentials);
+      _addLog('[INFO] Saved Thread credentials: ${credentials.networkName} (ch${credentials.channel})');
+    } catch (e) {
+      _addLog('[WARN] Failed to save Thread credentials: $e');
     }
   }
 
