@@ -5,9 +5,11 @@ import 'package:go_router/go_router.dart';
 import 'package:saturday_consumer_app/config/routes.dart';
 import 'package:saturday_consumer_app/config/styles.dart';
 import 'package:saturday_consumer_app/config/theme.dart';
+import 'package:saturday_consumer_app/models/library_member.dart';
 import 'package:saturday_consumer_app/providers/auth_provider.dart';
 import 'package:saturday_consumer_app/providers/device_provider.dart';
 import 'package:saturday_consumer_app/providers/intro_splash_provider.dart';
+import 'package:saturday_consumer_app/providers/library_provider.dart';
 import 'package:saturday_consumer_app/widgets/common/saturday_app_bar.dart';
 import 'package:saturday_consumer_app/widgets/devices/devices.dart';
 
@@ -50,24 +52,7 @@ class AccountScreen extends ConsumerWidget {
             // Libraries section
             _buildSectionHeader(context, 'Libraries'),
             Spacing.itemGap,
-            _buildSettingsTile(
-              context,
-              icon: Icons.library_music,
-              title: 'My Libraries',
-              subtitle: '1 library',
-              onTap: () {
-                // TODO: Navigate to libraries
-              },
-            ),
-            _buildSettingsTile(
-              context,
-              icon: Icons.share,
-              title: 'Shared Libraries',
-              subtitle: 'No shared libraries',
-              onTap: () {
-                // TODO: Navigate to shared libraries
-              },
-            ),
+            _buildLibrariesSection(context, ref),
 
             Spacing.sectionGap,
 
@@ -348,6 +333,77 @@ class AccountScreen extends ConsumerWidget {
           onTap: () => ref.invalidate(userDevicesProvider),
         );
       },
+    );
+  }
+
+  Widget _buildLibrariesSection(BuildContext context, WidgetRef ref) {
+    final librariesAsync = ref.watch(userLibrariesProvider);
+
+    return librariesAsync.when(
+      data: (libraries) {
+        // Separate owned vs shared libraries
+        final ownedLibraries =
+            libraries.where((l) => l.role == LibraryRole.owner).toList();
+        final sharedLibraries =
+            libraries.where((l) => l.role != LibraryRole.owner).toList();
+
+        final ownedCount = ownedLibraries.length;
+        final sharedCount = sharedLibraries.length;
+
+        return Column(
+          children: [
+            // My Libraries - navigate to current library details
+            _buildSettingsTile(
+              context,
+              icon: Icons.library_music,
+              title: 'My Libraries',
+              subtitle: ownedCount == 0
+                  ? 'No libraries'
+                  : '$ownedCount ${ownedCount == 1 ? 'library' : 'libraries'}',
+              onTap: () {
+                // Navigate to current library details
+                context.pushNamed(RouteNames.libraryDetails);
+              },
+            ),
+            // Shared Libraries
+            _buildSettingsTile(
+              context,
+              icon: Icons.share,
+              title: 'Shared with Me',
+              subtitle: sharedCount == 0
+                  ? 'No shared libraries'
+                  : '$sharedCount ${sharedCount == 1 ? 'library' : 'libraries'}',
+              onTap: () {
+                if (sharedCount > 0) {
+                  // Switch to first shared library and go to its details
+                  ref.read(currentLibraryIdProvider.notifier).state =
+                      sharedLibraries.first.library.id;
+                  context.pushNamed(RouteNames.libraryDetails);
+                } else {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text(
+                        'No shared libraries yet. Ask someone to share their library with you!',
+                      ),
+                    ),
+                  );
+                }
+              },
+            ),
+          ],
+        );
+      },
+      loading: () => const Padding(
+        padding: EdgeInsets.all(16),
+        child: Center(child: CircularProgressIndicator()),
+      ),
+      error: (error, stack) => _buildSettingsTile(
+        context,
+        icon: Icons.error_outline,
+        title: 'Libraries',
+        subtitle: 'Tap to retry',
+        onTap: () => ref.invalidate(userLibrariesProvider),
+      ),
     );
   }
 }

@@ -1,5 +1,7 @@
 import 'package:saturday_consumer_app/models/library.dart';
+import 'package:saturday_consumer_app/models/library_details.dart';
 import 'package:saturday_consumer_app/models/library_member.dart';
+import 'package:saturday_consumer_app/models/library_member_with_user.dart';
 import 'package:saturday_consumer_app/repositories/base_repository.dart';
 
 /// Repository for library-related database operations.
@@ -176,5 +178,92 @@ class LibraryRepository extends BaseRepository {
 
     if (response == null) return null;
     return LibraryRole.fromString(response['role'] as String);
+  }
+
+  // ============================================================================
+  // LIBRARY DETAILS METHODS
+  // ============================================================================
+
+  /// Gets comprehensive library details including stats and members.
+  ///
+  /// This fetches the library along with:
+  /// - Album count
+  /// - Members with user info
+  /// - Most popular albums by play count
+  Future<LibraryDetails> getLibraryDetails(String libraryId) async {
+    // Fetch all data in parallel for efficiency
+    final results = await Future.wait([
+      getLibrary(libraryId),
+      getLibraryMembersWithUsers(libraryId),
+      getLibraryAlbumCount(libraryId),
+      getPopularAlbums(libraryId, limit: 5),
+    ]);
+
+    final library = results[0] as Library?;
+    if (library == null) {
+      throw Exception('Library not found');
+    }
+
+    final members = results[1] as List<LibraryMemberWithUser>;
+    final albumCount = results[2] as int;
+    final popularAlbums = results[3] as List<PopularLibraryAlbum>;
+
+    return LibraryDetails(
+      library: library,
+      albumCount: albumCount,
+      members: members,
+      popularAlbums: popularAlbums,
+    );
+  }
+
+  /// Gets library members with their user profile information.
+  ///
+  /// Returns members ordered by role (owner first) then by join date.
+  Future<List<LibraryMemberWithUser>> getLibraryMembersWithUsers(
+      String libraryId) async {
+    final response = await client
+        .from(_membersTable)
+        .select('''
+          *,
+          user:users!user_id(id, email, full_name, avatar_url)
+        ''')
+        .eq('library_id', libraryId)
+        .order('role')
+        .order('joined_at');
+
+    return (response as List)
+        .map((row) => LibraryMemberWithUser.fromJson(row as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// Gets the count of albums in a library.
+  Future<int> getLibraryAlbumCount(String libraryId) async {
+    final response = await client
+        .from('library_albums')
+        .select('id')
+        .eq('library_id', libraryId)
+        .count();
+
+    return response.count;
+  }
+
+  /// Gets the most played albums in a library.
+  ///
+  /// Uses the `get_popular_library_albums` database function which
+  /// aggregates play counts from listening_history.
+  Future<List<PopularLibraryAlbum>> getPopularAlbums(
+    String libraryId, {
+    int limit = 5,
+  }) async {
+    final response = await client.rpc('get_popular_library_albums', params: {
+      'p_library_id': libraryId,
+      'p_limit': limit,
+    });
+
+    if (response == null) return [];
+
+    return (response as List)
+        .map((row) => PopularLibraryAlbum.fromJson(row as Map<String, dynamic>))
+        .toList();
   }
 }

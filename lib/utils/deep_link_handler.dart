@@ -183,7 +183,13 @@ class DeepLinkHandler {
   /// Handle library invitation deep link.
   ///
   /// URL format: /invite/{code}
-  /// Where code is the invitation code.
+  /// Where code is the invitation token.
+  ///
+  /// The InvitationAcceptScreen handles:
+  /// - Fetching invitation details
+  /// - Checking if user is authenticated
+  /// - Prompting for login if needed
+  /// - Accepting or rejecting the invitation
   void _handleInviteLink(List<String> segments) {
     if (segments.length < 2) {
       // Missing invite code - go to account.
@@ -197,10 +203,9 @@ class DeepLinkHandler {
       print('DeepLinkHandler: Invite link with code: $inviteCode');
     }
 
-    // Navigate to account and show invitation dialog.
-    // In a real implementation, this would trigger the invitation acceptance flow.
-    _router!.go(RoutePaths.account);
-    // TODO: Implement invitation acceptance flow.
+    // Navigate to the invitation accept screen.
+    // The screen will handle auth state and show appropriate UI.
+    _router!.go('/invite/$inviteCode');
   }
 
   /// Create a deep link URL for a tag.

@@ -37,3 +37,8 @@ final albumLocationRepositoryProvider =
     Provider<AlbumLocationRepository>((ref) {
   return AlbumLocationRepository();
 });
+
+/// Provider for InvitationRepository.
+final invitationRepositoryProvider = Provider<InvitationRepository>((ref) {
+  return InvitationRepository();
+});

@@ -16,6 +16,8 @@ import 'package:saturday_consumer_app/screens/library/barcode_scanner_screen.dar
 import 'package:saturday_consumer_app/screens/library/confirm_album_screen.dart';
 import 'package:saturday_consumer_app/screens/library/tag_association_screen.dart';
 import 'package:saturday_consumer_app/screens/library/create_library_screen.dart';
+import 'package:saturday_consumer_app/screens/library/library_details_screen.dart';
+import 'package:saturday_consumer_app/screens/invitation/invitation_accept_screen.dart';
 import 'package:saturday_consumer_app/screens/account/account_screen.dart';
 import 'package:saturday_consumer_app/screens/account/device_list_screen.dart';
 import 'package:saturday_consumer_app/screens/account/device_detail_screen.dart';
@@ -50,11 +52,15 @@ class RoutePaths {
   static const String addAlbumConfirm = 'add/confirm';
   static const String tagAssociation = 'album/:id/tag';
   static const String createLibrary = 'create';
+  static const String libraryDetails = 'details';
   static const String deviceList = 'devices';
   static const String deviceDetail = 'devices/:id';
   static const String deviceSetup = 'devices/setup';
   static const String settings = 'settings';
   static const String search = '/search';
+
+  // Invitation routes (top-level for deep linking)
+  static const String inviteAccept = '/invite/:code';
 
   // Now Playing nested routes
   static const String setNowPlaying = 'set';
@@ -82,6 +88,8 @@ class RouteNames {
   static const String addAlbumConfirm = 'add-album-confirm';
   static const String tagAssociation = 'tag-association';
   static const String createLibrary = 'create-library';
+  static const String libraryDetails = 'library-details';
+  static const String inviteAccept = 'invite-accept';
   static const String deviceList = 'device-list';
   static const String deviceDetail = 'device-detail';
   static const String deviceSetup = 'device-setup';
@@ -98,6 +106,13 @@ const _authRoutes = [
   RoutePaths.signup,
   RoutePaths.forgotPassword,
 ];
+
+/// Routes that should be accessible without authentication.
+/// The invite route needs to be accessible to show invitation details
+/// before prompting for login if needed.
+bool _isPublicRoute(String path) {
+  return _authRoutes.contains(path) || path.startsWith('/invite/');
+}
 
 /// Global navigator key for accessing navigation from anywhere.
 final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>();
@@ -231,6 +246,13 @@ GoRouter createAppRouter(Ref ref) {
                 name: RouteNames.createLibrary,
                 builder: (context, state) => const CreateLibraryScreen(),
               ),
+              // Library details (uses root navigator for fullscreen)
+              GoRoute(
+                path: RoutePaths.libraryDetails,
+                name: RouteNames.libraryDetails,
+                parentNavigatorKey: rootNavigatorKey,
+                builder: (context, state) => const LibraryDetailsScreen(),
+              ),
             ],
           ),
 
@@ -276,6 +298,16 @@ GoRouter createAppRouter(Ref ref) {
         path: RoutePaths.search,
         name: RouteNames.search,
         builder: (context, state) => const SearchScreen(),
+      ),
+
+      // Invitation accept route (top-level for deep linking)
+      GoRoute(
+        path: RoutePaths.inviteAccept,
+        name: RouteNames.inviteAccept,
+        builder: (context, state) {
+          final code = state.pathParameters['code']!;
+          return InvitationAcceptScreen(inviteCode: code);
+        },
       ),
     ],
 
