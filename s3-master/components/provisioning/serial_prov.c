@@ -33,6 +33,7 @@
 #include "yrm100_driver.h"
 #include "rfid_protocol.h"
 #include "led_manager.h"
+#include "ota_manager.h"
 
 /* 2-SoC Architecture: Thread is handled by H2 co-processor.
  * Thread credentials will be retrieved via UART from H2.
@@ -119,6 +120,9 @@ static void handle_test_all(cJSON *params);
 static void handle_customer_reset(cJSON *params);
 static void handle_factory_reset(cJSON *params);
 static void handle_reboot(cJSON *params);
+static void handle_check_ota(cJSON *params);
+static void handle_start_ota(cJSON *params);
+static void handle_get_ota_status(cJSON *params);
 static void set_state(serial_prov_state_t new_state);
 static void send_response(const char *status, const char *message, cJSON *data);
 static void send_error(const char *error_code, const char *message);
@@ -544,6 +548,12 @@ static void process_command(const char *json_str)
         handle_factory_reset(params);
     } else if (strcmp(cmd_str, "reboot") == 0) {
         handle_reboot(params);
+    } else if (strcmp(cmd_str, "check_ota") == 0) {
+        handle_check_ota(params);
+    } else if (strcmp(cmd_str, "start_ota") == 0) {
+        handle_start_ota(params);
+    } else if (strcmp(cmd_str, "get_ota_status") == 0) {
+        handle_get_ota_status(params);
     } else {
         send_error("unknown_command", "Unknown command");
     }
@@ -1349,4 +1359,236 @@ static void handle_reboot(cJSON *params)
     vTaskDelay(pdMS_TO_TICKS(500));
 
     esp_restart();
+}
+
+/*******************************************************************************
+ * OTA Command Handlers (PROD-1.3)
+ ******************************************************************************/
+
+static void handle_check_ota(cJSON *params)
+{
+    (void)params;
+
+    set_state(SERIAL_PROV_STATE_TESTING);
+    led_set_state(LED_COLOR_MAGENTA, LED_PATTERN_BLINK_FAST, 250);
+
+    ESP_LOGI(TAG, "Checking for OTA updates...");
+
+    /* Check if Wi-Fi is connected */
+    if (!wifi_is_connected()) {
+        send_error("no_wifi", "Wi-Fi not connected - run test_wifi first");
+        set_state(SERIAL_PROV_STATE_AWAITING);
+        led_set_state(LED_COLOR_WHITE, LED_PATTERN_PULSE, 2000);
+        return;
+    }
+
+    /* Check for updates */
+    ota_update_info_t info;
+    esp_err_t err = ota_manager_check_update(&info);
+
+    if (err != ESP_OK) {
+        char msg[64];
+        snprintf(msg, sizeof(msg), "OTA check failed: %s", esp_err_to_name(err));
+        send_error("ota_check_failed", msg);
+        set_state(SERIAL_PROV_STATE_AWAITING);
+        led_flash(LED_COLOR_RED, 500);
+        vTaskDelay(pdMS_TO_TICKS(550));
+        led_set_state(LED_COLOR_WHITE, LED_PATTERN_PULSE, 2000);
+        return;
+    }
+
+    /* Build response */
+    cJSON *data = cJSON_CreateObject();
+
+    /* Current versions */
+    cJSON *current = cJSON_CreateObject();
+    cJSON_AddStringToObject(current, "s3", info.s3_current.string);
+    cJSON_AddStringToObject(current, "h2", info.h2_current.string);
+    cJSON_AddItemToObject(data, "current", current);
+
+    /* Available updates */
+    cJSON_AddBoolToObject(data, "s3_update_available", info.s3_update_available);
+    cJSON_AddBoolToObject(data, "h2_update_available", info.h2_update_available);
+
+    if (info.s3_update_available) {
+        cJSON_AddStringToObject(data, "s3_available_version", info.s3_available.string);
+        cJSON_AddStringToObject(data, "s3_url", info.s3_url);
+    }
+
+    if (info.h2_update_available) {
+        cJSON_AddStringToObject(data, "h2_available_version", info.h2_available.string);
+        cJSON_AddStringToObject(data, "h2_url", info.h2_url);
+    }
+
+    if (info.s3_update_available || info.h2_update_available) {
+        led_flash(LED_COLOR_MAGENTA, 500);
+        send_response("ok", "Updates available", data);
+    } else {
+        led_flash(LED_COLOR_GREEN, 500);
+        send_response("ok", "Firmware is up to date", data);
+    }
+
+    cJSON_Delete(data);
+    set_state(SERIAL_PROV_STATE_AWAITING);
+    vTaskDelay(pdMS_TO_TICKS(550));
+    led_set_state(LED_COLOR_WHITE, LED_PATTERN_PULSE, 2000);
+}
+
+static void handle_start_ota(cJSON *params)
+{
+    set_state(SERIAL_PROV_STATE_TESTING);
+    led_set_state(LED_COLOR_MAGENTA, LED_PATTERN_PULSE, 1000);
+
+    ESP_LOGI(TAG, "Starting OTA update...");
+
+    /* Check if Wi-Fi is connected */
+    if (!wifi_is_connected()) {
+        send_error("no_wifi", "Wi-Fi not connected - run test_wifi first");
+        set_state(SERIAL_PROV_STATE_AWAITING);
+        led_set_state(LED_COLOR_WHITE, LED_PATTERN_PULSE, 2000);
+        return;
+    }
+
+    /* Determine what to update */
+    bool update_s3 = true;
+    bool update_h2 = true;
+
+    if (params != NULL) {
+        cJSON *j_s3 = cJSON_GetObjectItem(params, "s3");
+        cJSON *j_h2 = cJSON_GetObjectItem(params, "h2");
+
+        if (cJSON_IsBool(j_s3)) {
+            update_s3 = cJSON_IsTrue(j_s3);
+        }
+        if (cJSON_IsBool(j_h2)) {
+            update_h2 = cJSON_IsTrue(j_h2);
+        }
+    }
+
+    /* Check if URL is provided for custom update source */
+    const char *s3_url = NULL;
+    const char *h2_url = NULL;
+
+    if (params != NULL) {
+        cJSON *j_s3_url = cJSON_GetObjectItem(params, "s3_url");
+        cJSON *j_h2_url = cJSON_GetObjectItem(params, "h2_url");
+
+        if (cJSON_IsString(j_s3_url)) {
+            s3_url = j_s3_url->valuestring;
+        }
+        if (cJSON_IsString(j_h2_url)) {
+            h2_url = j_h2_url->valuestring;
+        }
+    }
+
+    /* Send initial response - OTA may take a while */
+    cJSON *start_data = cJSON_CreateObject();
+    cJSON_AddBoolToObject(start_data, "s3_update", update_s3);
+    cJSON_AddBoolToObject(start_data, "h2_update", update_h2);
+    send_response("started", "OTA update starting", start_data);
+    cJSON_Delete(start_data);
+
+    esp_err_t err = ESP_OK;
+    bool s3_updated = false;
+    bool h2_updated = false;
+
+    /* Update S3 firmware */
+    if (update_s3) {
+        ESP_LOGI(TAG, "Updating S3 firmware...");
+        err = ota_manager_update_s3(s3_url);
+        if (err == ESP_OK) {
+            s3_updated = true;
+            ESP_LOGI(TAG, "S3 update successful");
+        } else {
+            ESP_LOGE(TAG, "S3 update failed: %s", esp_err_to_name(err));
+        }
+    }
+
+    /* Update H2 firmware (staging only - flash happens after reboot) */
+    if (update_h2 && err == ESP_OK) {
+        ESP_LOGI(TAG, "Staging H2 firmware...");
+        err = ota_manager_update_h2(h2_url);
+        if (err == ESP_OK) {
+            h2_updated = true;
+            ESP_LOGI(TAG, "H2 firmware staged successfully");
+        } else {
+            ESP_LOGE(TAG, "H2 staging failed: %s", esp_err_to_name(err));
+        }
+    }
+
+    /* Send result */
+    cJSON *result = cJSON_CreateObject();
+    cJSON_AddBoolToObject(result, "s3_updated", s3_updated);
+    cJSON_AddBoolToObject(result, "h2_staged", h2_updated);
+
+    if (s3_updated || h2_updated) {
+        cJSON_AddBoolToObject(result, "reboot_required", s3_updated);
+
+        led_flash(LED_COLOR_GREEN, 2000);
+        send_response("ok", s3_updated ? "OTA complete - reboot required" : "H2 firmware staged",
+                      result);
+
+        /* If S3 was updated, offer to reboot */
+        if (s3_updated) {
+            ESP_LOGI(TAG, "S3 update complete - device should be rebooted");
+        }
+    } else {
+        led_flash(LED_COLOR_RED, 500);
+        char msg[64];
+        snprintf(msg, sizeof(msg), "OTA failed: %s", esp_err_to_name(err));
+        send_response("error", msg, result);
+    }
+
+    cJSON_Delete(result);
+    set_state(SERIAL_PROV_STATE_AWAITING);
+    vTaskDelay(pdMS_TO_TICKS(550));
+    led_set_state(LED_COLOR_WHITE, LED_PATTERN_PULSE, 2000);
+}
+
+static void handle_get_ota_status(cJSON *params)
+{
+    (void)params;
+
+    ota_status_t status;
+    esp_err_t err = ota_manager_get_status(&status);
+
+    if (err != ESP_OK) {
+        send_error("ota_status_failed", "Failed to get OTA status");
+        return;
+    }
+
+    cJSON *data = cJSON_CreateObject();
+
+    /* Boot status */
+    const char *boot_status_str = "normal";
+    if (status.boot_status == OTA_BOOT_PENDING_VERIFY) {
+        boot_status_str = "pending_verify";
+    } else if (status.boot_status == OTA_BOOT_ROLLBACK) {
+        boot_status_str = "rollback";
+    }
+    cJSON_AddStringToObject(data, "boot_status", boot_status_str);
+
+    /* Running version */
+    cJSON_AddStringToObject(data, "running_version", status.running_version.string);
+
+    /* Update status */
+    cJSON_AddBoolToObject(data, "update_in_progress", status.update_in_progress);
+    if (status.update_in_progress) {
+        cJSON_AddStringToObject(data, "updating",
+                                status.updating == OTA_FIRMWARE_S3 ? "s3" : "h2");
+        cJSON_AddNumberToObject(data, "progress", status.progress);
+    }
+
+    /* H2 update pending */
+    cJSON_AddBoolToObject(data, "h2_update_pending", ota_manager_h2_update_pending());
+
+    /* Statistics */
+    cJSON *stats = cJSON_CreateObject();
+    cJSON_AddNumberToObject(stats, "updates_applied", status.updates_applied);
+    cJSON_AddNumberToObject(stats, "updates_failed", status.updates_failed);
+    cJSON_AddNumberToObject(stats, "rollbacks", status.rollbacks);
+    cJSON_AddItemToObject(data, "statistics", stats);
+
+    send_response("ok", NULL, data);
+    cJSON_Delete(data);
 }

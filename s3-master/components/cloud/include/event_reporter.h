@@ -101,6 +101,8 @@ typedef struct {
     uint32_t heartbeats_sent;   /**< Total heartbeats sent */
     int64_t last_sync_time;     /**< Last successful sync timestamp (us) */
     int64_t last_heartbeat_time;/**< Last heartbeat timestamp (us) */
+    uint32_t min_free_heap;     /**< Minimum free heap seen (PROD-2.3) */
+    uint32_t low_heap_warnings; /**< Low heap warning count (PROD-2.3) */
 } event_reporter_status_t;
 
 /*******************************************************************************

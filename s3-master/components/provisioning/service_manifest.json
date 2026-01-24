@@ -1,5 +1,5 @@
 {
-  "manifest_version": "1.1",
+  "manifest_version": "1.2",
   "device_type": "hub",
   "device_name": "Saturday Vinyl Hub",
   "firmware_id": "550e8400-e29b-41d4-a716-446655440000",
@@ -13,7 +13,8 @@
     "audio": false,
     "display": false,
     "battery": false,
-    "button": true
+    "button": true,
+    "ota": true
   },
   "provisioning_fields": {
     "required": ["unit_id", "cloud_url", "cloud_anon_key"],
@@ -37,6 +38,7 @@
     "uptime_ms",
     "last_tests"
   ],
+  "ota_commands": ["check_ota", "start_ota", "get_ota_status"],
   "custom_commands": [],
   "led_patterns": {
     "service_awaiting": {"color": "white", "pattern": "pulse"},
@@ -44,6 +46,7 @@
     "testing": {"color": "yellow", "pattern": "blink_fast"},
     "success": {"color": "green", "pattern": "flash"},
     "error": {"color": "red", "pattern": "flash"},
-    "resetting": {"color": "red", "pattern": "blink_fast"}
+    "resetting": {"color": "red", "pattern": "blink_fast"},
+    "ota_progress": {"color": "magenta", "pattern": "pulse"}
   }
 }

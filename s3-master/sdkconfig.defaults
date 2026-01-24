@@ -111,6 +111,13 @@ CONFIG_VFS_SUPPORT_SELECT=y
 # Bootloader Configuration
 # =============================================================================
 CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+CONFIG_BOOTLOADER_WDT_ENABLE=y
+
+# =============================================================================
+# HTTPS OTA Configuration
+# =============================================================================
+CONFIG_ESP_HTTPS_OTA_DECRYPT_CB=n
+CONFIG_ESP_HTTPS_OTA_ALLOW_HTTP=n
 
 # =============================================================================
 # System Event Task Stack (increased for complex operations)

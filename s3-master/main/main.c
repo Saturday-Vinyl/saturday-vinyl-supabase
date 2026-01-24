@@ -23,9 +23,13 @@
 #include "wifi_manager.h"
 #include "supabase_client.h"
 #include "event_reporter.h"
+#include "realtime_client.h"
 #include "ble_prov.h"
 #include "serial_prov.h"
 #include "h2_comm.h"
+#include "ota_manager.h"
+#include "h2_flasher.h"
+#include "watchdog_manager.h"
 
 static const char *TAG = "main";
 
@@ -40,6 +44,14 @@ static bool s_ble_prov_active = false;
 
 /* Track H2 connection state */
 static bool s_h2_connected = false;
+
+/* Track OTA boot validation */
+static bool s_boot_validated = false;
+
+/* PROD-2.4: Error tracking for graceful degradation */
+static uint32_t s_h2_error_count = 0;
+static uint32_t s_wifi_error_count = 0;
+#define MAX_SUBSYSTEM_ERRORS 10  /* After this many errors, log warning */
 
 /**
  * @brief Now Playing event handler - LED feedback for tag place/remove
@@ -97,6 +109,12 @@ static void on_wifi_event(void *handler_args, esp_event_base_t base,
             wifi_connection_info_t *info = (wifi_connection_info_t *)event_data;
             ESP_LOGI(TAG, "WiFi connected to '%s' (RSSI: %d dBm)", info->ssid, info->rssi);
             s_wifi_connected = true;
+            /* PROD-2.4: Reset error counter on successful connection */
+            if (s_wifi_error_count > 0) {
+                ESP_LOGI(TAG, "WiFi recovered after %lu failed attempts",
+                         (unsigned long)s_wifi_error_count);
+                s_wifi_error_count = 0;
+            }
             /* Notify event reporter of WiFi state */
             event_reporter_set_wifi_state(true);
             /* Flash cyan to indicate WiFi connected, then return to green pulse */
@@ -104,6 +122,22 @@ static void on_wifi_event(void *handler_args, esp_event_base_t base,
                 led_flash(LED_COLOR_CYAN, 500);
                 vTaskDelay(pdMS_TO_TICKS(500));
                 led_set_state(LED_COLOR_GREEN, LED_PATTERN_PULSE, 3000);
+            }
+            /* Validate OTA boot after WiFi connects successfully
+             * This confirms the new firmware is working properly */
+            if (!s_boot_validated && ota_manager_get_boot_status() == OTA_BOOT_PENDING_VERIFY) {
+                ESP_LOGI(TAG, "WiFi connected after OTA - validating boot");
+                esp_err_t ota_ret = ota_manager_validate_boot();
+                if (ota_ret == ESP_OK) {
+                    s_boot_validated = true;
+                }
+            }
+            /* Connect to Supabase Realtime for push notifications */
+            if (supabase_is_configured()) {
+                esp_err_t rt_ret = realtime_client_connect();
+                if (rt_ret != ESP_OK) {
+                    ESP_LOGW(TAG, "Failed to connect realtime client: %s", esp_err_to_name(rt_ret));
+                }
             }
             break;
         }
@@ -120,8 +154,14 @@ static void on_wifi_event(void *handler_args, esp_event_base_t base,
             break;
 
         case WIFI_MANAGER_EVENT_CONNECTION_FAILED:
-            ESP_LOGE(TAG, "WiFi connection failed");
+            s_wifi_error_count++;
+            ESP_LOGE(TAG, "WiFi connection failed (error count: %lu)",
+                     (unsigned long)s_wifi_error_count);
             s_wifi_connected = false;
+            /* PROD-2.4: Log persistent WiFi failures */
+            if (s_wifi_error_count >= MAX_SUBSYSTEM_ERRORS) {
+                ESP_LOGW(TAG, "Persistent WiFi failures - device operating in offline mode");
+            }
             /* Red flash then yellow blink (if not in special mode) */
             if (!s_ble_prov_active && !s_service_mode_active) {
                 led_flash(LED_COLOR_RED, 500);
@@ -236,14 +276,26 @@ static void on_h2_event(void *handler_args, esp_event_base_t base,
         case H2_COMM_EVENT_CONNECTED:
             ESP_LOGI(TAG, "H2 connected");
             s_h2_connected = true;
+            /* PROD-2.4: Reset error counter on successful connection */
+            if (s_h2_error_count > 0) {
+                ESP_LOGI(TAG, "H2 recovered after %lu disconnections",
+                         (unsigned long)s_h2_error_count);
+                s_h2_error_count = 0;
+            }
             /* Update event reporter with H2 state */
             event_reporter_set_h2_state(true, 0);
             break;
 
         case H2_COMM_EVENT_DISCONNECTED:
-            ESP_LOGW(TAG, "H2 disconnected");
+            s_h2_error_count++;
+            ESP_LOGW(TAG, "H2 disconnected (error count: %lu)",
+                     (unsigned long)s_h2_error_count);
             s_h2_connected = false;
             event_reporter_set_h2_state(false, 0);
+            /* PROD-2.4: Log persistent H2 failures */
+            if (s_h2_error_count >= MAX_SUBSYSTEM_ERRORS) {
+                ESP_LOGE(TAG, "Persistent H2 communication failures - Thread network unavailable");
+            }
             /* Show H2 error state on LED */
             if (!s_ble_prov_active && !s_service_mode_active) {
                 led_set_state(LED_COLOR_RED, LED_PATTERN_BLINK_SLOW, 1000);
@@ -317,6 +369,183 @@ static void on_h2_event(void *handler_args, esp_event_base_t base,
 }
 
 /**
+ * @brief OTA manager event handler - LED feedback for OTA operations
+ */
+static void on_ota_event(void *handler_args, esp_event_base_t base,
+                         int32_t id, void *event_data)
+{
+    switch (id) {
+        case OTA_EVENT_CHECK_START:
+            ESP_LOGI(TAG, "Checking for firmware updates...");
+            break;
+
+        case OTA_EVENT_CHECK_COMPLETE:
+            ESP_LOGI(TAG, "Update check complete");
+            break;
+
+        case OTA_EVENT_UPDATE_AVAILABLE: {
+            ota_update_info_t *info = (ota_update_info_t *)event_data;
+            if (info->s3_update_available) {
+                ESP_LOGI(TAG, "S3 update available: %s -> %s",
+                         info->s3_current.string, info->s3_available.string);
+            }
+            if (info->h2_update_available) {
+                ESP_LOGI(TAG, "H2 update available: %s -> %s",
+                         info->h2_current.string, info->h2_available.string);
+            }
+            /* Brief magenta flash to indicate update available */
+            if (!s_ble_prov_active && !s_service_mode_active) {
+                led_flash(LED_COLOR_MAGENTA, 500);
+            }
+            break;
+        }
+
+        case OTA_EVENT_UPDATE_START:
+            ESP_LOGI(TAG, "OTA update starting...");
+            /* Magenta pulse during update */
+            led_set_state(LED_COLOR_MAGENTA, LED_PATTERN_PULSE, 1000);
+            break;
+
+        case OTA_EVENT_UPDATE_PROGRESS: {
+            ota_progress_data_t *progress = (ota_progress_data_t *)event_data;
+            ESP_LOGI(TAG, "OTA progress: %d%% (%lu/%lu bytes)",
+                     progress->percentage,
+                     (unsigned long)progress->bytes_written,
+                     (unsigned long)progress->total_bytes);
+            break;
+        }
+
+        case OTA_EVENT_UPDATE_COMPLETE: {
+            ota_result_data_t *result = (ota_result_data_t *)event_data;
+            ESP_LOGI(TAG, "OTA update complete: %s firmware v%s",
+                     result->firmware == OTA_FIRMWARE_S3 ? "S3" : "H2",
+                     result->version);
+            led_flash(LED_COLOR_GREEN, 2000);
+            break;
+        }
+
+        case OTA_EVENT_UPDATE_FAILED: {
+            ota_result_data_t *result = (ota_result_data_t *)event_data;
+            ESP_LOGE(TAG, "OTA update failed: %s", esp_err_to_name(result->error));
+            led_set_state(LED_COLOR_RED, LED_PATTERN_BLINK_FAST, 250);
+            vTaskDelay(pdMS_TO_TICKS(2000));
+            /* Return to normal state */
+            if (s_wifi_connected) {
+                led_set_state(LED_COLOR_GREEN, LED_PATTERN_PULSE, 3000);
+            } else {
+                led_set_state(LED_COLOR_YELLOW, LED_PATTERN_BLINK_SLOW, 1000);
+            }
+            break;
+        }
+
+        case OTA_EVENT_ROLLBACK_TRIGGERED:
+            ESP_LOGW(TAG, "OTA rollback triggered - previous firmware restored");
+            led_set_state(LED_COLOR_RED, LED_PATTERN_BLINK_SLOW, 1000);
+            vTaskDelay(pdMS_TO_TICKS(3000));
+            break;
+
+        case OTA_EVENT_BOOT_VALIDATED:
+            ESP_LOGI(TAG, "OTA boot validated successfully");
+            s_boot_validated = true;
+            break;
+
+        default:
+            break;
+    }
+}
+
+/**
+ * @brief Realtime client event handler - handles push notifications from cloud
+ */
+static void on_realtime_event(void *handler_args, esp_event_base_t base,
+                               int32_t id, void *event_data)
+{
+    switch (id) {
+        case REALTIME_EVENT_CONNECTED:
+            ESP_LOGI(TAG, "Realtime client connected");
+            break;
+
+        case REALTIME_EVENT_DISCONNECTED:
+            ESP_LOGW(TAG, "Realtime client disconnected");
+            break;
+
+        case REALTIME_EVENT_UPDATE_AVAILABLE: {
+            realtime_update_event_t *event = (realtime_update_event_t *)event_data;
+            ESP_LOGI(TAG, "Push update received: type=%s, components=%d, critical=%d",
+                     event->device_type, event->component_count, event->is_critical);
+            /* OTA is auto-applied by realtime_client if configured */
+            /* Flash magenta to indicate update being processed */
+            if (!s_ble_prov_active && !s_service_mode_active) {
+                led_flash(LED_COLOR_MAGENTA, 500);
+            }
+            break;
+        }
+
+        case REALTIME_EVENT_COMMAND: {
+            realtime_command_event_t *event = (realtime_command_event_t *)event_data;
+            ESP_LOGI(TAG, "Remote command received: %s", event->command);
+            /* Built-in commands (reboot, check_update) are handled by realtime_client */
+            /* Application-specific commands can be handled here */
+            break;
+        }
+
+        case REALTIME_EVENT_CONFIG_UPDATE:
+            ESP_LOGI(TAG, "Config update notification received");
+            /* Could reload configuration from cloud here */
+            break;
+
+        case REALTIME_EVENT_ERROR:
+            ESP_LOGE(TAG, "Realtime client error");
+            break;
+
+        default:
+            break;
+    }
+}
+
+/**
+ * @brief H2 flasher event handler - LED feedback for H2 flashing
+ */
+static void on_h2_flasher_event(void *handler_args, esp_event_base_t base,
+                                 int32_t id, void *event_data)
+{
+    switch (id) {
+        case H2_FLASHER_EVENT_START:
+            ESP_LOGI(TAG, "H2 flash starting...");
+            /* Cyan pulse during H2 flash */
+            led_set_state(LED_COLOR_CYAN, LED_PATTERN_PULSE, 500);
+            break;
+
+        case H2_FLASHER_EVENT_PROGRESS: {
+            h2_flasher_progress_t *progress = (h2_flasher_progress_t *)event_data;
+            ESP_LOGI(TAG, "H2 flash progress: %d%% (%lu/%lu bytes)",
+                     progress->percentage,
+                     (unsigned long)progress->bytes_written,
+                     (unsigned long)progress->total_bytes);
+            break;
+        }
+
+        case H2_FLASHER_EVENT_COMPLETE: {
+            h2_flasher_result_t *result = (h2_flasher_result_t *)event_data;
+            ESP_LOGI(TAG, "H2 flash completed in %lu ms", (unsigned long)result->flash_time_ms);
+            led_flash(LED_COLOR_GREEN, 2000);
+            break;
+        }
+
+        case H2_FLASHER_EVENT_FAILED: {
+            h2_flasher_result_t *result = (h2_flasher_result_t *)event_data;
+            ESP_LOGE(TAG, "H2 flash failed: %s", esp_err_to_name(result->error));
+            led_set_state(LED_COLOR_RED, LED_PATTERN_BLINK_FAST, 250);
+            vTaskDelay(pdMS_TO_TICKS(3000));
+            break;
+        }
+
+        default:
+            break;
+    }
+}
+
+/**
  * @brief Button press callback
  */
 static void on_button_press(button_press_t press_type)
@@ -371,10 +600,63 @@ void app_main(void)
     ESP_ERROR_CHECK(ret);
     ESP_LOGI(TAG, "NVS initialized");
 
+    /* Phase PROD-2.1: Initialize watchdog manager early */
+    ret = watchdog_manager_init(30);  /* 30 second timeout */
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Watchdog manager init failed: %s", esp_err_to_name(ret));
+    } else {
+        ESP_LOGI(TAG, "Watchdog manager initialized");
+
+        /* Check if last reset was watchdog-triggered */
+        if (watchdog_was_reset_by_watchdog()) {
+            ESP_LOGW(TAG, "*** Last reset was caused by watchdog timeout! ***");
+        }
+
+        /* Register main task */
+        ret = watchdog_register_task(WATCHDOG_TASK_MAIN, NULL, "main");
+        if (ret != ESP_OK) {
+            ESP_LOGW(TAG, "Failed to register main task with watchdog: %s", esp_err_to_name(ret));
+        }
+    }
+
+    /* Phase PROD-2.3: Initialize heap monitoring */
+    ret = heap_monitor_init(32 * 1024, 16 * 1024);  /* 32KB low, 16KB critical */
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Heap monitor init failed: %s", esp_err_to_name(ret));
+    } else {
+        ESP_LOGI(TAG, "Heap monitor initialized");
+    }
+
     /* Create default event loop (required for now_playing events) */
     ret = esp_event_loop_create_default();
     if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
         ESP_LOGE(TAG, "Failed to create event loop: %s", esp_err_to_name(ret));
+    }
+
+    /* Phase PROD-1: Initialize OTA manager early to handle boot validation */
+    ota_config_t ota_config = OTA_CONFIG_DEFAULT();
+    ota_config.auto_apply = false;  /* Require explicit trigger for updates */
+    ota_config.auto_reboot = false; /* Don't auto-reboot after update */
+    ret = ota_manager_init(&ota_config);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "OTA manager init failed: %s", esp_err_to_name(ret));
+    } else {
+        ESP_LOGI(TAG, "OTA manager initialized");
+
+        /* Register OTA event handler for LED feedback */
+        ret = esp_event_handler_register(OTA_EVENTS, ESP_EVENT_ANY_ID,
+                                          on_ota_event, NULL);
+        if (ret != ESP_OK) {
+            ESP_LOGW(TAG, "Failed to register OTA event handler: %s", esp_err_to_name(ret));
+        }
+
+        /* Log boot status */
+        ota_boot_status_t boot_status = ota_manager_get_boot_status();
+        if (boot_status == OTA_BOOT_PENDING_VERIFY) {
+            ESP_LOGW(TAG, "First boot after OTA update - will validate after WiFi connects");
+        } else if (boot_status == OTA_BOOT_ROLLBACK) {
+            ESP_LOGW(TAG, "Running after OTA rollback - previous firmware restored");
+        }
     }
 
     /* Phase S3-3: Initialize configuration store */
@@ -528,6 +810,23 @@ void app_main(void)
         }
     }
 
+    /* OTA Push Protocol: Initialize realtime client for push notifications */
+    realtime_config_t rt_config = REALTIME_CONFIG_DEFAULT();
+    rt_config.auto_apply_updates = true;  /* Auto-apply OTA updates */
+    ret = realtime_client_init(&rt_config);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Realtime client init failed: %s", esp_err_to_name(ret));
+    } else {
+        ESP_LOGI(TAG, "Realtime client initialized");
+
+        /* Register realtime event handler */
+        ret = esp_event_handler_register(REALTIME_EVENTS, ESP_EVENT_ANY_ID,
+                                          on_realtime_event, NULL);
+        if (ret != ESP_OK) {
+            ESP_LOGW(TAG, "Failed to register realtime event handler: %s", esp_err_to_name(ret));
+        }
+    }
+
     /* Phase S3-6: Initialize BLE provisioning */
     ble_prov_config_t ble_config = {
         .adv_timeout_sec = BLE_PROV_ADV_TIMEOUT_SEC,
@@ -541,6 +840,44 @@ void app_main(void)
         ESP_LOGE(TAG, "BLE provisioning init failed: %s", esp_err_to_name(ret));
     } else {
         ESP_LOGI(TAG, "BLE provisioning initialized");
+    }
+
+    /* Phase PROD-1.2: Initialize H2 flasher */
+    ret = h2_flasher_init();
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "H2 flasher init failed: %s", esp_err_to_name(ret));
+    } else {
+        ESP_LOGI(TAG, "H2 flasher initialized");
+
+        /* Register H2 flasher event handler */
+        ret = esp_event_handler_register(H2_FLASHER_EVENTS, ESP_EVENT_ANY_ID,
+                                          on_h2_flasher_event, NULL);
+        if (ret != ESP_OK) {
+            ESP_LOGW(TAG, "Failed to register H2 flasher event handler: %s", esp_err_to_name(ret));
+        }
+
+        /* Check if H2 update is pending */
+        if (ota_manager_h2_update_pending()) {
+            ESP_LOGW(TAG, "H2 firmware update pending - flashing H2...");
+            led_set_state(LED_COLOR_CYAN, LED_PATTERN_PULSE, 500);
+
+            ota_version_t staged_version;
+            if (ota_manager_get_staged_h2_version(&staged_version) == ESP_OK) {
+                ESP_LOGI(TAG, "Staging H2 firmware version: %s", staged_version.string);
+            }
+
+            /* Flash the H2 */
+            ret = h2_flasher_flash(60000);  /* 60 second timeout */
+            if (ret == ESP_OK) {
+                ESP_LOGI(TAG, "H2 flash successful");
+                ota_manager_h2_update_complete(true);
+            } else {
+                ESP_LOGE(TAG, "H2 flash failed: %s", esp_err_to_name(ret));
+                ota_manager_h2_update_complete(false);
+                /* Try to reset H2 to normal mode anyway */
+                h2_flasher_reset_normal();
+            }
+        }
     }
 
     /* Phase S3-7/INT-1: Initialize H2 communication interface */
@@ -649,8 +986,37 @@ void app_main(void)
 
     ESP_LOGI(TAG, "Initialization complete - system running");
 
-    /* Main loop placeholder */
+    /* Main loop - feed watchdog and perform periodic tasks */
+    uint32_t loop_count = 0;
     while (1) {
+        /* Feed the watchdog to indicate main task is alive */
+        watchdog_feed();
+
+        /* PROD-2.3: Check heap status every loop iteration */
+        heap_status_t heap_status;
+        esp_err_t heap_ret = heap_monitor_check(&heap_status);
+        if (heap_ret == ESP_ERR_NO_MEM) {
+            ESP_LOGE(TAG, "CRITICAL: Memory critically low! Attempting recovery...");
+            /* Could trigger graceful degradation here in the future */
+        }
+
+        /* Periodic status logging (every 30 seconds) */
+        loop_count++;
+        if (loop_count % 30 == 0) {
+            ESP_LOGI(TAG, "Status: heap=%luKB (min=%luKB), wifi=%s, h2=%s",
+                     (unsigned long)(heap_status.free_heap / 1024),
+                     (unsigned long)(heap_status.min_free_heap / 1024),
+                     s_wifi_connected ? "connected" : "disconnected",
+                     s_h2_connected ? "connected" : "disconnected");
+
+            /* Log heap fragmentation indicator */
+            if (heap_status.largest_free_block < heap_status.free_heap / 2) {
+                ESP_LOGW(TAG, "Heap fragmentation detected: free=%luKB, largest_block=%luKB",
+                         (unsigned long)(heap_status.free_heap / 1024),
+                         (unsigned long)(heap_status.largest_free_block / 1024));
+            }
+        }
+
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }

@@ -234,6 +234,54 @@ esp_err_t s3_comm_send_inventory_update(const uint8_t *ext_addr,
 esp_err_t s3_comm_send_error_event(s3h2_error_t error_code);
 
 /*******************************************************************************
+ * Phase 4: OTA Event Functions
+ ******************************************************************************/
+
+/**
+ * @brief Send OTA progress event
+ *
+ * Reports OTA transfer progress to S3.
+ *
+ * @param crate_ext_addr Target crate extended address (8 bytes)
+ * @param percent Progress percentage (0-100)
+ * @param bytes_sent Bytes successfully sent
+ * @param total_bytes Total firmware size
+ * @return ESP_OK on success
+ */
+esp_err_t s3_comm_send_ota_progress(const uint8_t *crate_ext_addr,
+                                    uint8_t percent,
+                                    uint32_t bytes_sent,
+                                    uint32_t total_bytes);
+
+/**
+ * @brief Send OTA complete event
+ *
+ * Reports OTA completion (success or failure) to S3.
+ *
+ * @param crate_ext_addr Target crate extended address (8 bytes)
+ * @param success true if OTA succeeded
+ * @param error_code Error code if failed
+ * @return ESP_OK on success
+ */
+esp_err_t s3_comm_send_ota_complete(const uint8_t *crate_ext_addr,
+                                    bool success,
+                                    s3h2_error_t error_code);
+
+/**
+ * @brief Send crate ping result event
+ *
+ * Reports whether a crate is reachable on the Thread network.
+ *
+ * @param crate_ext_addr Crate extended address (8 bytes)
+ * @param reachable true if crate responded
+ * @param rssi Signal strength if reachable (dBm)
+ * @return ESP_OK on success
+ */
+esp_err_t s3_comm_send_ping_result(const uint8_t *crate_ext_addr,
+                                   bool reachable,
+                                   int8_t rssi);
+
+/*******************************************************************************
  * Statistics and Debug
  ******************************************************************************/
 

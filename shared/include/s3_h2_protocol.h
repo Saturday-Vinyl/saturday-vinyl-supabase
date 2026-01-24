@@ -60,6 +60,13 @@ typedef enum {
     S3H2_CMD_ENTER_BOOTLOADER   = 0x10,     /**< Enter bootloader for firmware update */
     S3H2_CMD_RESET              = 0x11,     /**< Software reset */
     S3H2_CMD_GET_VERSION        = 0x12,     /**< Request firmware version */
+
+    /* Crate OTA Commands (Phase 4) */
+    S3H2_CMD_OTA_START_CRATE    = 0x20,     /**< Start OTA to a Thread crate */
+    S3H2_CMD_OTA_DATA_CRATE     = 0x21,     /**< Send OTA data chunk to crate */
+    S3H2_CMD_OTA_VERIFY_CRATE   = 0x22,     /**< Verify and apply crate OTA */
+    S3H2_CMD_OTA_ABORT_CRATE    = 0x23,     /**< Abort crate OTA in progress */
+    S3H2_CMD_PING_CRATE         = 0x24,     /**< Ping crate to check if reachable */
 } s3h2_cmd_t;
 
 /*******************************************************************************
@@ -86,6 +93,9 @@ typedef enum {
     S3H2_EVT_INVENTORY_UPDATE   = 0xE2,     /**< Crate inventory changed */
     S3H2_EVT_CRATE_HEARTBEAT    = 0xE3,     /**< Crate heartbeat received */
     S3H2_EVT_THREAD_STATE       = 0xE4,     /**< Thread state changed */
+    S3H2_EVT_OTA_PROGRESS       = 0xE5,     /**< Crate OTA progress update */
+    S3H2_EVT_OTA_COMPLETE       = 0xE6,     /**< Crate OTA completed (success/fail) */
+    S3H2_EVT_CRATE_PING_RESULT  = 0xE7,     /**< Crate ping result */
     S3H2_EVT_ERROR              = 0xEF,     /**< Error occurred */
 } s3h2_evt_t;
 
@@ -102,6 +112,13 @@ typedef enum {
     S3H2_ERR_TIMEOUT            = 0x05,     /**< Operation timed out */
     S3H2_ERR_NO_CREDENTIALS     = 0x06,     /**< No Thread credentials */
     S3H2_ERR_NOT_ATTACHED       = 0x07,     /**< Not attached to Thread network */
+    /* OTA-specific errors (Phase 4) */
+    S3H2_ERR_CRATE_UNREACHABLE  = 0x10,     /**< Crate not responding to CoAP */
+    S3H2_ERR_OTA_IN_PROGRESS    = 0x11,     /**< OTA already in progress */
+    S3H2_ERR_OTA_CHECKSUM       = 0x12,     /**< OTA checksum verification failed */
+    S3H2_ERR_OTA_FLASH          = 0x13,     /**< OTA flash write failed */
+    S3H2_ERR_OTA_NO_SESSION     = 0x14,     /**< No active OTA session */
+    S3H2_ERR_OTA_SEQUENCE       = 0x15,     /**< Invalid OTA chunk sequence */
     S3H2_ERR_INTERNAL           = 0xFF,     /**< Internal error */
 } s3h2_error_t;
 
@@ -209,6 +226,101 @@ typedef struct __attribute__((packed)) {
     uint8_t minor;                  /**< Minor version */
     uint8_t patch;                  /**< Patch version */
 } s3h2_version_payload_t;
+
+/*******************************************************************************
+ * Crate OTA Payload Structures (Phase 4)
+ ******************************************************************************/
+
+/** Maximum OTA data chunk size (fits in max payload with header overhead) */
+#define S3H2_OTA_MAX_CHUNK_SIZE     512
+
+/**
+ * @brief OTA start command payload (CMD_OTA_START_CRATE)
+ *
+ * Initiates an OTA session to a specific crate device.
+ */
+typedef struct __attribute__((packed)) {
+    uint8_t crate_ext_addr[8];      /**< Target crate extended MAC address */
+    uint32_t firmware_size;         /**< Total firmware size in bytes */
+    uint8_t sha256[32];             /**< Expected SHA-256 hash of firmware */
+    uint8_t version_major;          /**< New firmware major version */
+    uint8_t version_minor;          /**< New firmware minor version */
+    uint8_t version_patch;          /**< New firmware patch version */
+} s3h2_ota_start_crate_payload_t;
+
+/**
+ * @brief OTA data command payload (CMD_OTA_DATA_CRATE)
+ *
+ * Sends a chunk of firmware data. Chunks must be sent sequentially.
+ * The data follows immediately after this header.
+ */
+typedef struct __attribute__((packed)) {
+    uint8_t crate_ext_addr[8];      /**< Target crate extended MAC address */
+    uint32_t offset;                /**< Byte offset in firmware image */
+    uint16_t length;                /**< Chunk length (followed by 'length' bytes) */
+    /* uint8_t data[length] follows */
+} s3h2_ota_data_crate_payload_t;
+
+/**
+ * @brief OTA verify command payload (CMD_OTA_VERIFY_CRATE)
+ *
+ * Instructs the crate to verify the received firmware and apply the update.
+ */
+typedef struct __attribute__((packed)) {
+    uint8_t crate_ext_addr[8];      /**< Target crate extended MAC address */
+} s3h2_ota_verify_crate_payload_t;
+
+/**
+ * @brief OTA abort command payload (CMD_OTA_ABORT_CRATE)
+ *
+ * Aborts an in-progress OTA session.
+ */
+typedef struct __attribute__((packed)) {
+    uint8_t crate_ext_addr[8];      /**< Target crate extended MAC address */
+} s3h2_ota_abort_crate_payload_t;
+
+/**
+ * @brief Ping crate command payload (CMD_PING_CRATE)
+ *
+ * Pings a crate to check if it's reachable on the Thread network.
+ */
+typedef struct __attribute__((packed)) {
+    uint8_t crate_ext_addr[8];      /**< Target crate extended MAC address */
+} s3h2_ping_crate_payload_t;
+
+/**
+ * @brief OTA progress event payload (EVT_OTA_PROGRESS)
+ *
+ * Periodic progress update during OTA transfer.
+ */
+typedef struct __attribute__((packed)) {
+    uint8_t crate_ext_addr[8];      /**< Crate being updated */
+    uint8_t percent;                /**< Progress percentage (0-100) */
+    uint32_t bytes_sent;            /**< Bytes successfully sent to crate */
+    uint32_t total_bytes;           /**< Total firmware size */
+} s3h2_ota_progress_payload_t;
+
+/**
+ * @brief OTA complete event payload (EVT_OTA_COMPLETE)
+ *
+ * Sent when OTA completes (success or failure).
+ */
+typedef struct __attribute__((packed)) {
+    uint8_t crate_ext_addr[8];      /**< Crate that was updated */
+    uint8_t success;                /**< 1 = success, 0 = failure */
+    uint8_t error_code;             /**< s3h2_error_t if failed */
+} s3h2_ota_complete_payload_t;
+
+/**
+ * @brief Crate ping result event payload (EVT_CRATE_PING_RESULT)
+ *
+ * Response to CMD_PING_CRATE indicating if crate is reachable.
+ */
+typedef struct __attribute__((packed)) {
+    uint8_t crate_ext_addr[8];      /**< Crate that was pinged */
+    uint8_t reachable;              /**< 1 = reachable, 0 = not reachable */
+    int8_t rssi;                    /**< Signal strength if reachable (dBm) */
+} s3h2_ping_result_payload_t;
 
 /*******************************************************************************
  * Frame Structure

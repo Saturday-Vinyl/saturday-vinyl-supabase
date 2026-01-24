@@ -6,5 +6,5 @@ idf_component_register(
         "s3_comm.c"
     INCLUDE_DIRS "include"
     REQUIRES driver esp_event esp_timer nvs_flash freertos shared
-    PRIV_REQUIRES thread
+    PRIV_REQUIRES thread coap_ota
 )

@@ -11,6 +11,7 @@
 #include "s3_comm.h"
 #include "thread_br.h"
 #include "h2_version.h"
+#include "coap_ota.h"
 #include "driver/uart.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
@@ -78,6 +79,13 @@ static void handle_disable_joining(void);
 static void handle_reset_credentials(void);
 static void handle_enter_bootloader(void);
 static void handle_reset(void);
+
+/* Phase 4: OTA command handlers */
+static void handle_ota_start_crate(const uint8_t *payload, uint16_t len);
+static void handle_ota_data_crate(const uint8_t *payload, uint16_t len);
+static void handle_ota_verify_crate(const uint8_t *payload, uint16_t len);
+static void handle_ota_abort_crate(const uint8_t *payload, uint16_t len);
+static void handle_ping_crate(const uint8_t *payload, uint16_t len);
 
 /*******************************************************************************
  * Initialization
@@ -361,6 +369,27 @@ static void handle_command(uint8_t cmd_type, const uint8_t *payload, uint16_t le
 
         case S3H2_CMD_RESET:
             handle_reset();
+            break;
+
+        /* Phase 4: Crate OTA Commands */
+        case S3H2_CMD_OTA_START_CRATE:
+            handle_ota_start_crate(payload, len);
+            break;
+
+        case S3H2_CMD_OTA_DATA_CRATE:
+            handle_ota_data_crate(payload, len);
+            break;
+
+        case S3H2_CMD_OTA_VERIFY_CRATE:
+            handle_ota_verify_crate(payload, len);
+            break;
+
+        case S3H2_CMD_OTA_ABORT_CRATE:
+            handle_ota_abort_crate(payload, len);
+            break;
+
+        case S3H2_CMD_PING_CRATE:
+            handle_ping_crate(payload, len);
             break;
 
         default:
@@ -807,6 +836,247 @@ esp_err_t s3_comm_send_error_event(s3h2_error_t error_code)
         .error_code = error_code,
     };
     return send_frame(S3H2_EVT_ERROR, &payload, sizeof(payload));
+}
+
+/*******************************************************************************
+ * Phase 4: Crate OTA Command Handlers
+ ******************************************************************************/
+
+static void handle_ota_start_crate(const uint8_t *payload, uint16_t len)
+{
+    ESP_LOGI(TAG, "OTA_START_CRATE received");
+
+    if (len < sizeof(s3h2_ota_start_crate_payload_t)) {
+        ESP_LOGE(TAG, "Payload too short for OTA_START");
+        s3_comm_send_nak(S3H2_ERR_INVALID_PARAM);
+        return;
+    }
+
+    const s3h2_ota_start_crate_payload_t *cmd = (const s3h2_ota_start_crate_payload_t *)payload;
+
+    ESP_LOGI(TAG, "OTA target: %02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X",
+             cmd->crate_ext_addr[0], cmd->crate_ext_addr[1],
+             cmd->crate_ext_addr[2], cmd->crate_ext_addr[3],
+             cmd->crate_ext_addr[4], cmd->crate_ext_addr[5],
+             cmd->crate_ext_addr[6], cmd->crate_ext_addr[7]);
+    ESP_LOGI(TAG, "FW size: %lu, version: %d.%d.%d",
+             (unsigned long)cmd->firmware_size,
+             cmd->version_major, cmd->version_minor, cmd->version_patch);
+
+    /* Initialize CoAP OTA session to crate */
+    esp_err_t ret = coap_ota_start_session(cmd->crate_ext_addr,
+                                            cmd->firmware_size,
+                                            cmd->sha256,
+                                            cmd->version_major,
+                                            cmd->version_minor,
+                                            cmd->version_patch);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to start CoAP OTA session: %s", esp_err_to_name(ret));
+        if (ret == ESP_ERR_INVALID_STATE) {
+            s3_comm_send_nak(S3H2_ERR_OTA_IN_PROGRESS);
+        } else {
+            s3_comm_send_nak(S3H2_ERR_CRATE_UNREACHABLE);
+        }
+        return;
+    }
+
+    s3_comm_send_ack();
+}
+
+static void handle_ota_data_crate(const uint8_t *payload, uint16_t len)
+{
+    if (len < sizeof(s3h2_ota_data_crate_payload_t)) {
+        ESP_LOGE(TAG, "Payload too short for OTA_DATA");
+        s3_comm_send_nak(S3H2_ERR_INVALID_PARAM);
+        return;
+    }
+
+    const s3h2_ota_data_crate_payload_t *cmd = (const s3h2_ota_data_crate_payload_t *)payload;
+    const uint8_t *data = payload + sizeof(s3h2_ota_data_crate_payload_t);
+    uint16_t data_len = len - sizeof(s3h2_ota_data_crate_payload_t);
+
+    if (data_len != cmd->length) {
+        ESP_LOGW(TAG, "Data length mismatch: header=%d, actual=%d", cmd->length, data_len);
+    }
+
+    ESP_LOGD(TAG, "OTA_DATA: offset=%lu, len=%d",
+             (unsigned long)cmd->offset, cmd->length);
+
+    /* Send data chunk to crate via CoAP */
+    esp_err_t ret = coap_ota_send_chunk(cmd->crate_ext_addr,
+                                         cmd->offset,
+                                         data,
+                                         data_len);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to send OTA chunk: %s", esp_err_to_name(ret));
+        if (ret == ESP_ERR_INVALID_STATE) {
+            s3_comm_send_nak(S3H2_ERR_OTA_NO_SESSION);
+        } else if (ret == ESP_ERR_TIMEOUT) {
+            s3_comm_send_nak(S3H2_ERR_CRATE_UNREACHABLE);
+        } else {
+            s3_comm_send_nak(S3H2_ERR_INTERNAL);
+        }
+        return;
+    }
+
+    /* ACK receipt (progress event sent asynchronously by coap_ota) */
+    s3_comm_send_ack();
+}
+
+static void handle_ota_verify_crate(const uint8_t *payload, uint16_t len)
+{
+    ESP_LOGI(TAG, "OTA_VERIFY_CRATE received");
+
+    if (len < sizeof(s3h2_ota_verify_crate_payload_t)) {
+        ESP_LOGE(TAG, "Payload too short for OTA_VERIFY");
+        s3_comm_send_nak(S3H2_ERR_INVALID_PARAM);
+        return;
+    }
+
+    const s3h2_ota_verify_crate_payload_t *cmd = (const s3h2_ota_verify_crate_payload_t *)payload;
+
+    ESP_LOGI(TAG, "Verifying OTA for crate %02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X",
+             cmd->crate_ext_addr[0], cmd->crate_ext_addr[1],
+             cmd->crate_ext_addr[2], cmd->crate_ext_addr[3],
+             cmd->crate_ext_addr[4], cmd->crate_ext_addr[5],
+             cmd->crate_ext_addr[6], cmd->crate_ext_addr[7]);
+
+    /* Send verify command to crate via CoAP */
+    esp_err_t ret = coap_ota_verify(cmd->crate_ext_addr);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to verify OTA: %s", esp_err_to_name(ret));
+        if (ret == ESP_ERR_INVALID_STATE) {
+            s3_comm_send_nak(S3H2_ERR_OTA_NO_SESSION);
+        } else if (ret == ESP_ERR_TIMEOUT) {
+            s3_comm_send_nak(S3H2_ERR_CRATE_UNREACHABLE);
+        } else {
+            s3_comm_send_nak(S3H2_ERR_OTA_CHECKSUM);
+        }
+        return;
+    }
+
+    s3_comm_send_ack();
+}
+
+static void handle_ota_abort_crate(const uint8_t *payload, uint16_t len)
+{
+    ESP_LOGW(TAG, "OTA_ABORT_CRATE received");
+
+    if (len < sizeof(s3h2_ota_abort_crate_payload_t)) {
+        ESP_LOGE(TAG, "Payload too short for OTA_ABORT");
+        s3_comm_send_nak(S3H2_ERR_INVALID_PARAM);
+        return;
+    }
+
+    const s3h2_ota_abort_crate_payload_t *cmd = (const s3h2_ota_abort_crate_payload_t *)payload;
+
+    ESP_LOGI(TAG, "Aborting OTA for crate %02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X",
+             cmd->crate_ext_addr[0], cmd->crate_ext_addr[1],
+             cmd->crate_ext_addr[2], cmd->crate_ext_addr[3],
+             cmd->crate_ext_addr[4], cmd->crate_ext_addr[5],
+             cmd->crate_ext_addr[6], cmd->crate_ext_addr[7]);
+
+    /* Abort CoAP OTA session */
+    esp_err_t ret = coap_ota_abort(cmd->crate_ext_addr);
+    if (ret != ESP_OK && ret != ESP_ERR_NOT_FOUND) {
+        ESP_LOGW(TAG, "Abort returned: %s", esp_err_to_name(ret));
+    }
+
+    s3_comm_send_ack();
+}
+
+static void handle_ping_crate(const uint8_t *payload, uint16_t len)
+{
+    ESP_LOGI(TAG, "PING_CRATE received");
+
+    if (len < sizeof(s3h2_ping_crate_payload_t)) {
+        ESP_LOGE(TAG, "Payload too short for PING_CRATE");
+        s3_comm_send_nak(S3H2_ERR_INVALID_PARAM);
+        return;
+    }
+
+    const s3h2_ping_crate_payload_t *cmd = (const s3h2_ping_crate_payload_t *)payload;
+
+    ESP_LOGI(TAG, "Pinging crate %02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X",
+             cmd->crate_ext_addr[0], cmd->crate_ext_addr[1],
+             cmd->crate_ext_addr[2], cmd->crate_ext_addr[3],
+             cmd->crate_ext_addr[4], cmd->crate_ext_addr[5],
+             cmd->crate_ext_addr[6], cmd->crate_ext_addr[7]);
+
+    /* Send CoAP ping to crate (synchronous) */
+    int8_t rssi = 0;
+    esp_err_t ret = coap_ota_ping_device(cmd->crate_ext_addr, 5000, &rssi);
+
+    /* Report result back to S3 */
+    if (ret == ESP_OK) {
+        s3_comm_send_ping_result(cmd->crate_ext_addr, true, rssi);
+    } else {
+        s3_comm_send_ping_result(cmd->crate_ext_addr, false, 0);
+    }
+}
+
+/*******************************************************************************
+ * Phase 4: OTA Event Functions
+ ******************************************************************************/
+
+esp_err_t s3_comm_send_ota_progress(const uint8_t *crate_ext_addr,
+                                    uint8_t percent,
+                                    uint32_t bytes_sent,
+                                    uint32_t total_bytes)
+{
+    if (crate_ext_addr == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    s3h2_ota_progress_payload_t payload = {
+        .percent = percent,
+        .bytes_sent = bytes_sent,
+        .total_bytes = total_bytes,
+    };
+    memcpy(payload.crate_ext_addr, crate_ext_addr, 8);
+
+    ESP_LOGI(TAG, "Sending OTA_PROGRESS: %d%% (%lu/%lu)",
+             percent, (unsigned long)bytes_sent, (unsigned long)total_bytes);
+
+    return send_frame(S3H2_EVT_OTA_PROGRESS, &payload, sizeof(payload));
+}
+
+esp_err_t s3_comm_send_ota_complete(const uint8_t *crate_ext_addr,
+                                    bool success,
+                                    s3h2_error_t error_code)
+{
+    if (crate_ext_addr == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    s3h2_ota_complete_payload_t payload = {
+        .success = success ? 1 : 0,
+        .error_code = error_code,
+    };
+    memcpy(payload.crate_ext_addr, crate_ext_addr, 8);
+
+    ESP_LOGI(TAG, "Sending OTA_COMPLETE: success=%d, error=%d", success, error_code);
+
+    return send_frame(S3H2_EVT_OTA_COMPLETE, &payload, sizeof(payload));
+}
+
+esp_err_t s3_comm_send_ping_result(const uint8_t *crate_ext_addr,
+                                   bool reachable,
+                                   int8_t rssi)
+{
+    if (crate_ext_addr == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    s3h2_ping_result_payload_t payload = {
+        .reachable = reachable ? 1 : 0,
+        .rssi = rssi,
+    };
+    memcpy(payload.crate_ext_addr, crate_ext_addr, 8);
+
+    ESP_LOGI(TAG, "Sending PING_RESULT: reachable=%d, rssi=%d", reachable, rssi);
+
+    return send_frame(S3H2_EVT_CRATE_PING_RESULT, &payload, sizeof(payload));
 }
 
 /*******************************************************************************

@@ -7,6 +7,8 @@ Central repository for Saturday Vinyl technical documentation shared across all 
 ### Protocols
 - **[BLE Provisioning Protocol](protocols/ble_provisioning_protocol.md)** - BLE GATT interface for mobile app device provisioning
 - **[Service Mode Protocol](protocols/service_mode_protocol.md)** - USB serial interface for factory provisioning and diagnostics
+- **[CoAP Protocol](protocols/coap_protocol.md)** - Thread device communication between Hub and Crate
+- **[OTA Protocol](protocols/ota_protocol.md)** - Over-the-air firmware update push mechanism
 
 ### Templates
 - **[Claude Command Templates](templates/claude-commands/)** - Slash command wrappers for Claude Code integration
@@ -67,6 +69,8 @@ After setup, these slash commands are available:
 |---------|-------------|
 | `/ble-provisioning` | Load BLE Provisioning Protocol into context |
 | `/service-mode` | Load Service Mode Protocol into context |
+| `/coap-protocol` | Load CoAP Protocol into context |
+| `/ota-protocol` | Load OTA Protocol into context |
 
 You can also reference docs directly in prompts:
 ```
@@ -80,12 +84,16 @@ saturday-vinyl-shared-docs/
 ├── README.md                    # This file
 ├── protocols/                   # Protocol specifications
 │   ├── ble_provisioning_protocol.md
-│   └── service_mode_protocol.md
+│   ├── service_mode_protocol.md
+│   ├── coap_protocol.md
+│   └── ota_protocol.md
 ├── guides/                      # (Future) Shared guides
 ├── templates/
 │   └── claude-commands/         # Claude Code command templates
 │       ├── ble-provisioning.md
-│       └── service-mode.md
+│       ├── service-mode.md
+│       ├── coap-protocol.md
+│       └── ota-protocol.md
 └── scripts/
     └── setup-shared-docs.sh     # Project setup script
 ```

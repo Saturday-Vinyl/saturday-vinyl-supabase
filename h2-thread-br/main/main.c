@@ -25,6 +25,7 @@
 #include "s3_comm.h"
 #include "thread_br.h"
 #include "coap_server.h"
+#include "coap_ota.h"
 
 static const char *TAG = "main";
 
@@ -205,6 +206,17 @@ void app_main(void)
     if (ret != ESP_OK) {
         ESP_LOGW(TAG, "Failed to ensure Thread credentials: %s", esp_err_to_name(ret));
         /* Continue anyway - credentials will be generated on first START_THREAD */
+    }
+
+    /*
+     * Initialize CoAP OTA client for Crate firmware updates
+     * This is used when S3 relays OTA data to Crates via Thread
+     */
+    ESP_LOGI(TAG, "Initializing CoAP OTA client...");
+    ret = coap_ota_init();
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to init CoAP OTA: %s", esp_err_to_name(ret));
+        /* Non-fatal - OTA to crates won't work but other functions will */
     }
 
     /*

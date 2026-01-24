@@ -14,6 +14,7 @@
 #include "now_playing.h"
 #include "wifi_manager.h"
 #include "rfid_protocol.h"
+#include "app_config.h"
 
 /* Note: In 2-SoC architecture, S3 doesn't have OpenThread.
  * Thread management is handled by H2 co-processor.
@@ -105,6 +106,10 @@ typedef struct {
     uint32_t events_dropped;
     uint32_t heartbeats_sent;
     int64_t last_sync_time;
+
+    /* Memory monitoring (PROD-2.3) */
+    uint32_t min_free_heap;           /* Minimum heap seen since boot */
+    uint32_t low_heap_warnings;       /* Count of low heap warnings */
 } event_reporter_state_t;
 
 static event_reporter_state_t s_state = {0};
@@ -245,6 +250,8 @@ static int format_now_playing_json(const queued_event_t *event, char *buf, size_
  * - device_serial (was unit_id)
  * - device_type: 'hub'
  * - device_timestamp (was timestamp)
+ *
+ * PROD-2.3: Added min_free_heap for memory leak detection
  */
 static int format_heartbeat_json(char *buf, size_t buf_len)
 {
@@ -266,13 +273,20 @@ static int format_heartbeat_json(char *buf, size_t buf_len)
     /* Calculate uptime in seconds */
     uint32_t uptime_sec = (uint32_t)(esp_timer_get_time() / 1000000);
 
+    /* Get current and minimum heap (PROD-2.3) */
+    uint32_t free_heap = (uint32_t)esp_get_free_heap_size();
+    if (free_heap < s_state.min_free_heap) {
+        s_state.min_free_heap = free_heap;
+    }
+
     int len = snprintf(buf, buf_len,
         "{\"device_serial\":\"%s\",\"device_type\":\"hub\","
-        "\"firmware_version\":\"0.6.0\","
+        "\"firmware_version\":\"%s\","
         "\"wifi_rssi\":%d,\"uptime_sec\":%lu,\"free_heap\":%lu,"
-        "\"events_queued\":%u,\"device_timestamp\":\"%s\"}",
-        device_serial, wifi_rssi, (unsigned long)uptime_sec,
-        (unsigned long)esp_get_free_heap_size(),
+        "\"min_free_heap\":%lu,\"events_queued\":%u,\"device_timestamp\":\"%s\"}",
+        device_serial, FW_VERSION_STRING, wifi_rssi, (unsigned long)uptime_sec,
+        (unsigned long)free_heap,
+        (unsigned long)s_state.min_free_heap,
         s_state.queue.count, timestamp);
 
     return len;
@@ -565,6 +579,9 @@ esp_err_t event_reporter_init(const event_reporter_config_t *config)
 
     memset(&s_state, 0, sizeof(s_state));
 
+    /* Initialize minimum heap to current value (PROD-2.3) */
+    s_state.min_free_heap = (uint32_t)esp_get_free_heap_size();
+
     /* Use provided config or defaults */
     if (config != NULL) {
         s_state.config = *config;
@@ -725,6 +742,10 @@ esp_err_t event_reporter_get_status(event_reporter_status_t *status)
     status->heartbeats_sent = s_state.heartbeats_sent;
     status->last_sync_time = s_state.last_sync_time;
     status->last_heartbeat_time = s_state.last_heartbeat_time;
+
+    /* PROD-2.3: Memory monitoring */
+    status->min_free_heap = s_state.min_free_heap;
+    status->low_heap_warnings = s_state.low_heap_warnings;
 
     return ESP_OK;
 }
