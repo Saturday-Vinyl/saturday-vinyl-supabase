@@ -1,43 +1,67 @@
 # Saturday Capability Schema Specification
 
-**Version:** 1.0.0
-**Last Updated:** 2026-01-24
+**Version:** 1.3.0
+**Last Updated:** 2026-01-26
 **Audience:** Saturday Admin App developers, Firmware engineers
 
 ---
 
 ## Overview
 
-Capabilities define the configurable features of Saturday devices. Each capability specifies:
+Capabilities define the configurable features of Saturday devices. Each capability specifies **manifests** that inform consuming apps and firmware what data they should expect, require, and implement.
 
-- **Factory attributes** - Configuration data stored during factory provisioning
-- **Factory provision attributes** - Data returned by device after factory provisioning
-- **Consumer attributes** - Configuration data stored during consumer provisioning
-- **Consumer provision attributes** - Data returned by device after consumer provisioning
-- **Heartbeat attributes** - Telemetry data included in periodic heartbeats
-- **Tests** - Testable functions with input parameters and expected outputs
+### Schema Naming Convention
 
-Capabilities are defined in the admin app and linked to device types. The firmware uses capability schemas to validate provisioning data and format responses.
+Schemas follow the pattern `{phase}_{direction}_schema`:
+- **phase**: `factory` or `consumer` (the provisioning phase)
+- **direction**: `input` (sent TO device) or `output` (returned FROM device)
+
+### Schema Types
+
+| Schema | Purpose | Used By |
+|--------|---------|---------|
+| **factory_input_schema** | Data sent TO device during factory provisioning | Factory app (UART/WebSocket) |
+| **factory_output_schema** | Data returned FROM device after factory provisioning | Factory app, Cloud |
+| **consumer_input_schema** | Data sent TO device during consumer provisioning | Consumer app (BLE) |
+| **consumer_output_schema** | Data returned FROM device after consumer provisioning | Consumer app, Cloud |
+| **heartbeat_schema** | Telemetry data in periodic heartbeats | Cloud |
+
+### Key Distinctions
+
+**Factory vs Consumer:**
+- **Factory provisioning** uses UART (Service Mode) or WebSocket - attributes persist through consumer reset
+- **Consumer provisioning** uses BLE - attributes are wiped on consumer reset
+- Consumer schemas drive **BLE service/characteristic generation** in firmware
+
+**Input vs Output:**
+- **Input** = data the app can send TO the device
+- **Output** = data the device returns AFTER provisioning completes
+
+### Important Notes
+
+1. **Schemas are manifests**, not storage structure - they inform apps what to collect and firmware what to implement
+2. **Protocol payloads are flat** - all attributes at top level, no nesting (see [Device Command Protocol](../protocols/device_command_protocol.md))
+3. **Cloud storage is flat** - `devices.provision_data` stores a flat snapshot, firmware tracks factory vs consumer in NVS
 
 ---
 
 ## Capability Definition Schema
 
-A capability is stored in the `capabilities` table with JSON schemas for each attribute category.
+A capability is stored in the `capabilities` table with JSON schemas for each category.
 
 ### Database Schema
 
 ```sql
 CREATE TABLE capabilities (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-  name VARCHAR(100) UNIQUE NOT NULL,        -- e.g., "wifi", "thread", "rfid"
-  display_name VARCHAR(100) NOT NULL,       -- e.g., "Wi-Fi", "Thread", "RFID"
+  name VARCHAR(100) UNIQUE NOT NULL,              -- e.g., "wifi", "thread", "rfid"
+  display_name VARCHAR(100) NOT NULL,             -- e.g., "Wi-Fi", "Thread", "RFID"
   description TEXT,
-  factory_attributes_schema JSONB DEFAULT '{}',
-  factory_provision_attributes_schema JSONB DEFAULT '{}',
-  consumer_attributes_schema JSONB DEFAULT '{}',
-  consumer_provision_attributes_schema JSONB DEFAULT '{}',
-  heartbeat_attributes_schema JSONB DEFAULT '{}',
+  factory_input_schema JSONB DEFAULT '{}',        -- Data sent TO device (factory)
+  factory_output_schema JSONB DEFAULT '{}',       -- Data returned FROM device (factory)
+  consumer_input_schema JSONB DEFAULT '{}',       -- Data sent TO device (consumer/BLE)
+  consumer_output_schema JSONB DEFAULT '{}',      -- Data returned FROM device (consumer)
+  heartbeat_schema JSONB DEFAULT '{}',            -- Telemetry data
   tests JSONB DEFAULT '[]',
   is_active BOOLEAN DEFAULT true,
   created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -71,66 +95,77 @@ Attribute schemas use JSON Schema (Draft 7) format for validation and documentat
 
 Wi-Fi connectivity for network-enabled devices.
 
-**factory_attributes_schema:**
+**factory_input_schema:** (factory provisioning only - persists through reset)
 ```json
 {
   "type": "object",
   "properties": {
-    "ssid": {
+    "wifi_ssid": {
       "type": "string",
       "maxLength": 32,
-      "description": "Factory Wi-Fi network name"
+      "description": "Wi-Fi network name"
     },
-    "password": {
+    "wifi_password": {
       "type": "string",
       "maxLength": 64,
-      "description": "Factory Wi-Fi password"
+      "description": "Wi-Fi password"
     }
-  },
-  "required": []
+  }
 }
 ```
 
-**consumer_attributes_schema:**
+**consumer_input_schema:** (consumer provisioning via BLE - wiped on reset)
 ```json
 {
   "type": "object",
   "properties": {
-    "ssid": {
+    "wifi_ssid": {
       "type": "string",
       "maxLength": 32,
-      "description": "Consumer Wi-Fi network name"
+      "description": "Wi-Fi network name"
     },
-    "password": {
+    "wifi_password": {
       "type": "string",
       "maxLength": 64,
-      "description": "Consumer Wi-Fi password"
+      "description": "Wi-Fi password"
     }
-  },
-  "required": ["ssid", "password"]
+  }
 }
 ```
 
-**heartbeat_attributes_schema:**
+**factory_output_schema:**
 ```json
 {
   "type": "object",
   "properties": {
-    "connected": {
+    "wifi_mac": {
+      "type": "string",
+      "description": "Wi-Fi MAC address"
+    }
+  }
+}
+```
+
+**heartbeat_schema:**
+```json
+{
+  "type": "object",
+  "properties": {
+    "wifi_connected": {
       "type": "boolean",
       "description": "Currently connected to Wi-Fi"
     },
-    "ssid": {
+    "wifi_ssid": {
       "type": "string",
       "description": "Connected network name"
     },
-    "rssi": {
+    "wifi_rssi": {
       "type": "integer",
       "minimum": -100,
       "maximum": 0,
       "description": "Signal strength in dBm"
     },
-    "ip_address": {
+    "wifi_ip": {
       "type": "string",
       "format": "ipv4",
       "description": "Assigned IP address"
@@ -199,56 +234,60 @@ Wi-Fi connectivity for network-enabled devices.
 
 ### thread
 
-Thread mesh networking for low-power devices.
+Thread mesh networking for low-power devices. Thread is typically factory-provisioned only (not BLE).
 
-**factory_attributes_schema:**
+**factory_input_schema:** (factory provisioning only - Thread credentials are usually set at factory)
 ```json
 {
   "type": "object",
   "properties": {
-    "network_name": {
+    "thread_network_name": {
       "type": "string",
       "maxLength": 16,
       "description": "Thread network name"
     },
-    "pan_id": {
+    "thread_pan_id": {
       "type": "integer",
       "minimum": 0,
       "maximum": 65535,
       "description": "16-bit PAN ID"
     },
-    "channel": {
+    "thread_channel": {
       "type": "integer",
       "minimum": 11,
       "maximum": 26,
       "description": "Radio channel"
     },
-    "network_key": {
+    "thread_network_key": {
       "type": "string",
       "pattern": "^[0-9a-fA-F]{32}$",
       "description": "128-bit network key (32 hex chars)"
     },
-    "extended_pan_id": {
+    "thread_extended_pan_id": {
       "type": "string",
       "pattern": "^[0-9a-fA-F]{16}$",
       "description": "64-bit extended PAN ID (16 hex chars)"
     },
-    "mesh_local_prefix": {
+    "thread_mesh_local_prefix": {
       "type": "string",
       "pattern": "^[0-9a-fA-F]{16}$",
       "description": "64-bit mesh-local prefix (16 hex chars)"
     },
-    "pskc": {
+    "thread_pskc": {
       "type": "string",
       "pattern": "^[0-9a-fA-F]{32}$",
       "description": "Pre-Shared Key for Commissioner (32 hex chars)"
     }
-  },
-  "required": []
+  }
 }
 ```
 
-**factory_provision_attributes_schema:**
+**consumer_input_schema:** (empty - Thread is not provisioned via BLE)
+```json
+{}
+```
+
+**factory_output_schema:**
 
 For devices that act as Thread Border Routers, they generate network credentials on first boot:
 
@@ -256,30 +295,30 @@ For devices that act as Thread Border Routers, they generate network credentials
 {
   "type": "object",
   "properties": {
-    "network_name": {"type": "string"},
-    "pan_id": {"type": "integer"},
-    "channel": {"type": "integer"},
-    "network_key": {"type": "string"},
-    "extended_pan_id": {"type": "string"},
-    "mesh_local_prefix": {"type": "string"},
-    "pskc": {"type": "string"}
+    "thread_network_name": {"type": "string"},
+    "thread_pan_id": {"type": "integer"},
+    "thread_channel": {"type": "integer"},
+    "thread_network_key": {"type": "string"},
+    "thread_extended_pan_id": {"type": "string"},
+    "thread_mesh_local_prefix": {"type": "string"},
+    "thread_pskc": {"type": "string"}
   },
-  "description": "Thread credentials generated by Border Router during factory provisioning"
+  "description": "Thread credentials generated by Border Router during provisioning"
 }
 ```
 
-**heartbeat_attributes_schema:**
+**heartbeat_schema:**
 ```json
 {
   "type": "object",
   "properties": {
-    "connected": {"type": "boolean"},
-    "role": {
+    "thread_connected": {"type": "boolean"},
+    "thread_role": {
       "type": "string",
       "enum": ["disabled", "detached", "child", "router", "leader"]
     },
-    "partition_id": {"type": "integer"},
-    "rloc16": {"type": "string"}
+    "thread_partition_id": {"type": "integer"},
+    "thread_rloc16": {"type": "string"}
   }
 }
 ```
@@ -315,9 +354,9 @@ For devices that act as Thread Border Routers, they generate network credentials
 
 ### cloud
 
-Cloud backend connectivity.
+Cloud backend connectivity. Cloud credentials are factory-provisioned only.
 
-**factory_attributes_schema:**
+**factory_input_schema:** (factory provisioning only - cloud credentials are sensitive)
 ```json
 {
   "type": "object",
@@ -340,14 +379,19 @@ Cloud backend connectivity.
 }
 ```
 
-**heartbeat_attributes_schema:**
+**consumer_input_schema:** (empty - cloud credentials not set via BLE)
+```json
+{}
+```
+
+**heartbeat_schema:**
 ```json
 {
   "type": "object",
   "properties": {
-    "connected": {"type": "boolean"},
-    "latency_ms": {"type": "integer"},
-    "last_sync_at": {"type": "string", "format": "date-time"}
+    "cloud_connected": {"type": "boolean"},
+    "cloud_latency_ms": {"type": "integer"},
+    "cloud_last_sync_at": {"type": "string", "format": "date-time"}
   }
 }
 ```
@@ -381,21 +425,21 @@ Cloud backend connectivity.
 
 ### rfid
 
-UHF RFID tag reading capability.
+UHF RFID tag reading capability. RFID settings are factory-provisioned.
 
-**factory_attributes_schema:**
+**factory_input_schema:** (factory provisioning only)
 ```json
 {
   "type": "object",
   "properties": {
-    "power_dbm": {
+    "rfid_power_dbm": {
       "type": "integer",
       "minimum": 0,
       "maximum": 30,
       "default": 20,
       "description": "Transmit power in dBm"
     },
-    "frequency_region": {
+    "rfid_frequency_region": {
       "type": "string",
       "enum": ["US", "EU", "CN"],
       "default": "US",
@@ -405,14 +449,19 @@ UHF RFID tag reading capability.
 }
 ```
 
-**heartbeat_attributes_schema:**
+**consumer_input_schema:** (empty - RFID settings not set via BLE)
+```json
+{}
+```
+
+**heartbeat_schema:**
 ```json
 {
   "type": "object",
   "properties": {
-    "module_firmware": {"type": "string"},
-    "last_scan_count": {"type": "integer"},
-    "antenna_connected": {"type": "boolean"}
+    "rfid_module_firmware": {"type": "string"},
+    "rfid_last_scan_count": {"type": "integer"},
+    "rfid_antenna_connected": {"type": "boolean"}
   }
 }
 ```
@@ -456,9 +505,9 @@ UHF RFID tag reading capability.
 
 ### led
 
-Addressable LED strip control.
+Addressable LED strip control. LED hardware config is factory-set, brightness can be consumer-adjusted.
 
-**factory_attributes_schema:**
+**factory_input_schema:** (factory provisioning - hardware configuration)
 ```json
 {
   "type": "object",
@@ -472,8 +521,17 @@ Addressable LED strip control.
       "type": "string",
       "enum": ["SK6812", "WS2812B", "APA102"],
       "description": "LED chip type"
-    },
-    "brightness_max": {
+    }
+  }
+}
+```
+
+**consumer_input_schema:** (consumer provisioning via BLE - user preferences)
+```json
+{
+  "type": "object",
+  "properties": {
+    "led_brightness_max": {
       "type": "integer",
       "minimum": 0,
       "maximum": 255,
@@ -520,7 +578,7 @@ Addressable LED strip control.
 
 Temperature and humidity sensing.
 
-**heartbeat_attributes_schema:**
+**heartbeat_schema:**
 ```json
 {
   "type": "object",
@@ -661,17 +719,36 @@ See [Firmware Manifest Schema](firmware_manifest_schema.md) for the manifest for
 
 When receiving provisioning data, firmware should:
 
-1. Parse the `factory_attributes` or `consumer_attributes` JSON
-2. Validate against the embedded schema
-3. Store valid attributes in NVS
-4. Return error for invalid attributes
+1. Parse the flat `params` JSON from the command
+2. Determine if this is factory (UART/WebSocket) or consumer (BLE) provisioning
+3. Validate field names and types against appropriate schema:
+   - Factory: `factory_input_schema`
+   - Consumer: `consumer_input_schema`
+4. Store valid attributes in NVS (mark as factory or consumer for reset behavior)
+5. Return error for invalid attributes
+
+### BLE Service Generation
+
+Firmware uses `consumer_input_schema` to generate BLE services:
+
+1. Each field in `consumer_input_schema` becomes a BLE characteristic
+2. Field types map to BLE data types (string -> UTF-8, integer -> uint32, etc.)
+3. Required fields have write permission, optional fields have read+write
+4. Factory attributes are NOT exposed via BLE
+
+### Consumer Reset Behavior
+
+On consumer reset:
+1. Attributes from `consumer_input_schema` are wiped from NVS
+2. Attributes from `factory_input_schema` are preserved
+3. Device returns to factory-provisioned state
 
 ### Generating Heartbeat Data
 
 Firmware should:
 
-1. Collect data for each capability's `heartbeat_attributes`
-2. Combine into a single `heartbeat_data` JSON object
+1. Collect data for each capability's `heartbeat_schema`
+2. Combine all fields at the top level (no nesting)
 3. POST to `device_heartbeats` table
 
 ---
@@ -683,7 +760,7 @@ Firmware should:
 The admin app provides a visual editor for capability schemas:
 
 1. Create/edit capabilities with display name and description
-2. Build attribute schemas using form builders
+2. Build input/output schemas for factory and consumer phases using form builders
 3. Define tests with parameter and result schemas
 4. Link capabilities to device types
 5. Configure per-device-type settings
@@ -692,7 +769,11 @@ The admin app provides a visual editor for capability schemas:
 
 The admin app validates:
 
-- Provisioning data against `factory_attributes_schema` or `consumer_attributes_schema`
+- Factory provisioning data against `factory_input_schema`
+- Consumer provisioning data against `consumer_input_schema`
+- Factory provision responses against `factory_output_schema`
+- Consumer provision responses against `consumer_output_schema`
+- Heartbeat data against `heartbeat_schema`
 - Test parameters against test `parameters_schema`
 - Test results against test `result_schema`
 
@@ -702,6 +783,9 @@ The admin app validates:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.3.0 | 2026-01-26 | Renamed schemas to `{phase}_{direction}_schema` pattern for clarity |
+| 1.2.0 | 2026-01-25 | Clarified purpose of 4 schema types; added BLE service generation and consumer reset behavior documentation |
+| 1.1.0 | 2026-01-25 | Added capability prefixes to field names for flat protocol |
 | 1.0.0 | 2026-01-24 | Initial capability schema specification |
 
 ---
