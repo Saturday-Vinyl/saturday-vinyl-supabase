@@ -33,7 +33,8 @@ class RealtimeService {
           schema: 'public',
           table: 'devices',
           callback: (payload) {
-            AppLogger.debug('Device inserted: ${payload.newRecord['id']}');
+            AppLogger.info(
+                'Realtime: Device INSERT - id=${payload.newRecord['id']}, mac=${payload.newRecord['mac_address']}');
             onInsert(payload);
           },
         )
@@ -42,7 +43,11 @@ class RealtimeService {
           schema: 'public',
           table: 'devices',
           callback: (payload) {
-            AppLogger.debug('Device updated: ${payload.newRecord['id']}');
+            final record = payload.newRecord;
+            AppLogger.info(
+                'Realtime: Device UPDATE - id=${record['id']}, mac=${record['mac_address']}, '
+                'unit_id=${record['unit_id']}, last_seen=${record['last_seen_at']}');
+            AppLogger.debug('Realtime: Device telemetry=${record['latest_telemetry']}');
             onUpdate(payload);
           },
         );
@@ -53,7 +58,7 @@ class RealtimeService {
         schema: 'public',
         table: 'devices',
         callback: (payload) {
-          AppLogger.debug('Device deleted: ${payload.oldRecord['id']}');
+          AppLogger.info('Realtime: Device DELETE - id=${payload.oldRecord['id']}');
           onDelete(payload);
         },
       );
@@ -61,9 +66,12 @@ class RealtimeService {
 
     channel.subscribe((status, error) {
       if (error != null) {
-        AppLogger.error('Devices channel error', error, StackTrace.current);
+        AppLogger.error('Devices realtime channel error', error, StackTrace.current);
       } else {
-        AppLogger.info('Devices channel status: $status');
+        AppLogger.info('Devices realtime channel status: $status');
+        if (status.toString() == 'RealtimeSubscribeStatus.subscribed') {
+          AppLogger.info('Devices realtime subscription ACTIVE - listening for changes');
+        }
       }
     });
 
@@ -89,7 +97,8 @@ class RealtimeService {
           schema: 'public',
           table: 'units',
           callback: (payload) {
-            AppLogger.debug('Unit inserted: ${payload.newRecord['id']}');
+            AppLogger.info(
+                'Realtime: Unit INSERT - id=${payload.newRecord['id']}, serial=${payload.newRecord['serial_number']}');
             onInsert(payload);
           },
         )
@@ -98,7 +107,9 @@ class RealtimeService {
           schema: 'public',
           table: 'units',
           callback: (payload) {
-            AppLogger.debug('Unit updated: ${payload.newRecord['id']}');
+            final record = payload.newRecord;
+            AppLogger.info(
+                'Realtime: Unit UPDATE - id=${record['id']}, serial=${record['serial_number']}, status=${record['status']}');
             onUpdate(payload);
           },
         );
@@ -109,7 +120,7 @@ class RealtimeService {
         schema: 'public',
         table: 'units',
         callback: (payload) {
-          AppLogger.debug('Unit deleted: ${payload.oldRecord['id']}');
+          AppLogger.info('Realtime: Unit DELETE - id=${payload.oldRecord['id']}');
           onDelete(payload);
         },
       );
@@ -117,9 +128,12 @@ class RealtimeService {
 
     channel.subscribe((status, error) {
       if (error != null) {
-        AppLogger.error('Units channel error', error, StackTrace.current);
+        AppLogger.error('Units realtime channel error', error, StackTrace.current);
       } else {
-        AppLogger.info('Units channel status: $status');
+        AppLogger.info('Units realtime channel status: $status');
+        if (status.toString() == 'RealtimeSubscribeStatus.subscribed') {
+          AppLogger.info('Units realtime subscription ACTIVE - listening for changes');
+        }
       }
     });
 

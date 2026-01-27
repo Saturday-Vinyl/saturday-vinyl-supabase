@@ -71,50 +71,80 @@ class UnitListItem extends Equatable {
   bool get isClaimed => userId != null;
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Telemetry Accessors (capability-scoped)
+  // Telemetry Accessors (flat JSON schema from heartbeat trigger)
   // ─────────────────────────────────────────────────────────────────────────
 
-  /// Get a telemetry value from a specific capability
-  dynamic _getTelemetryValue(String capability, String field) {
-    final cap = latestTelemetry[capability];
-    if (cap is Map) return cap[field];
-    return null;
-  }
-
-  /// Battery level percentage (0-100) from 'power' capability
+  /// Battery level percentage (0-100)
   int? get batteryLevel {
-    final value = _getTelemetryValue('power', 'battery_level');
+    final value = latestTelemetry['battery_level'];
     if (value is int) return value;
     if (value is double) return value.round();
     return null;
   }
 
-  /// WiFi RSSI signal strength (typically -30 to -90 dBm) from 'wifi' capability
-  int? get rssi {
-    final value = _getTelemetryValue('wifi', 'rssi');
+  /// Whether the battery is currently charging
+  bool? get batteryCharging {
+    final value = latestTelemetry['battery_charging'];
+    if (value is bool) return value;
+    return null;
+  }
+
+  /// WiFi RSSI signal strength (typically -30 to -90 dBm)
+  int? get wifiRssi {
+    final value = latestTelemetry['wifi_rssi'];
     if (value is int) return value;
     if (value is double) return value.round();
     return null;
   }
 
-  /// Temperature in Celsius from 'environment' capability
-  double? get temperature {
-    final value = _getTelemetryValue('environment', 'temperature');
-    if (value is double) return value;
-    if (value is int) return value.toDouble();
+  /// Thread RSSI signal strength (typically -30 to -90 dBm)
+  int? get threadRssi {
+    final value = latestTelemetry['thread_rssi'];
+    if (value is int) return value;
+    if (value is double) return value.round();
     return null;
   }
 
-  /// Humidity percentage (0-100) from 'environment' capability
-  double? get humidity {
-    final value = _getTelemetryValue('environment', 'humidity');
-    if (value is double) return value;
-    if (value is int) return value.toDouble();
+  /// Device uptime in seconds since boot
+  int? get uptimeSec {
+    final value = latestTelemetry['uptime_sec'];
+    if (value is int) return value;
+    if (value is double) return value.round();
     return null;
   }
+
+  /// Current free heap memory in bytes
+  int? get freeHeap {
+    final value = latestTelemetry['free_heap'];
+    if (value is int) return value;
+    if (value is double) return value.round();
+    return null;
+  }
+
+  /// Minimum free heap since boot (detects memory leaks)
+  int? get minFreeHeap {
+    final value = latestTelemetry['min_free_heap'];
+    if (value is int) return value;
+    if (value is double) return value.round();
+    return null;
+  }
+
+  /// Largest contiguous free block (detects heap fragmentation)
+  int? get largestFreeBlock {
+    final value = latestTelemetry['largest_free_block'];
+    if (value is int) return value;
+    if (value is double) return value.round();
+    return null;
+  }
+
+  /// Device type slug from telemetry
+  String? get telemetryDeviceType => latestTelemetry['device_type'] as String?;
 
   /// Check if any telemetry data is available
   bool get hasTelemetry => latestTelemetry.isNotEmpty;
+
+  /// Get the best available signal strength (WiFi preferred, then Thread)
+  int? get signalStrength => wifiRssi ?? threadRssi;
 
   // ─────────────────────────────────────────────────────────────────────────
   // JSON Serialization

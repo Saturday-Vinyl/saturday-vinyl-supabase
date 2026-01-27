@@ -191,33 +191,37 @@ class UnitListTile extends StatelessWidget {
       children: [
         if (unit.batteryLevel != null)
           _TelemetryBadge(
-            icon: _getBatteryIcon(unit.batteryLevel!),
+            icon: _getBatteryIcon(unit.batteryLevel!, unit.batteryCharging),
             value: '${unit.batteryLevel}%',
             color: _getBatteryColor(unit.batteryLevel!),
           ),
-        if (unit.rssi != null)
+        if (unit.signalStrength != null)
           _TelemetryBadge(
-            icon: Icons.signal_wifi_4_bar,
-            value: '${unit.rssi}',
-            color: _getRssiColor(unit.rssi!),
+            icon: unit.wifiRssi != null
+                ? Icons.signal_wifi_4_bar
+                : Icons.settings_input_antenna,
+            value: '${unit.signalStrength}',
+            color: _getRssiColor(unit.signalStrength!),
           ),
-        if (unit.temperature != null)
+        if (unit.uptimeSec != null)
           _TelemetryBadge(
-            icon: Icons.thermostat,
-            value: '${unit.temperature!.toStringAsFixed(0)}°',
-            color: SaturdayColors.info,
-          ),
-        if (unit.humidity != null)
-          _TelemetryBadge(
-            icon: Icons.water_drop,
-            value: '${unit.humidity!.toStringAsFixed(0)}%',
+            icon: Icons.timer_outlined,
+            value: _formatUptime(unit.uptimeSec!),
             color: SaturdayColors.info,
           ),
       ],
     );
   }
 
-  IconData _getBatteryIcon(int level) {
+  String _formatUptime(int seconds) {
+    if (seconds < 60) return '${seconds}s';
+    if (seconds < 3600) return '${(seconds / 60).floor()}m';
+    if (seconds < 86400) return '${(seconds / 3600).floor()}h';
+    return '${(seconds / 86400).floor()}d';
+  }
+
+  IconData _getBatteryIcon(int level, bool? charging) {
+    if (charging == true) return Icons.battery_charging_full;
     if (level >= 90) return Icons.battery_full;
     if (level >= 60) return Icons.battery_5_bar;
     if (level >= 40) return Icons.battery_4_bar;

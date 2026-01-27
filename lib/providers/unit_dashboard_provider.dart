@@ -110,6 +110,11 @@ class UnitRealtimeNotifier extends StateNotifier<Map<String, UnitListItem>> {
 
   /// Start listening to realtime updates
   void startListening() {
+    if (_devicesChannel != null || _unitsChannel != null) {
+      AppLogger.debug('Realtime subscriptions already active, skipping');
+      return;
+    }
+
     final realtimeService = ref.read(realtimeServiceProvider);
 
     AppLogger.info('Starting realtime subscriptions for unit dashboard');
@@ -126,6 +131,8 @@ class UnitRealtimeNotifier extends StateNotifier<Map<String, UnitListItem>> {
       onUpdate: _handleUnitChange,
       onDelete: _handleUnitDelete,
     );
+
+    AppLogger.info('Realtime subscriptions initiated for devices and units tables');
   }
 
   /// Stop listening to realtime updates
@@ -148,35 +155,52 @@ class UnitRealtimeNotifier extends StateNotifier<Map<String, UnitListItem>> {
   void _handleDeviceChange(PostgresChangePayload payload) {
     final deviceData = payload.newRecord;
     final unitId = deviceData['unit_id'] as String?;
+    final deviceId = deviceData['id'] as String?;
+    final macAddress = deviceData['mac_address'] as String?;
 
-    if (unitId == null) return;
+    AppLogger.info(
+        'Processing device change: device=$deviceId, mac=$macAddress, unit=$unitId');
+
+    if (unitId == null) {
+      AppLogger.debug('Ignoring device change: no unit_id (device not linked to unit)');
+      return;
+    }
 
     // Check if we have this unit in our state
     final existingUnit = state[unitId];
     if (existingUnit == null) {
-      // Unit not in our current view, trigger a refresh
+      AppLogger.info(
+          'Unit $unitId not in current state (${state.length} units tracked), triggering refresh');
       ref.invalidate(unitDashboardProvider);
       return;
     }
 
     // Check if this device is the primary device for this unit
-    if (existingUnit.primaryDeviceId != deviceData['id']) {
-      return; // Not the primary device, ignore
+    if (existingUnit.primaryDeviceId != deviceId) {
+      AppLogger.debug(
+          'Ignoring device change: device $deviceId is not primary for unit $unitId '
+          '(primary=${existingUnit.primaryDeviceId})');
+      return;
     }
 
     // Update the unit with new device data
+    final lastSeenAt = deviceData['last_seen_at'] != null
+        ? DateTime.parse(deviceData['last_seen_at'] as String)
+        : null;
     final updatedUnit = existingUnit.copyWith(
-      lastSeenAt: deviceData['last_seen_at'] != null
-          ? DateTime.parse(deviceData['last_seen_at'] as String)
-          : null,
+      lastSeenAt: lastSeenAt,
       firmwareVersion: deviceData['firmware_version'] as String?,
       latestTelemetry: deviceData['latest_telemetry'] != null
           ? Map<String, dynamic>.from(deviceData['latest_telemetry'] as Map)
           : null,
     );
 
-    state = {...state, unitId: updatedUnit};
-    AppLogger.debug('Realtime: Updated device for unit $unitId');
+    // Use Map.from to create a mutable copy, then update with the variable key
+    final newState = Map<String, UnitListItem>.from(state);
+    newState[unitId] = updatedUnit;
+    state = newState;
+    AppLogger.info(
+        'Realtime: Updated unit $unitId - lastSeen=$lastSeenAt, isConnected=${updatedUnit.isConnected}');
   }
 
   void _handleUnitInsert(PostgresChangePayload payload) {
@@ -207,7 +231,10 @@ class UnitRealtimeNotifier extends StateNotifier<Map<String, UnitListItem>> {
       userId: unitData['user_id'] as String?,
     );
 
-    state = {...state, unitId: updatedUnit};
+    // Use Map.from to create a mutable copy, then update with the variable key
+    final newState = Map<String, UnitListItem>.from(state);
+    newState[unitId] = updatedUnit;
+    state = newState;
     AppLogger.debug('Realtime: Updated unit $unitId');
   }
 
@@ -227,6 +254,9 @@ class UnitRealtimeNotifier extends StateNotifier<Map<String, UnitListItem>> {
 
   /// Initialize state from loaded units
   void initializeFromUnits(List<UnitListItem> units) {
+    final unitsWithDevices = units.where((u) => u.primaryDeviceId != null).length;
+    AppLogger.info(
+        'Initializing realtime state with ${units.length} units ($unitsWithDevices have devices)');
     state = {for (var unit in units) unit.id: unit};
   }
 
