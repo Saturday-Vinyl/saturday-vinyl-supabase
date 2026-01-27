@@ -1,6 +1,6 @@
 # Saturday Device Command Protocol
 
-**Version:** 1.2.2
+**Version:** 1.2.3
 **Last Updated:** 2026-01-27
 **Audience:** Saturday Admin App developers, Firmware engineers, Consumer App developers
 
@@ -481,6 +481,49 @@ Additional capability-specific fields (e.g., `wifi_rssi`, `rfid_tag_count`) are 
 ### Storage
 
 Heartbeats are stored in the `device_heartbeats` table with automatic cleanup (24-hour retention).
+
+### Relayed Heartbeats
+
+Some devices lack direct cloud connectivity (e.g., Thread-only devices without WiFi). These devices send heartbeats through a **relay** - another device or application that has cloud access.
+
+**Relay Types:**
+- **Hub**: A Saturday Hub with WiFi connectivity relays heartbeats for Thread-connected devices
+- **Consumer Phone**: A consumer's mobile app can relay heartbeats for BLE-connected devices during setup
+
+**Relayed Heartbeat Format:**
+
+When a relay forwards a heartbeat, it adds relay identification fields:
+
+```json
+{
+  "mac_address": "AA:BB:CC:DD:EE:FF",
+  "unit_id": "SV-CRT-000001",
+  "device_type": "crate",
+  "firmware_version": "1.2.0",
+  "uptime_sec": 123456,
+  "free_heap": 245760,
+  "min_free_heap": 180224,
+  "largest_free_block": 114688,
+  "relay_device_type": "hub",
+  "relay_instance_id": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+**Relay Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `relay_device_type` | string | Slug of the relay's device type (e.g., "hub", "crate") |
+| `relay_instance_id` | uuid | Instance identifier of the relay (device ID or session ID for non-device relays) |
+
+**Relay Implementation:**
+
+1. The originating device sends its heartbeat via Thread/BLE to the relay
+2. The relay receives the heartbeat payload
+3. The relay adds `relay_device_type` and `relay_instance_id` fields
+4. The relay POSTs the complete payload to the cloud
+
+The originating device's fields (`mac_address`, `unit_id`, etc.) remain unchanged - the relay only adds relay identification.
 
 ---
 
@@ -1161,6 +1204,7 @@ Key components:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.2.3 | 2026-01-27 | Added Relayed Heartbeats section documenting `relay_device_type` and `relay_instance_id` fields for devices without direct cloud access |
 | 1.2.2 | 2026-01-27 | Changed `uptime_ms` to `uptime_sec` (seconds instead of milliseconds); added `unit_id` and `device_type` to standard heartbeat fields |
 | 1.2.1 | 2026-01-26 | Added standard heartbeat fields section with required memory health fields (`min_free_heap`, `largest_free_block`) |
 | 1.2.0 | 2026-01-26 | Flattened all request/response payloads; capability schemas now use `factory_input`/`factory_output`/`consumer_input`/`consumer_output`/`heartbeat`/`tests`; added Firmware JSON Schema section; added ESP-IDF Implementation Guide |
