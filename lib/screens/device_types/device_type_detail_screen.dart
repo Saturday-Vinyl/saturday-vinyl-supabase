@@ -771,7 +771,8 @@ class DeviceTypeDetailScreen extends ConsumerWidget {
   Future<void> _downloadFirmwareJson(
       BuildContext context, WidgetRef ref, Firmware firmware) async {
     try {
-      // Get capabilities for this device type
+      // Refresh capabilities to get latest schema changes
+      ref.invalidate(capabilitiesForDeviceTypeProvider(deviceType.id));
       final capabilities =
           await ref.read(capabilitiesForDeviceTypeProvider(deviceType.id).future);
 

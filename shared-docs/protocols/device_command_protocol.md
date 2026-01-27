@@ -1,7 +1,7 @@
 # Saturday Device Command Protocol
 
-**Version:** 1.2.0
-**Last Updated:** 2026-01-25
+**Version:** 1.2.3
+**Last Updated:** 2026-01-27
 **Audience:** Saturday Admin App developers, Firmware engineers, Consumer App developers
 
 ---
@@ -280,7 +280,7 @@ Returns current device status including firmware version, connectivity state, an
     "mac_address": "AA:BB:CC:DD:EE:FF",
     "serial_number": "SV-CRT-000001",
     "name": "Crate",
-    "uptime_ms": 123456,
+    "uptime_sec": 123456,
     "free_heap": 245760,
     "capabilities": {
       "wifi": {
@@ -311,7 +311,7 @@ Returns current device status including firmware version, connectivity state, an
 | `mac_address` | string | Primary MAC address (hardware identifier) |
 | `serial_number` | string | Device serial number (null if not provisioned) |
 | `name` | string | Human-friendly product name (null if not provisioned) |
-| `uptime_ms` | number | Milliseconds since boot |
+| `uptime_sec` | number | Seconds since boot |
 | `free_heap` | number | Free heap memory in bytes |
 | `capabilities` | object | Capability-specific status (varies by device) |
 ```
@@ -442,14 +442,35 @@ All telemetry fields are at the top level (not nested):
 ```json
 {
   "mac_address": "AA:BB:CC:DD:EE:FF",
+  "unit_id": "SV-CRT-000001",
+  "device_type": "crate",
   "firmware_version": "1.2.0",
-  "uptime_ms": 123456,
+  "uptime_sec": 123456,
   "free_heap": 245760,
+  "min_free_heap": 180224,
+  "largest_free_block": 114688,
   "wifi_rssi": -55,
   "rfid_tag_count": 3,
   "temperature_c": 22.5
 }
 ```
+
+### Standard Heartbeat Fields
+
+All devices must include these fields in every heartbeat, regardless of capabilities:
+
+| Field | Type | Description | ESP-IDF Function |
+|-------|------|-------------|------------------|
+| `mac_address` | string | Primary MAC address (device identifier) | `esp_read_mac()` |
+| `unit_id` | string | Serial number of the unit (from provisioning) | NVS lookup |
+| `device_type` | string | Device type slug (from firmware schema) | Compile-time constant |
+| `firmware_version` | string | Current firmware version | Compile-time constant |
+| `uptime_sec` | integer | Seconds since boot | `esp_timer_get_time() / 1000000` |
+| `free_heap` | integer | Current free heap memory in bytes | `esp_get_free_heap_size()` |
+| `min_free_heap` | integer | Minimum free heap since boot (detects memory leaks) | `esp_get_minimum_free_heap_size()` |
+| `largest_free_block` | integer | Largest contiguous free block in bytes (detects fragmentation) | `heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)` |
+
+Additional capability-specific fields (e.g., `wifi_rssi`, `rfid_tag_count`) are added based on device capabilities.
 
 ### Heartbeat Frequency
 
@@ -460,6 +481,49 @@ All telemetry fields are at the top level (not nested):
 ### Storage
 
 Heartbeats are stored in the `device_heartbeats` table with automatic cleanup (24-hour retention).
+
+### Relayed Heartbeats
+
+Some devices lack direct cloud connectivity (e.g., Thread-only devices without WiFi). These devices send heartbeats through a **relay** - another device or application that has cloud access.
+
+**Relay Types:**
+- **Hub**: A Saturday Hub with WiFi connectivity relays heartbeats for Thread-connected devices
+- **Consumer Phone**: A consumer's mobile app can relay heartbeats for BLE-connected devices during setup
+
+**Relayed Heartbeat Format:**
+
+When a relay forwards a heartbeat, it adds relay identification fields:
+
+```json
+{
+  "mac_address": "AA:BB:CC:DD:EE:FF",
+  "unit_id": "SV-CRT-000001",
+  "device_type": "crate",
+  "firmware_version": "1.2.0",
+  "uptime_sec": 123456,
+  "free_heap": 245760,
+  "min_free_heap": 180224,
+  "largest_free_block": 114688,
+  "relay_device_type": "hub",
+  "relay_instance_id": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+**Relay Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `relay_device_type` | string | Slug of the relay's device type (e.g., "hub", "crate") |
+| `relay_instance_id` | uuid | Instance identifier of the relay (device ID or session ID for non-device relays) |
+
+**Relay Implementation:**
+
+1. The originating device sends its heartbeat via Thread/BLE to the relay
+2. The relay receives the heartbeat payload
+3. The relay adds `relay_device_type` and `relay_instance_id` fields
+4. The relay POSTs the complete payload to the cloud
+
+The originating device's fields (`mac_address`, `unit_id`, etc.) remain unchanged - the relay only adds relay identification.
 
 ---
 
@@ -931,6 +995,7 @@ static void gatts_write_event_handler(esp_gatt_if_t gatts_if, esp_ble_gatts_cb_p
 // heartbeat.c
 
 #include "esp_http_client.h"
+#include "esp_heap_caps.h"
 
 #define HEARTBEAT_INTERVAL_MS 30000
 
@@ -938,11 +1003,16 @@ static void heartbeat_task(void *arg) {
     while (1) {
         cJSON *heartbeat = cJSON_CreateObject();
 
-        // Standard fields
+        // Standard fields (required for all devices)
         cJSON_AddStringToObject(heartbeat, "mac_address", get_mac_address());
+        cJSON_AddStringToObject(heartbeat, "unit_id", get_unit_id());  // From NVS (provisioning)
+        cJSON_AddStringToObject(heartbeat, "device_type", DEVICE_TYPE);  // From firmware schema
         cJSON_AddStringToObject(heartbeat, "firmware_version", FIRMWARE_VERSION);
-        cJSON_AddNumberToObject(heartbeat, "uptime_ms", esp_timer_get_time() / 1000);
+        cJSON_AddNumberToObject(heartbeat, "uptime_sec", esp_timer_get_time() / 1000000);
         cJSON_AddNumberToObject(heartbeat, "free_heap", esp_get_free_heap_size());
+        cJSON_AddNumberToObject(heartbeat, "min_free_heap", esp_get_minimum_free_heap_size());
+        cJSON_AddNumberToObject(heartbeat, "largest_free_block",
+            heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
 
         // Capability heartbeat fields (flat structure)
         #if CAP_WIFI_HAS_HEARTBEAT
@@ -1134,6 +1204,9 @@ Key components:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.2.3 | 2026-01-27 | Added Relayed Heartbeats section documenting `relay_device_type` and `relay_instance_id` fields for devices without direct cloud access |
+| 1.2.2 | 2026-01-27 | Changed `uptime_ms` to `uptime_sec` (seconds instead of milliseconds); added `unit_id` and `device_type` to standard heartbeat fields |
+| 1.2.1 | 2026-01-26 | Added standard heartbeat fields section with required memory health fields (`min_free_heap`, `largest_free_block`) |
 | 1.2.0 | 2026-01-26 | Flattened all request/response payloads; capability schemas now use `factory_input`/`factory_output`/`consumer_input`/`consumer_output`/`heartbeat`/`tests`; added Firmware JSON Schema section; added ESP-IDF Implementation Guide |
 | 1.1.0 | 2026-01-25 | Added required `name` parameter to `factory_provision`; added `name` to `get_status` response; added Attribute Schema Reference section clarifying schema purpose |
 | 1.0.0 | 2026-01-24 | Initial protocol specification (replaces Service Mode Protocol v2.2) |

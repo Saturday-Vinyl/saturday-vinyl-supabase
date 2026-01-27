@@ -504,19 +504,30 @@ class _CapabilityDetailSheet extends StatelessWidget {
         else
           ...properties.entries.map((entry) {
             final fieldSchema = entry.value as Map<String, dynamic>;
+            final description = fieldSchema['description']?.toString() ?? '';
             return Card(
               margin: const EdgeInsets.only(bottom: 4),
               child: ListTile(
                 dense: true,
                 title: Text(entry.key),
-                subtitle: Text(fieldSchema['type']?.toString() ?? 'unknown'),
-                trailing: Text(
-                  fieldSchema['description']?.toString() ?? '',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: SaturdayColors.secondaryGrey,
-                  ),
+                subtitle: Text(
+                  fieldSchema['type']?.toString() ?? 'unknown',
                 ),
+                trailing: description.isNotEmpty
+                    ? SizedBox(
+                        width: 150,
+                        child: Text(
+                          description,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: SaturdayColors.secondaryGrey,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 2,
+                          textAlign: TextAlign.end,
+                        ),
+                      )
+                    : null,
               ),
             );
           }),
