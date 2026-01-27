@@ -1,7 +1,7 @@
 # Saturday Device Command Protocol
 
-**Version:** 1.2.0
-**Last Updated:** 2026-01-25
+**Version:** 1.2.1
+**Last Updated:** 2026-01-26
 **Audience:** Saturday Admin App developers, Firmware engineers, Consumer App developers
 
 ---
@@ -445,11 +445,28 @@ All telemetry fields are at the top level (not nested):
   "firmware_version": "1.2.0",
   "uptime_ms": 123456,
   "free_heap": 245760,
+  "min_free_heap": 180224,
+  "largest_free_block": 114688,
   "wifi_rssi": -55,
   "rfid_tag_count": 3,
   "temperature_c": 22.5
 }
 ```
+
+### Standard Heartbeat Fields
+
+All devices must include these fields in every heartbeat, regardless of capabilities:
+
+| Field | Type | Description | ESP-IDF Function |
+|-------|------|-------------|------------------|
+| `mac_address` | string | Primary MAC address (device identifier) | `esp_read_mac()` |
+| `firmware_version` | string | Current firmware version | Compile-time constant |
+| `uptime_ms` | integer | Milliseconds since boot | `esp_timer_get_time() / 1000` |
+| `free_heap` | integer | Current free heap memory in bytes | `esp_get_free_heap_size()` |
+| `min_free_heap` | integer | Minimum free heap since boot (detects memory leaks) | `esp_get_minimum_free_heap_size()` |
+| `largest_free_block` | integer | Largest contiguous free block in bytes (detects fragmentation) | `heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)` |
+
+Additional capability-specific fields (e.g., `wifi_rssi`, `rfid_tag_count`) are added based on device capabilities.
 
 ### Heartbeat Frequency
 
@@ -931,6 +948,7 @@ static void gatts_write_event_handler(esp_gatt_if_t gatts_if, esp_ble_gatts_cb_p
 // heartbeat.c
 
 #include "esp_http_client.h"
+#include "esp_heap_caps.h"
 
 #define HEARTBEAT_INTERVAL_MS 30000
 
@@ -938,11 +956,14 @@ static void heartbeat_task(void *arg) {
     while (1) {
         cJSON *heartbeat = cJSON_CreateObject();
 
-        // Standard fields
+        // Standard fields (required for all devices)
         cJSON_AddStringToObject(heartbeat, "mac_address", get_mac_address());
         cJSON_AddStringToObject(heartbeat, "firmware_version", FIRMWARE_VERSION);
         cJSON_AddNumberToObject(heartbeat, "uptime_ms", esp_timer_get_time() / 1000);
         cJSON_AddNumberToObject(heartbeat, "free_heap", esp_get_free_heap_size());
+        cJSON_AddNumberToObject(heartbeat, "min_free_heap", esp_get_minimum_free_heap_size());
+        cJSON_AddNumberToObject(heartbeat, "largest_free_block",
+            heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
 
         // Capability heartbeat fields (flat structure)
         #if CAP_WIFI_HAS_HEARTBEAT
@@ -1134,6 +1155,7 @@ Key components:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.2.1 | 2026-01-26 | Added standard heartbeat fields section with required memory health fields (`min_free_heap`, `largest_free_block`) |
 | 1.2.0 | 2026-01-26 | Flattened all request/response payloads; capability schemas now use `factory_input`/`factory_output`/`consumer_input`/`consumer_output`/`heartbeat`/`tests`; added Firmware JSON Schema section; added ESP-IDF Implementation Guide |
 | 1.1.0 | 2026-01-25 | Added required `name` parameter to `factory_provision`; added `name` to `get_status` response; added Attribute Schema Reference section clarifying schema purpose |
 | 1.0.0 | 2026-01-24 | Initial protocol specification (replaces Service Mode Protocol v2.2) |
