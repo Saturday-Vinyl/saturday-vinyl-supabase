@@ -615,7 +615,23 @@ class _UnitDetailScreenState extends ConsumerState<UnitDetailScreen> {
     if (unit == null) return;
 
     // Check if this is a firmware provisioning step (new flow)
-    if (step.stepType.isFirmwareProvisioning && step.firmwareVersionId != null) {
+    if (step.stepType.isFirmwareProvisioning) {
+      // Ensure firmware version is configured
+      if (step.firmwareVersionId == null) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Firmware version not configured for this step. Please configure it in the product settings.',
+              ),
+              backgroundColor: SaturdayColors.error,
+              duration: Duration(seconds: 4),
+            ),
+          );
+        }
+        return;
+      }
+
       // Get the firmware version
       final firmwareAsync = await ref.read(
         firmwareVersionProvider(step.firmwareVersionId!).future,

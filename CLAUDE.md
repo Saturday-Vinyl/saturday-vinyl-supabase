@@ -99,6 +99,69 @@ Every migration file should include:
 
 Migrations are stored in: `supabase/migrations/`
 
+### Row Level Security (RLS) Policies
+
+**CRITICAL: User ID Mapping**
+
+This project uses a custom `users` table separate from Supabase's `auth.users`. The tables are linked via:
+
+- `users.auth_user_id` → `auth.users.id` (Supabase auth UUID)
+- `users.id` → Application-level user ID (used for foreign keys in other tables)
+
+When writing RLS policies that check user permissions, **always use `auth_user_id`** to compare against `auth.uid()`:
+
+```sql
+-- CORRECT: Use auth_user_id for auth.uid() comparison
+CREATE POLICY "Admins can insert records"
+ON my_table FOR INSERT
+TO authenticated
+WITH CHECK (
+  EXISTS (
+    SELECT 1 FROM users u
+    WHERE u.auth_user_id = auth.uid()  -- ✓ Correct
+    AND u.is_admin = true
+  )
+);
+
+-- WRONG: Do NOT use users.id for auth.uid() comparison
+CREATE POLICY "Admins can insert records"
+ON my_table FOR INSERT
+TO authenticated
+WITH CHECK (
+  EXISTS (
+    SELECT 1 FROM users u
+    WHERE u.id = auth.uid()  -- ✗ Wrong - will never match!
+    AND u.is_admin = true
+  )
+);
+```
+
+**Standard RLS Policy Pattern**
+
+For tables that require admin or specific permissions:
+
+```sql
+-- Read policy (usually open to all authenticated users)
+CREATE POLICY "Authenticated users can read"
+ON my_table FOR SELECT
+TO authenticated
+USING (true);
+
+-- Write policies (check permissions via users table)
+CREATE POLICY "Admins can insert"
+ON my_table FOR INSERT
+TO authenticated
+WITH CHECK (
+  EXISTS (
+    SELECT 1 FROM users u
+    LEFT JOIN user_permissions up ON up.user_id = u.id
+    LEFT JOIN permissions p ON p.id = up.permission_id
+    WHERE u.auth_user_id = auth.uid()
+    AND (u.is_admin = true OR p.name = 'relevant_permission')
+  )
+);
+```
+
 ## Key Directories
 
 - `lib/` - Flutter/Dart source code

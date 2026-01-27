@@ -6,6 +6,75 @@
 
 ---
 
+> ⚠️ **DEPRECATED**: This protocol is deprecated in favor of the [Device Command Protocol](device_command_protocol.md).
+>
+> The Device Command Protocol replaces the entry-window architecture with an always-listening model and adds support for remote commands via Supabase Realtime. New firmware implementations should use the Device Command Protocol.
+>
+> This document is retained for reference and for maintaining legacy firmware. See the [Migration Guide](device_command_protocol.md#migration-from-service-mode-protocol) for upgrade instructions.
+
+---
+
+## Table of Contents
+
+1. [Overview](#overview)
+   - [Key Concepts](#key-concepts)
+   - [Design Principles](#design-principles)
+2. [Service Mode Entry](#service-mode-entry)
+   - [Fresh Device (First Boot)](#fresh-device-first-boot)
+   - [Provisioned Device (Service Entry)](#provisioned-device-service-entry)
+3. [Connection Parameters](#connection-parameters)
+4. [Message Format](#message-format)
+   - [Device → Host Messages](#device--host-messages)
+   - [Host → Device Messages](#host--device-messages)
+5. [Commands Reference](#commands-reference)
+   - [Mode Control](#mode-control)
+   - [Status & Diagnostics](#status--diagnostics)
+   - [Provisioning](#provisioning)
+   - [Testing](#testing)
+   - [Reset Operations](#reset-operations)
+6. [Command Details](#command-details)
+   - [enter_service_mode](#enter_service_mode)
+   - [exit_service_mode](#exit_service_mode)
+   - [get_status](#get_status)
+   - [get_manifest](#get_manifest)
+   - [provision](#provision)
+   - [test_wifi](#test_wifi)
+   - [test_bluetooth](#test_bluetooth)
+   - [test_thread](#test_thread)
+   - [test_cloud](#test_cloud)
+   - [test_rfid](#test_rfid)
+   - [test_audio](#test_audio)
+   - [test_display](#test_display)
+   - [test_led](#test_led)
+   - [test_motion](#test_motion)
+   - [test_environment](#test_environment)
+   - [test_button](#test_button)
+   - [test_all](#test_all)
+   - [customer_reset](#customer_reset)
+   - [factory_reset](#factory_reset)
+   - [reboot](#reboot)
+7. [Status Beacon](#status-beacon)
+8. [Service Mode Manifest](#service-mode-manifest)
+   - [Manifest Schema](#manifest-schema)
+   - [Manifest Fields](#manifest-fields)
+   - [Standard Capabilities](#standard-capabilities)
+   - [Example Manifests](#example-saturday-hub-manifest)
+   - [Using the Manifest](#using-the-manifest)
+   - [Firmware Implementation](#firmware-implementation)
+9. [Error Codes](#error-codes)
+10. [Workflows](#workflows)
+    - [Factory Provisioning (New Device)](#factory-provisioning-new-device)
+    - [Service/Repair (Provisioned Device)](#servicerepair-provisioned-device)
+    - [Customer Return to Factory State](#customer-return-to-factory-state)
+11. [Implementation Notes](#implementation-notes)
+    - [Console Output Filtering](#console-output-filtering)
+    - [Timeout Recommendations](#timeout-recommendations)
+    - [LED Indicators](#led-indicators)
+12. [Device-Specific Documentation](#device-specific-documentation)
+13. [Version History](#version-history)
+
+---
+
 ## Overview
 
 This document defines the **Service Mode Protocol** for Saturday devices. Service Mode provides a standardized serial interface for factory provisioning, device testing, diagnostics, and servicing of all Saturday hardware products.

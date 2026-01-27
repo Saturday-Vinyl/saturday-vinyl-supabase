@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:saturday_app/config/theme.dart';
+import 'package:saturday_app/models/product.dart';
 import 'package:saturday_app/providers/auth_provider.dart';
+import 'package:saturday_app/providers/device_type_provider.dart';
 import 'package:saturday_app/providers/product_provider.dart';
 import 'package:saturday_app/providers/production_step_provider.dart';
 import 'package:saturday_app/screens/products/production_steps_config_screen.dart';
 import 'package:saturday_app/utils/extensions.dart';
 import 'package:saturday_app/widgets/common/error_state.dart';
 import 'package:saturday_app/widgets/common/loading_indicator.dart';
+import 'package:saturday_app/widgets/products/device_type_assignment_dialog.dart';
 import 'package:saturday_app/widgets/products/production_step_item.dart';
 
 /// Screen displaying detailed information about a product
@@ -134,6 +137,99 @@ class ProductDetailScreen extends ConsumerWidget {
                           'Last Synced',
                           product.lastSyncedAt!.friendlyDateTime,
                         ),
+                    ],
+                  ),
+                ),
+
+                const Divider(height: 1),
+
+                // Device Types section
+                Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            'Device Types',
+                            style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                          ),
+                          // Configure button (only with manage_products permission)
+                          Consumer(
+                            builder: (context, ref, _) {
+                              final hasPermission = ref.watch(
+                                hasPermissionProvider('manage_products'),
+                              );
+                              return hasPermission.maybeWhen(
+                                data: (allowed) => allowed
+                                    ? TextButton.icon(
+                                        onPressed: () => _showDeviceTypeAssignmentDialog(
+                                          context,
+                                          ref,
+                                          product,
+                                        ),
+                                        icon: const Icon(Icons.settings),
+                                        label: const Text('Configure'),
+                                      )
+                                    : const SizedBox.shrink(),
+                                orElse: () => const SizedBox.shrink(),
+                              );
+                            },
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      Consumer(
+                        builder: (context, ref, _) {
+                          final deviceTypesAsync = ref.watch(
+                            productDeviceTypesProvider(productId),
+                          );
+                          return deviceTypesAsync.when(
+                            data: (deviceTypes) {
+                              if (deviceTypes.isEmpty) {
+                                return Text(
+                                  'No device types assigned',
+                                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                        color: SaturdayColors.secondaryGrey,
+                                      ),
+                                );
+                              }
+                              return Wrap(
+                                spacing: 8,
+                                runSpacing: 8,
+                                children: deviceTypes.map((pdt) {
+                                  return Chip(
+                                    avatar: CircleAvatar(
+                                      backgroundColor: SaturdayColors.primaryDark,
+                                      child: Text(
+                                        '${pdt.quantity}',
+                                        style: const TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
+                                    label: Text(pdt.deviceType.name),
+                                    backgroundColor: SaturdayColors.info.withValues(alpha: 0.1),
+                                  );
+                                }).toList(),
+                              );
+                            },
+                            loading: () => const LoadingIndicator(
+                              message: 'Loading device types...',
+                            ),
+                            error: (error, stack) => Text(
+                              'Failed to load device types: $error',
+                              style: const TextStyle(color: SaturdayColors.error),
+                            ),
+                          );
+                        },
+                      ),
                     ],
                   ),
                 ),
@@ -406,6 +502,21 @@ class ProductDetailScreen extends ConsumerWidget {
               ),
         ),
       ],
+    );
+  }
+
+  /// Show dialog to configure device type assignments
+  void _showDeviceTypeAssignmentDialog(
+    BuildContext context,
+    WidgetRef ref,
+    Product product,
+  ) {
+    showDialog(
+      context: context,
+      builder: (context) => DeviceTypeAssignmentDialog(
+        productId: product.id,
+        productName: product.name,
+      ),
     );
   }
 }

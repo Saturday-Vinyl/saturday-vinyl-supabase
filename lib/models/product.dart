@@ -8,6 +8,12 @@ class Product extends Equatable {
   final String name;
   final String productCode; // e.g., "PROD1"
   final String? description;
+
+  /// Short name for device provisioning (e.g., "Crate" not "Saturday Crate").
+  /// Used in BLE advertising and mDNS hostnames.
+  /// If null, derived from [name] by stripping "Saturday " prefix.
+  final String? shortName;
+
   final bool isActive;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -20,11 +26,25 @@ class Product extends Equatable {
     required this.name,
     required this.productCode,
     this.description,
+    this.shortName,
     required this.isActive,
     required this.createdAt,
     required this.updatedAt,
     this.lastSyncedAt,
   });
+
+  /// Gets the device-friendly name for provisioning.
+  /// Returns [shortName] if set, otherwise derives from [name] by stripping "Saturday " prefix.
+  String get deviceName {
+    if (shortName != null && shortName!.isNotEmpty) {
+      return shortName!;
+    }
+    // Derive from full name
+    if (name.startsWith('Saturday ')) {
+      return name.substring(9);
+    }
+    return name;
+  }
 
   /// Create Product from JSON
   factory Product.fromJson(Map<String, dynamic> json) {
@@ -35,6 +55,7 @@ class Product extends Equatable {
       name: json['name'] as String,
       productCode: json['product_code'] as String,
       description: json['description'] as String?,
+      shortName: json['short_name'] as String?,
       isActive: json['is_active'] as bool? ?? true,
       createdAt: DateTime.parse(json['created_at'] as String),
       updatedAt: DateTime.parse(json['updated_at'] as String),
@@ -53,6 +74,7 @@ class Product extends Equatable {
       'name': name,
       'product_code': productCode,
       'description': description,
+      'short_name': shortName,
       'is_active': isActive,
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt.toIso8601String(),
@@ -68,6 +90,7 @@ class Product extends Equatable {
     String? name,
     String? productCode,
     String? description,
+    String? shortName,
     bool? isActive,
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -80,6 +103,7 @@ class Product extends Equatable {
       name: name ?? this.name,
       productCode: productCode ?? this.productCode,
       description: description ?? this.description,
+      shortName: shortName ?? this.shortName,
       isActive: isActive ?? this.isActive,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
@@ -95,6 +119,7 @@ class Product extends Equatable {
         name,
         productCode,
         description,
+        shortName,
         isActive,
         createdAt,
         updatedAt,

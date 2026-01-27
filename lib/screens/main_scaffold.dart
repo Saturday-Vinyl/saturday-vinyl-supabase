@@ -7,11 +7,12 @@ import 'package:saturday_app/repositories/production_unit_repository.dart';
 import 'package:saturday_app/screens/dashboard/dashboard_screen.dart';
 import 'package:saturday_app/screens/device_types/device_type_list_screen.dart';
 import 'package:saturday_app/screens/files/files_screen.dart';
-import 'package:saturday_app/screens/firmware/firmware_list_screen.dart';
 import 'package:saturday_app/screens/products/product_list_screen.dart';
 import 'package:saturday_app/screens/production/production_units_screen.dart';
 import 'package:saturday_app/screens/production/qr_scan_screen.dart';
 import 'package:saturday_app/screens/production/unit_detail_screen.dart';
+import 'package:saturday_app/screens/units/units_list_screen.dart';
+import 'package:saturday_app/screens/capabilities/capabilities_list_screen.dart';
 import 'package:saturday_app/screens/settings/settings_screen.dart';
 import 'package:saturday_app/screens/tags/tag_list_screen.dart';
 import 'package:saturday_app/screens/rolls/roll_list_screen.dart';
@@ -156,10 +157,12 @@ class _MainScaffoldState extends State<MainScaffold> {
         return const ProductListScreen();
       case '/device-types':
         return const DeviceTypeListScreen();
+      case '/units':
+        return const UnitsListScreen();
+      case '/capabilities':
+        return const CapabilitiesListScreen();
       case '/production':
         return const ProductionUnitsScreen();
-      case '/firmware':
-        return const FirmwareListScreen();
       case '/service-mode':
         return ServiceModeScreen();
       case '/files':

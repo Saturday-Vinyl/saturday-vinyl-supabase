@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:saturday_app/models/device_type.dart';
+import 'package:saturday_app/models/product_device_type.dart';
 import 'package:saturday_app/repositories/device_type_repository.dart';
 import 'package:saturday_app/utils/app_logger.dart';
 
@@ -100,4 +101,44 @@ class DeviceTypeManagement {
       rethrow;
     }
   }
+
+  /// Set device types for a product (replaces existing assignments)
+  Future<void> setDeviceTypesForProduct({
+    required String productId,
+    required List<ProductDeviceType> deviceTypes,
+  }) async {
+    try {
+      final repository = ref.read(deviceTypeRepositoryProvider);
+      await repository.setDeviceTypesForProduct(
+        productId: productId,
+        deviceTypes: deviceTypes,
+      );
+
+      // Invalidate provider to refresh
+      ref.invalidate(productDeviceTypesProvider(productId));
+
+      AppLogger.info('Device types set for product successfully');
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to set device types for product', error, stackTrace);
+      rethrow;
+    }
+  }
 }
+
+/// Model combining DeviceType with quantity for product assignment
+class ProductDeviceTypeWithDetails {
+  final DeviceType deviceType;
+  final int quantity;
+
+  const ProductDeviceTypeWithDetails({
+    required this.deviceType,
+    required this.quantity,
+  });
+}
+
+/// Provider for device types assigned to a product (with quantities)
+final productDeviceTypesProvider = FutureProvider.family<
+    List<ProductDeviceTypeWithDetails>, String>((ref, productId) async {
+  final repository = ref.watch(deviceTypeRepositoryProvider);
+  return await repository.getDeviceTypesForProduct(productId);
+});

@@ -9,6 +9,7 @@ class SaturdayColors {
   static const Color primaryDark = Color(0xFF3F3A34);
   static const Color success = Color(0xFF30AA47);
   static const Color error = Color(0xFFF35345);
+  static const Color warning = Color(0xFFF5A623);
   static const Color info = Color(0xFF6AC5F4);
   static const Color secondaryGrey = Color(0xFFB2AAA3);
   static const Color light = Color(0xFFE2DAD0);

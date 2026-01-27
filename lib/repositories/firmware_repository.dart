@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
+import 'package:saturday_app/models/firmware.dart';
 import 'package:saturday_app/models/firmware_version.dart';
 import 'package:saturday_app/services/storage_service.dart';
 import 'package:saturday_app/services/supabase_service.dart';
@@ -7,8 +8,13 @@ import 'package:saturday_app/utils/app_logger.dart';
 import 'package:http/http.dart' as http;
 
 /// Repository for managing firmware versions
+///
+/// Uses the firmware table (renamed from firmware_versions) with
+/// multi-SoC support via firmware_files.
 class FirmwareRepository {
-  static const String _tableName = 'firmware_versions';
+  static const String _tableName = 'firmware';  // Renamed from firmware_versions
+  static const String _newTableName = 'firmware';
+  static const String _filesTableName = 'firmware_files';
 
   /// Get all firmware versions, optionally filtered by device type
   Future<List<FirmwareVersion>> getFirmwareVersions({String? deviceTypeId}) async {
@@ -268,4 +274,396 @@ class FirmwareRepository {
       rethrow;
     }
   }
+
+  // ============================================================================
+  // New Firmware Table Methods (with multi-SoC support)
+  // ============================================================================
+
+  /// Get all firmware entries with their files
+  Future<List<Firmware>> getAllFirmware({String? deviceTypeId}) async {
+    try {
+      AppLogger.info('Fetching firmware${deviceTypeId != null ? " for device type: $deviceTypeId" : ""}');
+
+      final supabase = SupabaseService.instance.client;
+
+      var query = supabase.from(_newTableName).select('''
+        *,
+        firmware_files (*)
+      ''');
+
+      if (deviceTypeId != null) {
+        query = query.eq('device_type_id', deviceTypeId);
+      }
+
+      final response = await query.order('created_at', ascending: false);
+
+      final firmware = (response as List)
+          .map((json) => Firmware.fromJson(json as Map<String, dynamic>))
+          .toList();
+
+      AppLogger.info('Fetched ${firmware.length} firmware entries');
+      return firmware;
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to fetch firmware', error, stackTrace);
+      rethrow;
+    }
+  }
+
+  /// Get a single firmware by ID with its files
+  Future<Firmware?> getFirmwareById(String id) async {
+    try {
+      AppLogger.info('Fetching firmware: $id');
+
+      final supabase = SupabaseService.instance.client;
+      final response = await supabase
+          .from(_newTableName)
+          .select('''
+            *,
+            firmware_files (*)
+          ''')
+          .eq('id', id)
+          .maybeSingle();
+
+      if (response == null) {
+        AppLogger.info('Firmware not found: $id');
+        return null;
+      }
+
+      final firmware = Firmware.fromJson(response as Map<String, dynamic>);
+      AppLogger.info('Fetched firmware: ${firmware.version}');
+      return firmware;
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to fetch firmware', error, stackTrace);
+      rethrow;
+    }
+  }
+
+  /// Get the latest released firmware for a device type
+  Future<Firmware?> getLatestReleasedFirmware(String deviceTypeId) async {
+    try {
+      AppLogger.info('Fetching latest released firmware for device type: $deviceTypeId');
+
+      final supabase = SupabaseService.instance.client;
+      final response = await supabase
+          .from(_newTableName)
+          .select('''
+            *,
+            firmware_files (*)
+          ''')
+          .eq('device_type_id', deviceTypeId)
+          .not('released_at', 'is', null)
+          .order('released_at', ascending: false)
+          .limit(1)
+          .maybeSingle();
+
+      if (response == null) {
+        AppLogger.info('No released firmware found for device type');
+        return null;
+      }
+
+      final firmware = Firmware.fromJson(response as Map<String, dynamic>);
+      AppLogger.info('Found released firmware: ${firmware.version}');
+      return firmware;
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to fetch latest released firmware', error, stackTrace);
+      rethrow;
+    }
+  }
+
+  /// Get critical firmware updates for a device type
+  Future<List<Firmware>> getCriticalFirmware(String deviceTypeId) async {
+    try {
+      AppLogger.info('Fetching critical firmware for device type: $deviceTypeId');
+
+      final supabase = SupabaseService.instance.client;
+      final response = await supabase
+          .from(_newTableName)
+          .select('''
+            *,
+            firmware_files (*)
+          ''')
+          .eq('device_type_id', deviceTypeId)
+          .eq('is_critical', true)
+          .not('released_at', 'is', null)
+          .order('released_at', ascending: false);
+
+      final firmware = (response as List)
+          .map((json) => Firmware.fromJson(json as Map<String, dynamic>))
+          .toList();
+
+      AppLogger.info('Found ${firmware.length} critical firmware updates');
+      return firmware;
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to fetch critical firmware', error, stackTrace);
+      rethrow;
+    }
+  }
+
+  /// Create a new firmware with files
+  Future<Firmware> createFirmware(
+    Firmware firmware,
+    List<FirmwareFileUpload> fileUploads,
+  ) async {
+    try {
+      AppLogger.info('Creating firmware: ${firmware.version}');
+
+      final supabase = SupabaseService.instance.client;
+      final storageService = StorageService();
+
+      // Step 1: Create firmware record
+      final response = await supabase
+          .from(_newTableName)
+          .insert(firmware.toInsertJson())
+          .select()
+          .single();
+
+      final createdFirmware = Firmware.fromJson(response as Map<String, dynamic>);
+      AppLogger.info('Firmware created: ${createdFirmware.id}');
+
+      // Step 2: Upload files and create firmware_files records
+      final files = <FirmwareFile>[];
+      for (final upload in fileUploads) {
+        final fileUrl = await storageService.uploadFirmwareBinary(
+          upload.file,
+          firmware.deviceTypeId,
+          '${firmware.version}_${upload.socType}',
+        );
+
+        final fileSize = await upload.file.length();
+        final fileData = {
+          'firmware_id': createdFirmware.id,
+          'soc_type': upload.socType,
+          'is_master': upload.isMaster,
+          'file_url': fileUrl,
+          'file_sha256': upload.sha256,
+          'file_size': fileSize,
+        };
+
+        final fileResponse = await supabase
+            .from(_filesTableName)
+            .insert(fileData)
+            .select()
+            .single();
+
+        files.add(FirmwareFile.fromJson(fileResponse));
+      }
+
+      AppLogger.info('Created ${files.length} firmware files');
+
+      return createdFirmware.copyWith(files: files);
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to create firmware', error, stackTrace);
+      rethrow;
+    }
+  }
+
+  /// Add a file to existing firmware
+  Future<FirmwareFile> addFirmwareFile({
+    required String firmwareId,
+    required String socType,
+    required bool isMaster,
+    required File file,
+    String? sha256,
+  }) async {
+    try {
+      AppLogger.info('Adding firmware file for $socType to firmware $firmwareId');
+
+      final firmware = await getFirmwareById(firmwareId);
+      if (firmware == null) {
+        throw Exception('Firmware not found: $firmwareId');
+      }
+
+      final storageService = StorageService();
+      final fileUrl = await storageService.uploadFirmwareBinary(
+        file,
+        firmware.deviceTypeId,
+        '${firmware.version}_$socType',
+      );
+
+      final fileSize = await file.length();
+      final supabase = SupabaseService.instance.client;
+
+      final response = await supabase
+          .from(_filesTableName)
+          .insert({
+            'firmware_id': firmwareId,
+            'soc_type': socType,
+            'is_master': isMaster,
+            'file_url': fileUrl,
+            'file_sha256': sha256,
+            'file_size': fileSize,
+          })
+          .select()
+          .single();
+
+      final firmwareFile = FirmwareFile.fromJson(response);
+      AppLogger.info('Firmware file added: ${firmwareFile.id}');
+      return firmwareFile;
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to add firmware file', error, stackTrace);
+      rethrow;
+    }
+  }
+
+  /// Get firmware file for a specific SoC type
+  Future<FirmwareFile?> getFirmwareFileForSoc(
+    String firmwareId,
+    String socType,
+  ) async {
+    try {
+      AppLogger.info('Fetching firmware file for $socType in firmware $firmwareId');
+
+      final supabase = SupabaseService.instance.client;
+      final response = await supabase
+          .from(_filesTableName)
+          .select()
+          .eq('firmware_id', firmwareId)
+          .eq('soc_type', socType)
+          .maybeSingle();
+
+      if (response == null) {
+        AppLogger.info('No firmware file found for $socType');
+        return null;
+      }
+
+      final file = FirmwareFile.fromJson(response);
+      AppLogger.info('Found firmware file: ${file.filename}');
+      return file;
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to fetch firmware file for SoC', error, stackTrace);
+      rethrow;
+    }
+  }
+
+  /// Download a firmware file to temporary directory
+  Future<File> downloadFirmwareFile(FirmwareFile firmwareFile) async {
+    try {
+      AppLogger.info('Downloading firmware file: ${firmwareFile.id}');
+
+      final response = await http.get(Uri.parse(firmwareFile.fileUrl));
+      if (response.statusCode != 200) {
+        throw Exception('Failed to download firmware file: HTTP ${response.statusCode}');
+      }
+
+      final tempDir = await getTemporaryDirectory();
+      final localPath = '${tempDir.path}/${firmwareFile.filename}';
+      final file = File(localPath);
+      await file.writeAsBytes(response.bodyBytes);
+
+      AppLogger.info('Firmware file downloaded to: $localPath');
+      return file;
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to download firmware file', error, stackTrace);
+      rethrow;
+    }
+  }
+
+  /// Release a firmware (set released_at timestamp)
+  Future<Firmware> releaseFirmware(String id) async {
+    try {
+      AppLogger.info('Releasing firmware: $id');
+
+      final supabase = SupabaseService.instance.client;
+      final response = await supabase
+          .from(_newTableName)
+          .update({
+            'released_at': DateTime.now().toIso8601String(),
+            'is_production_ready': true, // For backwards compatibility
+          })
+          .eq('id', id)
+          .select('''
+            *,
+            firmware_files (*)
+          ''')
+          .single();
+
+      final firmware = Firmware.fromJson(response as Map<String, dynamic>);
+      AppLogger.info('Firmware released: ${firmware.version}');
+      return firmware;
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to release firmware', error, stackTrace);
+      rethrow;
+    }
+  }
+
+  /// Mark firmware as critical
+  Future<Firmware> markAsCritical(String id, bool isCritical) async {
+    try {
+      AppLogger.info('Marking firmware $id as critical: $isCritical');
+
+      final supabase = SupabaseService.instance.client;
+      final response = await supabase
+          .from(_newTableName)
+          .update({'is_critical': isCritical})
+          .eq('id', id)
+          .select('''
+            *,
+            firmware_files (*)
+          ''')
+          .single();
+
+      final firmware = Firmware.fromJson(response as Map<String, dynamic>);
+      AppLogger.info('Firmware critical status updated');
+      return firmware;
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to update critical status', error, stackTrace);
+      rethrow;
+    }
+  }
+
+  /// Delete a firmware and all its files
+  Future<void> deleteFirmware(String id) async {
+    try {
+      AppLogger.info('Deleting firmware: $id');
+
+      final firmware = await getFirmwareById(id);
+      if (firmware == null) {
+        throw Exception('Firmware not found: $id');
+      }
+
+      final storageService = StorageService();
+
+      // Delete files from storage
+      for (final file in firmware.files) {
+        try {
+          await storageService.deleteFirmwareBinary(file.fileUrl);
+        } catch (e) {
+          AppLogger.warning('Failed to delete firmware file from storage: $e');
+        }
+      }
+
+      // Delete legacy binary if present
+      if (firmware.binaryUrl != null) {
+        try {
+          await storageService.deleteFirmwareBinary(firmware.binaryUrl!);
+        } catch (e) {
+          AppLogger.warning('Failed to delete legacy binary from storage: $e');
+        }
+      }
+
+      // Delete from database (firmware_files cascade delete)
+      final supabase = SupabaseService.instance.client;
+      await supabase.from(_newTableName).delete().eq('id', id);
+
+      AppLogger.info('Firmware deleted successfully');
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to delete firmware', error, stackTrace);
+      rethrow;
+    }
+  }
+}
+
+/// Helper class for firmware file uploads
+class FirmwareFileUpload {
+  final File file;
+  final String socType;
+  final bool isMaster;
+  final String? sha256;
+
+  const FirmwareFileUpload({
+    required this.file,
+    required this.socType,
+    this.isMaster = false,
+    this.sha256,
+  });
 }

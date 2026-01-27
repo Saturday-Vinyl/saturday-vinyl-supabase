@@ -501,7 +501,7 @@ class ProductionUnitRepository {
 
       for (final deviceTypeId in deviceTypeIds) {
         final firmwareResponse = await _supabase
-            .from('firmware_versions')
+            .from('firmware')
             .select()
             .eq('device_type_id', deviceTypeId)
             .eq('is_production_ready', true)

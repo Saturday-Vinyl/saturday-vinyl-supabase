@@ -77,16 +77,22 @@ class SidebarNav extends ConsumerWidget {
                     isSelected: currentRoute == '/device-types',
                   ),
                   _buildNavItem(
+                    icon: Icons.extension,
+                    label: 'Capabilities',
+                    route: '/capabilities',
+                    isSelected: currentRoute == '/capabilities',
+                  ),
+                  _buildNavItem(
+                    icon: Icons.all_inbox,
+                    label: 'Units',
+                    route: '/units',
+                    isSelected: currentRoute == '/units',
+                  ),
+                  _buildNavItem(
                     icon: Icons.qr_code,
                     label: 'Production Units',
                     route: '/production',
                     isSelected: currentRoute == '/production',
-                  ),
-                  _buildNavItem(
-                    icon: Icons.memory,
-                    label: 'Firmware',
-                    route: '/firmware',
-                    isSelected: currentRoute == '/firmware',
                   ),
                   _buildNavItem(
                     icon: Icons.build,
