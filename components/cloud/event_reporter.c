@@ -18,6 +18,10 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_system.h"
+#include "esp_mac.h"
+#include "esp_heap_caps.h"
+#include "config_store.h"
+#include "yrm100_driver.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -235,17 +239,47 @@ static int format_now_playing_json(const queued_event_t *event, char *buf, size_
 }
 
 /**
- * @brief Format heartbeat as JSON
+ * @brief Format heartbeat as JSON (Device Command Protocol v1.2.2)
+ *
+ * Uses mac_address as primary identifier and flat telemetry fields
+ * matching the capability heartbeat schemas.
+ *
+ * Standard fields (required per protocol):
+ * - mac_address: Primary device identifier
+ * - unit_id: Serial number from provisioning
+ * - device_type: From firmware JSON schema
+ * - firmware_version: Compile-time constant
+ * - uptime_sec: Seconds since boot
+ * - free_heap: Current free heap
+ * - min_free_heap: Minimum free heap since boot (memory leak detection)
+ * - largest_free_block: Largest contiguous block (fragmentation detection)
+ *
+ * WiFi capability heartbeat fields (from firmware JSON schema):
+ * - wifi_rssi: Signal strength (only field in wifi.heartbeat schema)
  */
 static int format_heartbeat_json(char *buf, size_t buf_len)
 {
-    char unit_id[SUPABASE_UNIT_ID_MAX_LEN] = "UNIT-UNKNOWN";
-    supabase_get_unit_id(unit_id, sizeof(unit_id));
+    /* Get MAC address as primary identifier */
+    uint8_t mac[6];
+    char mac_str[18] = "00:00:00:00:00:00";
+    if (esp_read_mac(mac, ESP_MAC_WIFI_STA) == ESP_OK) {
+        snprintf(mac_str, sizeof(mac_str), "%02X:%02X:%02X:%02X:%02X:%02X",
+                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    }
 
-    char timestamp[32];
-    format_timestamp(esp_timer_get_time(), timestamp, sizeof(timestamp));
+    /* Get unit_id (serial number) from NVS */
+    char unit_id[64] = "";
+    if (config_has_serial_number()) {
+        config_get_serial_number(unit_id, sizeof(unit_id));
+    }
 
-    /* Get Wi-Fi RSSI if connected */
+    /* Standard system info (protocol v1.2.2 required fields) */
+    uint64_t uptime_sec = esp_timer_get_time() / 1000000;  /* Seconds, not ms */
+    uint32_t free_heap = esp_get_free_heap_size();
+    uint32_t min_free_heap = esp_get_minimum_free_heap_size();
+    uint32_t largest_free_block = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+
+    /* WiFi capability heartbeat field (only wifi_rssi per schema) */
     int8_t wifi_rssi = 0;
     if (s_state.wifi_connected) {
         wifi_manager_status_t wifi_status;
@@ -254,16 +288,50 @@ static int format_heartbeat_json(char *buf, size_t buf_len)
         }
     }
 
-    /* Calculate uptime in seconds */
-    uint32_t uptime_sec = (uint32_t)(esp_timer_get_time() / 1000000);
-
+    /* Start building JSON with standard heartbeat fields (protocol v1.2.2) */
     int len = snprintf(buf, buf_len,
-        "{\"unit_id\":\"%s\",\"firmware_version\":\"0.6.0\","
-        "\"wifi_rssi\":%d,\"uptime_sec\":%lu,\"free_heap\":%lu,"
-        "\"events_queued\":%u,\"timestamp\":\"%s\"}",
-        unit_id, wifi_rssi, (unsigned long)uptime_sec,
-        (unsigned long)esp_get_free_heap_size(),
-        s_state.queue.count, timestamp);
+        "{\"mac_address\":\"%s\","
+        "\"unit_id\":\"%s\","
+        "\"device_type\":\"hub-prototype\","
+        "\"firmware_version\":\"%s\","
+        "\"uptime_sec\":%llu,"
+        "\"free_heap\":%lu,"
+        "\"min_free_heap\":%lu,"
+        "\"largest_free_block\":%lu,"
+        "\"wifi_rssi\":%d",
+        mac_str,
+        unit_id,
+        FIRMWARE_VERSION,
+        (unsigned long long)uptime_sec,
+        (unsigned long)free_heap,
+        (unsigned long)min_free_heap,
+        (unsigned long)largest_free_block,
+        wifi_rssi);
+
+    /* Thread BR capability heartbeat fields */
+#if defined(CONFIG_OPENTHREAD_ENABLED) && CONFIG_OPENTHREAD_ENABLED
+    thread_br_state_t thread_state = thread_br_get_state();
+    bool thread_connected = (thread_state >= THREAD_BR_STATE_CHILD);
+    const char *thread_role = thread_br_state_to_string(thread_state);
+
+    len += snprintf(buf + len, buf_len - len,
+        ",\"thread_connected\":%s,"
+        "\"thread_role\":\"%s\"",
+        thread_connected ? "true" : "false",
+        thread_role);
+#endif
+
+    /* RFID capability heartbeat fields */
+    char rfid_fw[32] = "";
+    yrm100_get_firmware_version(rfid_fw, sizeof(rfid_fw));
+    len += snprintf(buf + len, buf_len - len,
+        ",\"rfid_module_firmware\":\"%s\","
+        "\"rfid_last_scan_count\":0",  /* TODO: Track actual scan count */
+        rfid_fw);
+
+    /* Cloud capability heartbeat fields - we're connected if we're sending this */
+    len += snprintf(buf + len, buf_len - len,
+        ",\"cloud_connected\":true}");
 
     return len;
 }
@@ -331,6 +399,10 @@ static esp_err_t send_heartbeat_internal(void)
         return ESP_ERR_INVALID_SIZE;
     }
 
+    /* Log complete heartbeat payload to serial monitor for debugging.
+     * Use printf to avoid ESP_LOG truncation on long messages. */
+    printf("[EVENT_RPT] Heartbeat payload (%d bytes): %s\n", len, json);
+
     /* Completely shutdown Thread to give WiFi exclusive radio access.
      * The suspend approach wasn't reliable enough - full shutdown ensures
      * no 802.15.4 radio activity during TLS handshake. */
@@ -339,7 +411,7 @@ static esp_err_t send_heartbeat_internal(void)
 #endif
 
     supabase_response_t response;
-    esp_err_t err = supabase_post("hub_heartbeats", json, &response, 0);
+    esp_err_t err = supabase_post("device_heartbeats", json, &response, 0);
 
     /* Restart Thread after WiFi operation */
 #if defined(CONFIG_OPENTHREAD_ENABLED) && CONFIG_OPENTHREAD_ENABLED
@@ -349,7 +421,7 @@ static esp_err_t send_heartbeat_internal(void)
     if (err == ESP_OK && response.status_code >= 200 && response.status_code < 300) {
         s_state.heartbeats_sent++;
         s_state.last_heartbeat_time = esp_timer_get_time();
-        ESP_LOGI(TAG, "Heartbeat sent successfully");
+        ESP_LOGI(TAG, "Heartbeat sent successfully (status=%d)", response.status_code);
         supabase_response_free(&response);
         return ESP_OK;
     }

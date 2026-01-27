@@ -77,6 +77,7 @@
 #include "supabase_client.h"
 #include "event_reporter.h"
 #include "serial_prov.h"
+#include "device_protocol.h"
 #include "ble_prov.h"
 #include "thread_br.h"  /* Conditionally enabled in sdkconfig */
 #include "esp_vfs_eventfd.h"
@@ -713,110 +714,55 @@ void app_main(void)
     }
 
     /*
-     * Initialize Service Mode (Phase 6)
-     * Required for both service mode and boot window command listening
+     * Initialize Device Protocol (Device Command Protocol v1.2.0)
+     * Always-listening protocol - no entry window required.
+     * Commands are accepted via USB serial at all times.
      */
-    ESP_LOGI(TAG, "Initializing service mode...");
-    ret = serial_prov_init();
+    ESP_LOGI(TAG, "Initializing device protocol...");
+    ret = device_protocol_init();
     if (ret != ESP_OK) {
-        ESP_LOGW(TAG, "Service mode init failed: %s", esp_err_to_name(ret));
+        ESP_LOGW(TAG, "Device protocol init failed: %s", esp_err_to_name(ret));
     } else {
-        ESP_LOGI(TAG, "Service mode initialized");
+        ESP_LOGI(TAG, "Device protocol initialized");
     }
 
     /*
-     * Check if device has a unit_id (the core provisioning identifier).
-     *
-     * Fresh device (no unit_id): Auto-enter service mode and wait for the
-     * Saturday Admin app to provision it via USB serial.
-     *
-     * Provisioned device (has unit_id): Offer a 5-second boot window for the
-     * Admin app to send enter_service_mode command. This allows technicians
-     * to service previously provisioned devices (e.g., returned for repair).
-     * If no command received, continue with normal operation.
+     * Start device protocol listener (always-on).
+     * Commands can be received at any time via USB serial.
      */
-    if (!config_has_unit_id()) {
-        /* Fresh device - auto-enter service mode */
-        ESP_LOGW(TAG, "Device not provisioned (no unit_id) - entering service mode");
+    ret = device_protocol_start();
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Device protocol start failed: %s", esp_err_to_name(ret));
+    } else {
+        ESP_LOGI(TAG, "Device protocol started - listening for commands");
+    }
+
+    /*
+     * Check if device has been factory provisioned.
+     * Fresh device (no serial_number): Wait for factory_provision command.
+     * Provisioned device: Continue with normal operation.
+     */
+    if (!config_has_serial_number()) {
+        ESP_LOGW(TAG, "Device not provisioned - awaiting factory_provision command");
         ESP_LOGI(TAG, "===========================================");
-        ESP_LOGI(TAG, "  SERVICE MODE (Fresh Device)");
+        ESP_LOGI(TAG, "  AWAITING FACTORY PROVISIONING");
         ESP_LOGI(TAG, "  Connect Saturday Admin app via USB");
-        ESP_LOGI(TAG, "  Awaiting provisioning commands...");
+        ESP_LOGI(TAG, "  Send factory_provision command to begin");
         ESP_LOGI(TAG, "===========================================");
 
-        /* Start service mode - will send periodic status beacons */
-        serial_prov_start();
+        /* Set LED to white pulse to indicate awaiting provisioning */
+        led_set_state(LED_COLOR_WHITE, LED_PATTERN_PULSE, 2000);
 
-        /* Wait for exit_service_mode command or provisioning completion */
-        while (!serial_prov_is_complete()) {
+        /* Wait for serial_number to be set (factory_provision command) */
+        while (!config_has_serial_number()) {
             vTaskDelay(pdMS_TO_TICKS(1000));
         }
 
-        ESP_LOGI(TAG, "Service mode complete - continuing with startup");
-        serial_prov_stop();
+        ESP_LOGI(TAG, "Device provisioned - continuing with startup");
     } else {
-        /* Provisioned device - offer 10-second boot window for service mode entry */
-        char unit_id[32] = {0};
-        config_get_unit_id(unit_id, sizeof(unit_id));
-        ESP_LOGI(TAG, "Device provisioned: %s", unit_id);
-        ESP_LOGI(TAG, "Service mode boot window: 10 seconds...");
-
-        /* Start listening for enter_service_mode command during boot window.
-         * The serial_prov_init() already installed the USB Serial JTAG driver,
-         * so we need to temporarily process commands to check for service mode entry. */
-        int64_t window_start = esp_timer_get_time();
-        const int64_t BOOT_WINDOW_MS = 10000;  /* 10 second window */
-        bool entered_service_mode = false;
-        uint8_t byte;
-
-        /* Simple command buffer for boot window */
-        char cmd_buffer[256] = {0};
-        size_t cmd_len = 0;
-
-        while ((esp_timer_get_time() - window_start) < (BOOT_WINDOW_MS * 1000)) {
-            /* Check for incoming command */
-            int len = usb_serial_jtag_read_bytes(&byte, 1, pdMS_TO_TICKS(100));
-
-            if (len > 0) {
-                if (byte == '\n' || byte == '\r') {
-                    if (cmd_len > 0) {
-                        cmd_buffer[cmd_len] = '\0';
-                        ESP_LOGI(TAG, "Boot window received: %s", cmd_buffer);
-
-                        /* Check if it's enter_service_mode command */
-                        if (strstr(cmd_buffer, "enter_service_mode") != NULL) {
-                            ESP_LOGI(TAG, "Service mode requested during boot window");
-                            entered_service_mode = true;
-                            break;
-                        }
-                        cmd_len = 0;
-                    }
-                } else if (cmd_len < sizeof(cmd_buffer) - 1) {
-                    cmd_buffer[cmd_len++] = (char)byte;
-                }
-            }
-        }
-
-        if (entered_service_mode) {
-            ESP_LOGI(TAG, "===========================================");
-            ESP_LOGI(TAG, "  SERVICE MODE (Provisioned Device)");
-            ESP_LOGI(TAG, "  Connect Saturday Admin app via USB");
-            ESP_LOGI(TAG, "  Device: %s", unit_id);
-            ESP_LOGI(TAG, "===========================================");
-
-            /* Start service mode */
-            serial_prov_start();
-
-            /* Wait for exit_service_mode command */
-            while (!serial_prov_is_complete()) {
-                vTaskDelay(pdMS_TO_TICKS(1000));
-            }
-
-            ESP_LOGI(TAG, "Service mode complete - continuing with startup");
-            serial_prov_stop();
-        } else {
-            ESP_LOGI(TAG, "Boot window elapsed - continuing with normal operation");
-        }
+        char serial_number[32] = {0};
+        config_get_serial_number(serial_number, sizeof(serial_number));
+        ESP_LOGI(TAG, "Device provisioned: %s", serial_number);
     }
 
 #if USE_TEST_CREDENTIALS
@@ -885,7 +831,7 @@ void app_main(void)
      * See docs/radio_coexistence_guide.md for architecture details.
      */
 
-    bool needs_provisioning = config_has_unit_id() && !config_has_wifi();
+    bool needs_provisioning = config_has_serial_number() && !config_has_wifi();
 
     if (needs_provisioning) {
         /*

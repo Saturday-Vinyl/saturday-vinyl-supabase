@@ -2,6 +2,7 @@ idf_component_register(
     SRCS
         "ble_prov.c"
         "serial_prov.c"
+        "device_protocol.c"
     INCLUDE_DIRS "include"
     EMBED_TXTFILES "service_manifest.json"
     REQUIRES

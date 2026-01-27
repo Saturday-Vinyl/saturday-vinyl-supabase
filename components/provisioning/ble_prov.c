@@ -351,7 +351,7 @@ static void wifi_connect_task(void *arg)
     /* Update LED to show connecting */
     led_set_state(LED_COLOR_YELLOW, LED_PATTERN_PULSE, 1500);
 
-    /* Store credentials in config */
+    /* Store credentials in config with consumer source tag */
     esp_err_t ret = config_set_wifi(s_ble.wifi_ssid, s_ble.wifi_pass);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to store Wi-Fi credentials: %s", esp_err_to_name(ret));
@@ -362,6 +362,9 @@ static void wifi_connect_task(void *arg)
         vTaskDelete(NULL);
         return;
     }
+
+    /* Tag WiFi as consumer-provisioned (cleared on consumer_reset) */
+    config_set_string_tagged("wifi_source", "consumer", CONFIG_SOURCE_CONSUMER);
 
     /* Attempt connection */
     ret = wifi_connect(s_ble.wifi_ssid, s_ble.wifi_pass);

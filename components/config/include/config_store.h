@@ -140,6 +140,122 @@ esp_err_t config_get_unit_id(char *unit_id, size_t max_len);
  */
 esp_err_t config_set_unit_id(const char *unit_id);
 
+/*******************************************************************************
+ * Serial Number and Name (Device Command Protocol)
+ ******************************************************************************/
+
+/**
+ * @brief Check if serial number is stored
+ *
+ * @return true if serial_number exists, false otherwise
+ */
+bool config_has_serial_number(void);
+
+/**
+ * @brief Get device serial number
+ *
+ * @param serial_number Buffer for serial number
+ * @param max_len Buffer length
+ * @return ESP_OK on success, ESP_ERR_NOT_FOUND if not set
+ */
+esp_err_t config_get_serial_number(char *serial_number, size_t max_len);
+
+/**
+ * @brief Set device serial number
+ *
+ * @param serial_number Device serial number (e.g., "SV-HUB-000001")
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t config_set_serial_number(const char *serial_number);
+
+/**
+ * @brief Get device name (human-friendly product name)
+ *
+ * @param name Buffer for name
+ * @param max_len Buffer length
+ * @return ESP_OK on success, ESP_ERR_NOT_FOUND if not set
+ */
+esp_err_t config_get_name(char *name, size_t max_len);
+
+/**
+ * @brief Set device name (human-friendly product name)
+ *
+ * @param name Product name (e.g., "Hub", "Crate")
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t config_set_name(const char *name);
+
+/*******************************************************************************
+ * Source-Tagged Provisioning Data (Device Command Protocol)
+ ******************************************************************************/
+
+/** Source tag for factory-provisioned data (persists through consumer reset) */
+#define CONFIG_SOURCE_FACTORY   "factory"
+
+/** Source tag for consumer-provisioned data (cleared on consumer reset) */
+#define CONFIG_SOURCE_CONSUMER  "consumer"
+
+/**
+ * @brief Store a string value with source tag
+ *
+ * @param key NVS key name
+ * @param value String value to store
+ * @param source Source tag ("factory" or "consumer")
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t config_set_string_tagged(const char *key, const char *value, const char *source);
+
+/**
+ * @brief Get a string value and its source tag
+ *
+ * @param key NVS key name
+ * @param value Buffer for value
+ * @param max_len Value buffer length
+ * @param source Buffer for source tag (optional, can be NULL)
+ * @param source_len Source buffer length
+ * @return ESP_OK on success, ESP_ERR_NOT_FOUND if not set
+ */
+esp_err_t config_get_string_tagged(const char *key, char *value, size_t max_len, char *source, size_t source_len);
+
+/**
+ * @brief Store an integer value with source tag
+ *
+ * @param key NVS key name
+ * @param value Integer value to store
+ * @param source Source tag ("factory" or "consumer")
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t config_set_int_tagged(const char *key, int32_t value, const char *source);
+
+/**
+ * @brief Get an integer value and its source tag
+ *
+ * @param key NVS key name
+ * @param value Pointer to store value
+ * @param source Buffer for source tag (optional, can be NULL)
+ * @param source_len Source buffer length
+ * @return ESP_OK on success, ESP_ERR_NOT_FOUND if not set
+ */
+esp_err_t config_get_int_tagged(const char *key, int32_t *value, char *source, size_t source_len);
+
+/**
+ * @brief Get the source tag for a key
+ *
+ * @param key NVS key name
+ * @param source Buffer for source tag
+ * @param source_len Buffer length (min 8)
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t config_get_source(const char *key, char *source, size_t source_len);
+
+/**
+ * @brief Clear all data with a specific source tag
+ *
+ * @param source Source tag to clear ("factory" or "consumer")
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t config_clear_by_source(const char *source);
+
 /**
  * @brief Erase all configuration (full factory reset)
  *
@@ -151,15 +267,24 @@ esp_err_t config_set_unit_id(const char *unit_id);
 esp_err_t config_factory_reset(void);
 
 /**
- * @brief Soft reset for customer handoff
+ * @brief Soft reset for customer handoff (legacy name)
  *
- * Clears user data (Wi-Fi, provisioned flag) but preserves
- * factory configuration (Supabase URL, anon key, unit ID, device secret).
- * This prepares the device for customer BLE provisioning.
+ * @deprecated Use config_consumer_reset() instead
  *
  * @return ESP_OK on success, error code otherwise
  */
 esp_err_t config_customer_reset(void);
+
+/**
+ * @brief Consumer reset - clear consumer data, preserve factory data
+ *
+ * Clears all data tagged with source="consumer" (e.g., BLE-provisioned WiFi)
+ * while preserving factory data (serial_number, name, cloud config, Thread creds).
+ * This prepares the device for re-provisioning via BLE.
+ *
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t config_consumer_reset(void);
 
 #ifdef __cplusplus
 }

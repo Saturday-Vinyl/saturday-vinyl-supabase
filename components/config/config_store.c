@@ -18,6 +18,12 @@ static const char *TAG = "CONFIG";
 #define NVS_NAMESPACE_CONFIG    "sv_config"
 #define NVS_NAMESPACE_RFID      "sv_rfid"
 #define NVS_NAMESPACE_WIFI      "sv_wifi"
+#define NVS_NAMESPACE_PROV      "sv_prov"   /* Provisioning data with source tags */
+
+/* Source tag suffix for NVS keys */
+#define NVS_SOURCE_TAG_SUFFIX   "_src"
+#define NVS_SOURCE_FACTORY      "factory"
+#define NVS_SOURCE_CONSUMER     "consumer"
 
 /* NVS keys for RFID configuration */
 #define NVS_KEY_POLL_INTERVAL   "poll_int"
@@ -442,6 +448,436 @@ esp_err_t config_set_unit_id(const char *unit_id)
     return err;
 }
 
+/*******************************************************************************
+ * Serial Number and Name (Device Command Protocol)
+ ******************************************************************************/
+
+bool config_has_serial_number(void)
+{
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE_CONFIG, NVS_READONLY, &handle);
+    if (err != ESP_OK) {
+        return false;
+    }
+
+    size_t len = 0;
+    err = nvs_get_str(handle, "serial_num", NULL, &len);
+    nvs_close(handle);
+
+    return (err == ESP_OK && len > 1);
+}
+
+esp_err_t config_get_serial_number(char *serial_number, size_t max_len)
+{
+    if (serial_number == NULL || max_len < 2) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE_CONFIG, NVS_READONLY, &handle);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        return ESP_ERR_NOT_FOUND;
+    } else if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to open NVS for serial_number: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    size_t len = max_len;
+    err = nvs_get_str(handle, "serial_num", serial_number, &len);
+    nvs_close(handle);
+
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        return ESP_ERR_NOT_FOUND;
+    } else if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to read serial_number: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    return ESP_OK;
+}
+
+esp_err_t config_set_serial_number(const char *serial_number)
+{
+    if (serial_number == NULL || serial_number[0] == '\0') {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE_CONFIG, NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to open NVS for serial_number: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    err = nvs_set_str(handle, "serial_num", serial_number);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to write serial_number: %s", esp_err_to_name(err));
+        nvs_close(handle);
+        return err;
+    }
+
+    err = nvs_commit(handle);
+    nvs_close(handle);
+
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "Serial number stored: %s", serial_number);
+    }
+
+    return err;
+}
+
+esp_err_t config_get_name(char *name, size_t max_len)
+{
+    if (name == NULL || max_len < 2) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE_CONFIG, NVS_READONLY, &handle);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        return ESP_ERR_NOT_FOUND;
+    } else if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to open NVS for name: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    size_t len = max_len;
+    err = nvs_get_str(handle, "name", name, &len);
+    nvs_close(handle);
+
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        return ESP_ERR_NOT_FOUND;
+    } else if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to read name: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    return ESP_OK;
+}
+
+esp_err_t config_set_name(const char *name)
+{
+    if (name == NULL || name[0] == '\0') {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE_CONFIG, NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to open NVS for name: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    err = nvs_set_str(handle, "name", name);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to write name: %s", esp_err_to_name(err));
+        nvs_close(handle);
+        return err;
+    }
+
+    err = nvs_commit(handle);
+    nvs_close(handle);
+
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "Name stored: %s", name);
+    }
+
+    return err;
+}
+
+/*******************************************************************************
+ * Source-Tagged Provisioning Data (Device Command Protocol)
+ *
+ * All provisioning data is stored with a source tag indicating whether it
+ * came from factory provisioning (UART) or consumer provisioning (BLE).
+ * Consumer data is cleared on consumer_reset while factory data persists.
+ ******************************************************************************/
+
+esp_err_t config_set_string_tagged(const char *key, const char *value, const char *source)
+{
+    if (key == NULL || value == NULL || source == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    /* Validate source */
+    if (strcmp(source, NVS_SOURCE_FACTORY) != 0 &&
+        strcmp(source, NVS_SOURCE_CONSUMER) != 0) {
+        ESP_LOGE(TAG, "Invalid source: %s (must be 'factory' or 'consumer')", source);
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE_PROV, NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to open NVS for tagged write: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    /* Write the value */
+    err = nvs_set_str(handle, key, value);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to write key '%s': %s", key, esp_err_to_name(err));
+        nvs_close(handle);
+        return err;
+    }
+
+    /* Write the source tag */
+    char src_key[NVS_KEY_NAME_MAX_SIZE];
+    snprintf(src_key, sizeof(src_key), "%s%s", key, NVS_SOURCE_TAG_SUFFIX);
+    err = nvs_set_str(handle, src_key, source);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to write source tag for '%s': %s", key, esp_err_to_name(err));
+        nvs_close(handle);
+        return err;
+    }
+
+    err = nvs_commit(handle);
+    nvs_close(handle);
+
+    if (err == ESP_OK) {
+        ESP_LOGD(TAG, "Stored '%s' with source='%s'", key, source);
+    }
+
+    return err;
+}
+
+esp_err_t config_get_string_tagged(const char *key, char *value, size_t max_len, char *source, size_t source_len)
+{
+    if (key == NULL || value == NULL || max_len < 2) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE_PROV, NVS_READONLY, &handle);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        return ESP_ERR_NOT_FOUND;
+    } else if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to open NVS for tagged read: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    /* Read the value */
+    size_t len = max_len;
+    err = nvs_get_str(handle, key, value, &len);
+    if (err != ESP_OK) {
+        nvs_close(handle);
+        if (err == ESP_ERR_NVS_NOT_FOUND) {
+            return ESP_ERR_NOT_FOUND;
+        }
+        ESP_LOGE(TAG, "Failed to read key '%s': %s", key, esp_err_to_name(err));
+        return err;
+    }
+
+    /* Read the source tag if requested */
+    if (source != NULL && source_len > 0) {
+        char src_key[NVS_KEY_NAME_MAX_SIZE];
+        snprintf(src_key, sizeof(src_key), "%s%s", key, NVS_SOURCE_TAG_SUFFIX);
+        len = source_len;
+        err = nvs_get_str(handle, src_key, source, &len);
+        if (err != ESP_OK) {
+            /* Default to factory if no source tag found */
+            strncpy(source, NVS_SOURCE_FACTORY, source_len - 1);
+            source[source_len - 1] = '\0';
+        }
+    }
+
+    nvs_close(handle);
+    return ESP_OK;
+}
+
+esp_err_t config_set_int_tagged(const char *key, int32_t value, const char *source)
+{
+    if (key == NULL || source == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    /* Validate source */
+    if (strcmp(source, NVS_SOURCE_FACTORY) != 0 &&
+        strcmp(source, NVS_SOURCE_CONSUMER) != 0) {
+        ESP_LOGE(TAG, "Invalid source: %s (must be 'factory' or 'consumer')", source);
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE_PROV, NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to open NVS for tagged write: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    /* Write the value */
+    err = nvs_set_i32(handle, key, value);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to write key '%s': %s", key, esp_err_to_name(err));
+        nvs_close(handle);
+        return err;
+    }
+
+    /* Write the source tag */
+    char src_key[NVS_KEY_NAME_MAX_SIZE];
+    snprintf(src_key, sizeof(src_key), "%s%s", key, NVS_SOURCE_TAG_SUFFIX);
+    err = nvs_set_str(handle, src_key, source);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to write source tag for '%s': %s", key, esp_err_to_name(err));
+        nvs_close(handle);
+        return err;
+    }
+
+    err = nvs_commit(handle);
+    nvs_close(handle);
+
+    if (err == ESP_OK) {
+        ESP_LOGD(TAG, "Stored '%s'=%d with source='%s'", key, (int)value, source);
+    }
+
+    return err;
+}
+
+esp_err_t config_get_int_tagged(const char *key, int32_t *value, char *source, size_t source_len)
+{
+    if (key == NULL || value == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE_PROV, NVS_READONLY, &handle);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        return ESP_ERR_NOT_FOUND;
+    } else if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to open NVS for tagged read: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    /* Read the value */
+    err = nvs_get_i32(handle, key, value);
+    if (err != ESP_OK) {
+        nvs_close(handle);
+        if (err == ESP_ERR_NVS_NOT_FOUND) {
+            return ESP_ERR_NOT_FOUND;
+        }
+        ESP_LOGE(TAG, "Failed to read key '%s': %s", key, esp_err_to_name(err));
+        return err;
+    }
+
+    /* Read the source tag if requested */
+    if (source != NULL && source_len > 0) {
+        char src_key[NVS_KEY_NAME_MAX_SIZE];
+        snprintf(src_key, sizeof(src_key), "%s%s", key, NVS_SOURCE_TAG_SUFFIX);
+        size_t len = source_len;
+        err = nvs_get_str(handle, src_key, source, &len);
+        if (err != ESP_OK) {
+            /* Default to factory if no source tag found */
+            strncpy(source, NVS_SOURCE_FACTORY, source_len - 1);
+            source[source_len - 1] = '\0';
+        }
+    }
+
+    nvs_close(handle);
+    return ESP_OK;
+}
+
+esp_err_t config_get_source(const char *key, char *source, size_t source_len)
+{
+    if (key == NULL || source == NULL || source_len < 8) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE_PROV, NVS_READONLY, &handle);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        return ESP_ERR_NOT_FOUND;
+    } else if (err != ESP_OK) {
+        return err;
+    }
+
+    char src_key[NVS_KEY_NAME_MAX_SIZE];
+    snprintf(src_key, sizeof(src_key), "%s%s", key, NVS_SOURCE_TAG_SUFFIX);
+    size_t len = source_len;
+    err = nvs_get_str(handle, src_key, source, &len);
+    nvs_close(handle);
+
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        /* Default to factory if no source tag */
+        strncpy(source, NVS_SOURCE_FACTORY, source_len - 1);
+        source[source_len - 1] = '\0';
+        return ESP_OK;
+    }
+
+    return err;
+}
+
+esp_err_t config_clear_by_source(const char *source)
+{
+    if (source == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    ESP_LOGI(TAG, "Clearing all data with source='%s'", source);
+
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE_PROV, NVS_READWRITE, &handle);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        /* Nothing to clear */
+        return ESP_OK;
+    } else if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to open NVS for clearing: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    /* Iterate all keys and find source tags matching the given source */
+    nvs_iterator_t it = NULL;
+    err = nvs_entry_find(NVS_DEFAULT_PART_NAME, NVS_NAMESPACE_PROV, NVS_TYPE_STR, &it);
+
+    /* First pass: collect keys to delete (can't delete while iterating) */
+    char keys_to_delete[32][NVS_KEY_NAME_MAX_SIZE];
+    int delete_count = 0;
+
+    while (err == ESP_OK && delete_count < 32) {
+        nvs_entry_info_t info;
+        nvs_entry_info(it, &info);
+
+        /* Check if this is a source tag key */
+        const char *suffix = strstr(info.key, NVS_SOURCE_TAG_SUFFIX);
+        if (suffix != NULL && strcmp(suffix, NVS_SOURCE_TAG_SUFFIX) == 0) {
+            /* Read the source value */
+            char src_value[16];
+            size_t len = sizeof(src_value);
+            if (nvs_get_str(handle, info.key, src_value, &len) == ESP_OK) {
+                if (strcmp(src_value, source) == 0) {
+                    /* Extract the base key name */
+                    size_t base_len = suffix - info.key;
+                    if (base_len > 0 && base_len < NVS_KEY_NAME_MAX_SIZE) {
+                        strncpy(keys_to_delete[delete_count], info.key, base_len);
+                        keys_to_delete[delete_count][base_len] = '\0';
+                        delete_count++;
+                    }
+                }
+            }
+        }
+        err = nvs_entry_next(&it);
+    }
+    nvs_release_iterator(it);
+
+    /* Second pass: delete the keys and their source tags */
+    int deleted = 0;
+    for (int i = 0; i < delete_count; i++) {
+        /* Buffer for source tag key: base key + "_src" suffix + null terminator */
+        char src_key[NVS_KEY_NAME_MAX_SIZE + sizeof(NVS_SOURCE_TAG_SUFFIX)];
+        snprintf(src_key, sizeof(src_key), "%s%s", keys_to_delete[i], NVS_SOURCE_TAG_SUFFIX);
+
+        nvs_erase_key(handle, keys_to_delete[i]);
+        nvs_erase_key(handle, src_key);
+        deleted++;
+        ESP_LOGD(TAG, "Deleted '%s' (source=%s)", keys_to_delete[i], source);
+    }
+
+    err = nvs_commit(handle);
+    nvs_close(handle);
+
+    ESP_LOGI(TAG, "Cleared %d keys with source='%s'", deleted, source);
+    return err;
+}
+
 esp_err_t config_factory_reset(void)
 {
     ESP_LOGW(TAG, "Factory reset requested - erasing all NVS data");
@@ -467,33 +903,36 @@ esp_err_t config_factory_reset(void)
 
 esp_err_t config_customer_reset(void)
 {
-    ESP_LOGI(TAG, "Customer reset - clearing user data, preserving factory config");
+    /* Legacy function - calls consumer_reset for backward compatibility */
+    return config_consumer_reset();
+}
+
+esp_err_t config_consumer_reset(void)
+{
+    ESP_LOGI(TAG, "Consumer reset - clearing consumer data, preserving factory config");
 
     esp_err_t err;
 
-    /* Clear Wi-Fi credentials */
+    /* Clear all source-tagged data marked as "consumer" */
+    err = config_clear_by_source(NVS_SOURCE_CONSUMER);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to clear consumer-tagged data: %s", esp_err_to_name(err));
+    }
+
+    /* Clear Wi-Fi credentials (consumer-provisioned via BLE) */
     err = config_clear_wifi();
     if (err != ESP_OK && err != ESP_ERR_NVS_NOT_FOUND) {
         ESP_LOGW(TAG, "Failed to clear Wi-Fi: %s", esp_err_to_name(err));
     }
 
-    /* Clear provisioned flag */
+    /* Clear provisioned flag (will be re-set after BLE provisioning) */
     err = config_set_provisioned(false);
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "Failed to clear provisioned flag: %s", esp_err_to_name(err));
     }
 
-    /* Clear RFID config (return to defaults) */
-    nvs_handle_t handle;
-    err = nvs_open(NVS_NAMESPACE_RFID, NVS_READWRITE, &handle);
-    if (err == ESP_OK) {
-        nvs_erase_all(handle);
-        nvs_commit(handle);
-        nvs_close(handle);
-    }
+    /* Note: Factory data (serial_number, name, cloud config, Thread creds) is preserved */
 
-    /* Note: Supabase config (sv_supabase namespace) is preserved */
-
-    ESP_LOGI(TAG, "Customer reset complete - device ready for BLE provisioning");
+    ESP_LOGI(TAG, "Consumer reset complete - device ready for BLE provisioning");
     return ESP_OK;
 }

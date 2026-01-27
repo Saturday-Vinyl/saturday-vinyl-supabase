@@ -15,13 +15,14 @@
 #define APP_CONFIG_H
 
 /*******************************************************************************
- * Firmware Version
- * Updated for PROD phases: OTA, Watchdogs, Memory monitoring, Edge cases
+ * Firmware Identity (from firmware JSON schema)
+ * These values must match the firmware JSON schema exported from admin app
  ******************************************************************************/
 #define FW_VERSION_MAJOR    0
-#define FW_VERSION_MINOR    8
-#define FW_VERSION_PATCH    0
-#define FW_VERSION_STRING   "0.8.0"
+#define FW_VERSION_MINOR    5
+#define FW_VERSION_PATCH    1
+#define FW_VERSION_STRING   "0.5.1"          /* From firmware JSON schema */
+#define DEVICE_TYPE         "hub-prototype"  /* From firmware JSON schema */
 
 /*******************************************************************************
  * Hardware Pin Definitions - ESP32-S3

@@ -1,9 +1,13 @@
 # Saturday Vinyl BLE Provisioning Protocol
 
-**Version:** 1.0.0
+**Version:** 1.1.0
 **Status:** Draft
-**Last Updated:** 2026-01-05
+**Last Updated:** 2026-01-24
 **Audience:** Saturday Vinyl app developers, firmware engineers
+
+> **Note:** This protocol works with the unified device architecture. See
+> [Device Command Protocol](device_command_protocol.md) for factory provisioning
+> and [Capability Schema](../schemas/capability_schema.md) for attribute formats.
 
 ---
 
@@ -187,10 +191,11 @@ The `XXXX` portion identifies specific characteristics.
 ```json
 {
   "device_type": "hub",
-  "unit_id": "SV-HUB-000123",
-  "firmware_version": "0.7.0",
-  "protocol_version": "1.0",
-  "capabilities": ["wifi", "thread_br"],
+  "serial_number": "SV-HUB-000123",
+  "mac_address": "AA:BB:CC:DD:EE:FF",
+  "firmware_version": "1.2.0",
+  "protocol_version": "1.1",
+  "capabilities": ["wifi", "thread_br", "rfid"],
   "needs_provisioning": true,
   "has_wifi": false,
   "has_thread": false
@@ -200,13 +205,18 @@ The `XXXX` portion identifies specific characteristics.
 | Field | Type | Description |
 |-------|------|-------------|
 | `device_type` | string | Device type identifier |
-| `unit_id` | string | Unique device identifier (serial number) |
+| `serial_number` | string | Unit serial number (was `unit_id` in v1.0) |
+| `mac_address` | string | Primary hardware MAC address |
 | `firmware_version` | string | Semantic version of firmware |
 | `protocol_version` | string | BLE protocol version |
-| `capabilities` | string[] | Supported features |
-| `needs_provisioning` | boolean | Whether device needs setup |
+| `capabilities` | string[] | Supported capability names |
+| `needs_provisioning` | boolean | Whether device needs consumer setup |
 | `has_wifi` | boolean | Wi-Fi credentials configured |
 | `has_thread` | boolean | Thread credentials configured |
+
+> **Migration Note:** The `unit_id` field has been renamed to `serial_number` in v1.1
+> to align with the unified device architecture. Consumer apps should check for
+> both fields for backwards compatibility.
 
 **Capability Values:**
 
@@ -942,6 +952,7 @@ User Token:     53560030-0001-1000-8000-00805f9b34fb
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.1.0 | 2026-01-24 | Aligned with unified device architecture: renamed `unit_id` to `serial_number`, added `mac_address` to Device Info, added cross-references to Device Command Protocol and Capability Schema |
 | 1.0.0 | 2026-01-05 | Initial protocol specification |
 
 ---

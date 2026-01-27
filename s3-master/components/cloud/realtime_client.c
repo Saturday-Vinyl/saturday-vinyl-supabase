@@ -17,6 +17,7 @@
 #include "esp_timer.h"
 #include "esp_websocket_client.h"
 #include "esp_crt_bundle.h"
+#include "esp_mac.h"
 #include "cJSON.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -51,6 +52,7 @@ ESP_EVENT_DEFINE_BASE(REALTIME_EVENTS);
 #define PHX_EVENT_CLOSE             "phx_close"
 #define PHX_EVENT_ERROR             "phx_error"
 #define PHX_EVENT_BROADCAST         "broadcast"
+#define PHX_EVENT_POSTGRES_CHANGES  "postgres_changes"
 
 /* Custom event types from server */
 #define EVENT_UPDATE_AVAILABLE      "update_available"
@@ -75,7 +77,8 @@ typedef struct {
     realtime_config_t config;
     realtime_state_t state;
     esp_websocket_client_handle_t ws_client;
-    char channel_topic[64];         /* "device:{unit_id}" */
+    char channel_topic[128];        /* "realtime:public:device_commands" */
+    char device_mac[18];            /* MAC address with dashes for filtering */
     uint32_t msg_ref;               /* Phoenix message reference counter */
     char join_ref[16];              /* Join reference for channel */
 
@@ -104,6 +107,7 @@ static void websocket_event_handler(void *handler_args, esp_event_base_t base,
                                     int32_t event_id, void *event_data);
 static void handle_websocket_data(const char *data, int len);
 static void handle_phoenix_message(cJSON *msg);
+static void handle_postgres_changes(const cJSON *payload);
 static void handle_update_available(const cJSON *payload, const char *request_id);
 static void handle_command(const cJSON *payload);
 static void handle_config_update(const cJSON *payload);
@@ -111,6 +115,28 @@ static void send_phoenix_join(void);
 static void send_phoenix_heartbeat(void *arg);
 static void reconnect_timer_callback(void *arg);
 static esp_err_t build_websocket_url(char *url, size_t max_len);
+static void get_mac_address_dashed(char *mac_str, size_t len);
+
+/*******************************************************************************
+ * MAC Address Helper
+ ******************************************************************************/
+
+/**
+ * @brief Get MAC address formatted with dashes for channel subscription
+ *
+ * Per Device Command Protocol, devices subscribe to channel "device:{mac_address}"
+ * where mac_address has colons replaced with dashes (e.g., "AA-BB-CC-DD-EE-FF").
+ */
+static void get_mac_address_dashed(char *mac_str, size_t len)
+{
+    uint8_t mac[6];
+    if (esp_read_mac(mac, ESP_MAC_WIFI_STA) == ESP_OK && len >= 18) {
+        snprintf(mac_str, len, "%02X-%02X-%02X-%02X-%02X-%02X",
+                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    } else {
+        strncpy(mac_str, "00-00-00-00-00-00", len);
+    }
+}
 
 /*******************************************************************************
  * Initialization
@@ -229,16 +255,17 @@ esp_err_t realtime_client_connect(void)
         return ESP_ERR_INVALID_STATE;
     }
 
-    /* Get unit ID for channel subscription */
-    char unit_id[SUPABASE_UNIT_ID_MAX_LEN];
-    if (supabase_get_unit_id(unit_id, sizeof(unit_id)) != ESP_OK) {
-        ESP_LOGE(TAG, "Unit ID not configured");
-        return ESP_ERR_INVALID_STATE;
-    }
+    /* Get MAC address for Postgres Changes filter (Device Command Protocol) */
+    get_mac_address_dashed(s_rt.device_mac, sizeof(s_rt.device_mac));
 
-    /* Build channel topic */
-    snprintf(s_rt.channel_topic, sizeof(s_rt.channel_topic), "device:%s", unit_id);
-    ESP_LOGI(TAG, "Channel topic: %s", s_rt.channel_topic);
+    /* Build channel topic for Postgres Changes subscription
+     * Format: realtime:{schema}:{table}
+     * The filter is specified in the join payload, not the topic
+     */
+    snprintf(s_rt.channel_topic, sizeof(s_rt.channel_topic),
+             "realtime:public:device_commands");
+    ESP_LOGI(TAG, "Channel topic: %s (filter: device_mac=%s)",
+             s_rt.channel_topic, s_rt.device_mac);
 
     /* Build WebSocket URL */
     char ws_url[MAX_URL_SIZE];
@@ -564,7 +591,8 @@ static esp_err_t build_websocket_url(char *url, size_t max_len)
 
 static void send_phoenix_join(void)
 {
-    ESP_LOGI(TAG, "Joining channel: %s", s_rt.channel_topic);
+    ESP_LOGI(TAG, "Joining channel: %s (filter: device_mac=%s)",
+             s_rt.channel_topic, s_rt.device_mac);
 
     s_rt.msg_ref++;
     snprintf(s_rt.join_ref, sizeof(s_rt.join_ref), "%lu", (unsigned long)s_rt.msg_ref);
@@ -572,14 +600,37 @@ static void send_phoenix_join(void)
     cJSON *msg = cJSON_CreateObject();
     cJSON_AddStringToObject(msg, "topic", s_rt.channel_topic);
     cJSON_AddStringToObject(msg, "event", PHX_EVENT_JOIN);
-    cJSON_AddObjectToObject(msg, "payload");
+
+    /* Build Postgres Changes subscription payload
+     * This subscribes to INSERT events on device_commands table
+     * filtered by device_mac matching this device's MAC address
+     */
+    cJSON *payload = cJSON_AddObjectToObject(msg, "payload");
+
+    /* Postgres Changes configuration */
+    cJSON *config = cJSON_AddObjectToObject(payload, "config");
+
+    /* Configure postgres_changes subscription */
+    cJSON *postgres_changes = cJSON_AddArrayToObject(config, "postgres_changes");
+    cJSON *change_config = cJSON_CreateObject();
+    cJSON_AddStringToObject(change_config, "event", "INSERT");
+    cJSON_AddStringToObject(change_config, "schema", "public");
+    cJSON_AddStringToObject(change_config, "table", "device_commands");
+
+    /* Filter by device MAC address */
+    char filter[64];
+    snprintf(filter, sizeof(filter), "device_mac=eq.%s", s_rt.device_mac);
+    cJSON_AddStringToObject(change_config, "filter", filter);
+
+    cJSON_AddItemToArray(postgres_changes, change_config);
+
     cJSON_AddStringToObject(msg, "ref", s_rt.join_ref);
 
     char *json_str = cJSON_PrintUnformatted(msg);
     cJSON_Delete(msg);
 
     if (json_str != NULL) {
-        ESP_LOGD(TAG, "Sending: %s", json_str);
+        ESP_LOGI(TAG, "Join payload: %s", json_str);
         esp_websocket_client_send_text(s_rt.ws_client, json_str, strlen(json_str),
                                         pdMS_TO_TICKS(5000));
         free(json_str);
@@ -705,7 +756,19 @@ static void handle_phoenix_message(cJSON *msg)
                 s_rt.state = RT_STATE_SUBSCRIBED;
                 s_rt.stats.subscribed = true;
             } else {
-                ESP_LOGE(TAG, "Failed to join channel");
+                /* Log the actual error response for debugging */
+                const char *status_str = cJSON_IsString(status) ? status->valuestring : "null";
+                const cJSON *response = cJSON_GetObjectItem(payload, "response");
+                const cJSON *reason = response ? cJSON_GetObjectItem(response, "reason") : NULL;
+                const char *reason_str = cJSON_IsString(reason) ? reason->valuestring : "unknown";
+                ESP_LOGE(TAG, "Failed to join channel '%s': status=%s, reason=%s",
+                         s_rt.channel_topic, status_str, reason_str);
+                /* Log full payload for debugging */
+                char *payload_str = cJSON_Print(payload);
+                if (payload_str) {
+                    ESP_LOGW(TAG, "Join response payload: %s", payload_str);
+                    free(payload_str);
+                }
                 s_rt.state = RT_STATE_CONNECTED;
             }
         } else {
@@ -731,7 +794,14 @@ static void handle_phoenix_message(cJSON *msg)
         return;
     }
 
-    /* Handle broadcast messages on our channel */
+    /* Handle Postgres Changes events (database INSERT/UPDATE/DELETE) */
+    if (strcmp(event_str, PHX_EVENT_POSTGRES_CHANGES) == 0) {
+        ESP_LOGI(TAG, "Received postgres_changes event");
+        handle_postgres_changes(payload);
+        return;
+    }
+
+    /* Handle broadcast messages on our channel (legacy support) */
     if (strcmp(event_str, PHX_EVENT_BROADCAST) == 0 ||
         strcmp(topic_str, s_rt.channel_topic) == 0) {
 
@@ -765,6 +835,97 @@ static void handle_phoenix_message(cJSON *msg)
 /*******************************************************************************
  * Event Handlers
  ******************************************************************************/
+
+/**
+ * @brief Handle Postgres Changes events from Supabase Realtime
+ *
+ * Postgres Changes events have this structure:
+ * {
+ *   "data": {
+ *     "type": "INSERT",
+ *     "table": "device_commands",
+ *     "schema": "public",
+ *     "record": {
+ *       "id": "uuid",
+ *       "device_mac": "AA-BB-CC-DD-EE-FF",
+ *       "command": "reboot",
+ *       "parameters": {...},
+ *       ...
+ *     },
+ *     "old_record": null
+ *   },
+ *   "ids": [1]
+ * }
+ */
+static void handle_postgres_changes(const cJSON *payload)
+{
+    /* Extract the data object */
+    const cJSON *data = cJSON_GetObjectItem(payload, "data");
+    if (!cJSON_IsObject(data)) {
+        ESP_LOGW(TAG, "postgres_changes: missing 'data' object");
+        /* Log payload for debugging */
+        char *payload_str = cJSON_Print(payload);
+        if (payload_str) {
+            ESP_LOGW(TAG, "Payload: %s", payload_str);
+            free(payload_str);
+        }
+        return;
+    }
+
+    /* Get the event type (INSERT, UPDATE, DELETE) */
+    const cJSON *type = cJSON_GetObjectItem(data, "type");
+    const char *type_str = cJSON_IsString(type) ? type->valuestring : "unknown";
+    ESP_LOGI(TAG, "Postgres change: type=%s", type_str);
+
+    /* We only care about INSERT events for new commands */
+    if (strcmp(type_str, "INSERT") != 0) {
+        ESP_LOGD(TAG, "Ignoring non-INSERT event: %s", type_str);
+        return;
+    }
+
+    /* Get the inserted record */
+    const cJSON *record = cJSON_GetObjectItem(data, "record");
+    if (!cJSON_IsObject(record)) {
+        ESP_LOGW(TAG, "postgres_changes: missing 'record' object");
+        return;
+    }
+
+    /* Log the record for debugging */
+    char *record_str = cJSON_Print(record);
+    if (record_str) {
+        ESP_LOGI(TAG, "New command record: %s", record_str);
+        free(record_str);
+    }
+
+    /* Extract command fields from the record
+     * Expected fields: id, device_mac, command, parameters, status, created_at
+     */
+    const cJSON *cmd_id = cJSON_GetObjectItem(record, "id");
+    const cJSON *command = cJSON_GetObjectItem(record, "command");
+    const cJSON *parameters = cJSON_GetObjectItem(record, "parameters");
+
+    /* Build a command payload compatible with handle_command() */
+    cJSON *command_payload = cJSON_CreateObject();
+
+    if (cJSON_IsString(cmd_id)) {
+        cJSON_AddStringToObject(command_payload, "id", cmd_id->valuestring);
+    }
+
+    if (cJSON_IsString(command)) {
+        cJSON_AddStringToObject(command_payload, "command", command->valuestring);
+    }
+
+    /* Parameters could be an object or null */
+    if (cJSON_IsObject(parameters)) {
+        cJSON *params_copy = cJSON_Duplicate(parameters, true);
+        cJSON_AddItemToObject(command_payload, "parameters", params_copy);
+    }
+
+    /* Route to the command handler */
+    handle_command(command_payload);
+
+    cJSON_Delete(command_payload);
+}
 
 static void handle_update_available(const cJSON *payload, const char *request_id)
 {
