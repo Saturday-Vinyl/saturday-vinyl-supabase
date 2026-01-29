@@ -491,6 +491,7 @@ class _ConfigureStepState extends ConsumerState<_ConfigureStep> {
   final _ssidController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _obscurePassword = true;
+  Device? _selectedHub;
 
   @override
   void initState() {
@@ -660,7 +661,8 @@ class _ConfigureStepState extends ConsumerState<_ConfigureStep> {
   }
 
   Widget _buildThreadConfig(BuildContext context) {
-    // For crates, we need to get Thread credentials from the Hub
+    final hubsAsync = ref.watch(userHubsProvider);
+
     return SingleChildScrollView(
       padding: Spacing.pagePadding,
       child: Column(
@@ -691,33 +693,185 @@ class _ConfigureStepState extends ConsumerState<_ConfigureStep> {
             },
           ),
           const SizedBox(height: 32),
-          Icon(
-            Icons.hub_outlined,
-            size: 64,
-            color: SaturdayColors.primaryDark,
-          ),
-          const SizedBox(height: 24),
           Text(
-            'Hub Required',
+            'Select a Hub',
             style: Theme.of(context).textTheme.headlineSmall,
-            textAlign: TextAlign.center,
           ),
           const SizedBox(height: 8),
           Text(
-            'To set up a Crate, you need a Saturday Hub already configured. '
-            'The Crate will automatically receive network credentials from your Hub.',
+            'Choose a Saturday Hub to provide network credentials to your Crate. '
+            'The Hub must be online.',
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: SaturdayColors.secondary,
                 ),
-            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 16),
+          hubsAsync.when(
+            loading: () => const Center(
+              child: Padding(
+                padding: EdgeInsets.all(24),
+                child: CircularProgressIndicator(),
+              ),
+            ),
+            error: (error, _) => Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(
+                'Failed to load hubs: $error',
+                style: TextStyle(color: SaturdayColors.error),
+              ),
+            ),
+            data: (hubs) => _buildHubList(context, hubs),
           ),
           const SizedBox(height: 32),
           ElevatedButton(
-            onPressed: _submitThreadCredentials,
-            child: const Text('Connect to Hub'),
+            onPressed: _selectedHub != null ? _submitThreadCredentials : null,
+            child: const Text('Continue'),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildHubList(BuildContext context, List<Device> hubs) {
+    if (hubs.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          color: SaturdayColors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: SaturdayColors.secondary.withValues(alpha: 0.2)),
+        ),
+        child: Column(
+          children: [
+            Icon(
+              Icons.hub_outlined,
+              size: 48,
+              color: SaturdayColors.secondary,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'No Hubs Found',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'You need to set up a Saturday Hub before you can add a Crate. '
+              'The Hub provides the network connection for your Crate.',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: SaturdayColors.secondary,
+                  ),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      children: hubs.map((hub) {
+        final isOnline = hub.isEffectivelyOnline;
+        final isSelected = _selectedHub?.id == hub.id;
+
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: Material(
+            color: isSelected
+                ? SaturdayColors.primaryDark.withValues(alpha: 0.1)
+                : SaturdayColors.white,
+            borderRadius: BorderRadius.circular(12),
+            child: InkWell(
+              onTap: isOnline
+                  ? () {
+                      setState(() {
+                        _selectedHub = hub;
+                      });
+                    }
+                  : null,
+              borderRadius: BorderRadius.circular(12),
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: isSelected
+                        ? SaturdayColors.primaryDark
+                        : SaturdayColors.secondary.withValues(alpha: 0.2),
+                    width: isSelected ? 2 : 1,
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 48,
+                      height: 48,
+                      decoration: BoxDecoration(
+                        color: isOnline
+                            ? SaturdayColors.primaryDark.withValues(alpha: 0.1)
+                            : SaturdayColors.secondary.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Icon(
+                        Icons.hub_outlined,
+                        color: isOnline
+                            ? SaturdayColors.primaryDark
+                            : SaturdayColors.secondary,
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            hub.name,
+                            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                  color: isOnline ? null : SaturdayColors.secondary,
+                                ),
+                          ),
+                          const SizedBox(height: 4),
+                          Row(
+                            children: [
+                              Container(
+                                width: 8,
+                                height: 8,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: isOnline
+                                      ? SaturdayColors.success
+                                      : SaturdayColors.secondary,
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                isOnline ? 'Online' : 'Offline',
+                                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                      color: isOnline
+                                          ? SaturdayColors.success
+                                          : SaturdayColors.secondary,
+                                    ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (isSelected)
+                      Icon(
+                        Icons.check_circle,
+                        color: SaturdayColors.primaryDark,
+                      )
+                    else if (!isOnline)
+                      Icon(
+                        Icons.block,
+                        color: SaturdayColors.secondary.withValues(alpha: 0.5),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      }).toList(),
     );
   }
 
@@ -770,10 +924,28 @@ class _ConfigureStepState extends ConsumerState<_ConfigureStep> {
   }
 
   void _submitThreadCredentials() {
-    // In a real implementation, we'd get Thread credentials from the Hub
-    // For now, we'll show a placeholder
+    if (_selectedHub == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please select a Hub')),
+      );
+      return;
+    }
+
+    // Get Thread dataset from the selected hub's settings
+    final threadDataset = _selectedHub!.settings?['thread_dataset'] as String?;
+
+    if (threadDataset == null || threadDataset.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('The selected Hub does not have Thread credentials. '
+              'Please ensure the Hub is fully set up.'),
+        ),
+      );
+      return;
+    }
+
     ref.read(deviceSetupProvider.notifier).provisionThread(
-          threadDataset: '{}', // Placeholder
+          threadDataset: threadDataset,
         );
   }
 }

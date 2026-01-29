@@ -97,7 +97,9 @@ class PushNotificationHandler {
         break;
 
       case 'device_offline':
-        // For device alerts, we might want to show a local notification
+      case 'device_online':
+      case 'battery_low':
+        // For device alerts, show a local notification
         // even when the app is open (user might be on a different screen)
         _showLocalNotificationForMessage(message);
         break;
@@ -128,13 +130,20 @@ class PushNotificationHandler {
         break;
 
       case 'device_offline':
+      case 'battery_low':
         // Navigate to device detail screen
         final deviceId = message.data['device_id'] as String?;
         if (deviceId != null) {
-          _navigateTo('/account/device/$deviceId');
+          _navigateTo('/account/devices/$deviceId');
         } else {
           _navigateTo('/account');
         }
+        break;
+
+      case 'device_online':
+        // Device came back online - just navigate to account/devices
+        // since the device is working again, no urgent action needed
+        _navigateTo('/account');
         break;
 
       case 'flip_reminder':

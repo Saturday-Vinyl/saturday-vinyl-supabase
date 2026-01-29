@@ -112,8 +112,9 @@ class DeviceListScreen extends ConsumerWidget {
   }
 
   Widget _buildStatusSummary(BuildContext context, List<Device> devices) {
-    final onlineCount = devices.where((d) => d.isOnline).length;
-    final offlineCount = devices.where((d) => !d.isOnline).length;
+    // Use isEffectivelyOnline to account for heartbeat staleness
+    final onlineCount = devices.where((d) => d.isEffectivelyOnline).length;
+    final offlineCount = devices.where((d) => !d.isEffectivelyOnline).length;
     final lowBatteryCount = devices.where((d) => d.isLowBattery).length;
     final setupRequiredCount = devices.where((d) => d.needsSetup).length;
 

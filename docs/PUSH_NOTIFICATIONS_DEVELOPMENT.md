@@ -4,14 +4,21 @@ This document explains how to add new push notification types to the app. For in
 
 ## Architecture Overview
 
-Push notifications flow through this pipeline:
+Push notifications flow through two pipelines:
 
+### Event-Driven Pipeline
 ```
 Database Event → Database Webhook → Edge Function → FCM → Device
 ```
 
+### Scheduled Pipeline (for absence-of-event detection)
+```
+pg_cron → pg_net HTTP Request → Edge Function → FCM → Device
+```
+
 Key components:
-- **Database Webhook**: Triggers on table INSERT/UPDATE
+- **Database Webhook**: Triggers on table INSERT/UPDATE (for event-driven notifications)
+- **pg_cron + pg_net**: Scheduled invocation of Edge Functions (for polling-based detection like "device offline")
 - **Edge Function**: Processes the event, resolves user data, sends FCM push
 - **Flutter Handler**: Receives push and handles navigation/display
 
@@ -143,13 +150,36 @@ await supabase.from('notification_delivery_log').insert({
 
 ## FCM Push Helper
 
-The `process-now-playing-event` Edge Function contains helper functions for sending FCM pushes. You can copy or import these:
+A shared FCM helper module is available at `supabase/functions/_shared/send-push.ts`. Import it in your Edge Functions:
 
-- `sendFirebasePush()` - Sends a push via FCM v1 API
-- `getFirebaseAccessToken()` - Gets OAuth2 token for FCM
-- `pemToArrayBuffer()` - Converts PEM key to ArrayBuffer for signing
+```typescript
+import { sendPushNotification, isNotificationEnabled } from '../_shared/send-push.ts'
+```
 
-Required environment variables (already configured):
+### Available Functions
+
+**`sendPushNotification()`** - Sends a push notification via FCM v1 API
+```typescript
+await sendPushNotification(supabase, userId, {
+  type: 'device_offline',
+  title: 'Device Offline',
+  body: 'Your Saturday Hub has been offline for 10 minutes',
+  data: { device_id: deviceId },
+})
+```
+
+**`isNotificationEnabled()`** - Checks if a notification type is enabled in user preferences
+```typescript
+const enabled = await isNotificationEnabled(supabase, userId, 'device_offline')
+if (!enabled) return
+```
+
+**`getFirebaseAccessToken()`** - Gets OAuth2 token for FCM API
+**`pemToArrayBuffer()`** - Converts PEM key to ArrayBuffer for JWT signing
+
+### Required Environment Variables
+
+These are already configured in Supabase secrets:
 - `FIREBASE_PROJECT_ID`
 - `FIREBASE_PRIVATE_KEY`
 - `FIREBASE_CLIENT_EMAIL`
@@ -188,13 +218,247 @@ const message = {
 }
 ```
 
+## Notification Preferences
+
+User notification preferences are stored server-side in the `notification_preferences` table. This allows Edge Functions to check preferences before sending notifications.
+
+### Server-Side (Edge Functions)
+
+Use the `isNotificationEnabled()` helper to check preferences:
+
+```typescript
+import { isNotificationEnabled } from '../_shared/send-push.ts'
+
+// Check if user has enabled this notification type
+const enabled = await isNotificationEnabled(supabase, userId, 'device_offline')
+if (!enabled) {
+  console.log('User has disabled device_offline notifications')
+  return
+}
+```
+
+Preference field mapping:
+| Notification Type | Preference Field |
+|-------------------|------------------|
+| `now_playing` | `now_playing_enabled` |
+| `flip_reminder` | `flip_reminders_enabled` |
+| `device_offline` | `device_offline_enabled` |
+| `device_online` | `device_online_enabled` |
+| `battery_low` | `battery_low_enabled` |
+
+### Client-Side (Flutter)
+
+Use the `notificationPreferencesProvider` to read/write preferences:
+
+```dart
+// Read current preferences
+final prefs = ref.watch(notificationPreferencesProvider);
+if (prefs.deviceOfflineEnabled) { ... }
+
+// Update a preference
+ref.read(notificationPreferencesProvider.notifier).setDeviceOfflineEnabled(false);
+```
+
+The provider automatically syncs changes to the server.
+
 ## Existing Notification Types
 
 | Type | Trigger | Description |
 |------|---------|-------------|
 | `now_playing` | `now_playing_events` INSERT | Record placed/removed on hub |
-| `device_offline` | (not yet implemented) | Device goes offline |
-| `flip_reminder` | (not yet implemented) | Reminder to flip the record |
+| `device_offline` | `check-device-status` cron (1 min) | Device hasn't sent heartbeat in 10 minutes |
+| `device_online` | `check-device-status` cron (1 min) | Device comes back online after being offline |
+| `battery_low` | `check-device-status` cron (1 min) | Device battery drops below 20% |
+| `flip_reminder` | Local notification scheduled in app | Reminder to flip the record |
+
+## Device Heartbeats & Presence Detection
+
+Device status notifications rely on heartbeat data to determine whether a device is online or offline. This section explains the architecture.
+
+### Heartbeat Data Flow
+
+```
+Device → HTTP POST → Supabase device_heartbeats table
+                           ↓
+              Postgres Trigger (on INSERT)
+                           ↓
+              consumer_devices.last_seen_at updated
+                           ↓
+              check-device-status cron job queries consumer_devices
+                           ↓
+              Push notification sent if device is stale/recovered
+```
+
+### device_heartbeats Table
+
+The `device_heartbeats` table stores raw heartbeat data from all Saturday devices:
+
+```sql
+CREATE TABLE device_heartbeats (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    device_serial TEXT NOT NULL,      -- e.g., 'SV-HUB-00001'
+    device_type TEXT NOT NULL,        -- 'hub', 'crate'
+
+    -- Relay tracking (for Thread devices)
+    relay_type TEXT,                  -- 'hub', 'ios_app', 'android_app', NULL (direct)
+    relay_serial TEXT,                -- Serial of relay hub
+    relay_instance_id TEXT,           -- App instance ID if relayed via mobile
+
+    -- Device metrics
+    firmware_version TEXT,
+    battery_level INTEGER,
+    battery_charging BOOLEAN,
+    wifi_rssi INTEGER,
+    thread_rssi INTEGER,
+    uptime_sec INTEGER,
+    free_heap INTEGER,
+    events_queued INTEGER,
+
+    device_timestamp TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+**Relay Tracking:** Non-WiFi devices (e.g., Thread-connected crates) send heartbeats through a relay:
+- Hub relay: `relay_type='hub'`, `relay_serial='SV-HUB-00001'`
+- Mobile app relay: `relay_type='ios_app'`, `relay_instance_id='abc123'`
+- Direct WiFi: `relay_type=NULL`
+
+### Automatic Sync to consumer_devices
+
+A database trigger automatically updates `consumer_devices.last_seen_at` whenever a heartbeat is inserted:
+
+```sql
+CREATE TRIGGER device_heartbeat_sync_consumer_device
+AFTER INSERT ON device_heartbeats
+FOR EACH ROW
+EXECUTE FUNCTION sync_heartbeat_to_consumer_device();
+```
+
+The trigger also:
+- Updates `battery_level` and `firmware_version` if present in the heartbeat
+- Sets `status='online'` if the device was marked offline
+
+### Determining Device Presence
+
+**Server-side (Edge Functions):**
+The `check-device-status` function queries `consumer_devices.last_seen_at` directly:
+
+```typescript
+// Find devices offline for 10+ minutes
+const { data: offlineDevices } = await supabase
+  .from('consumer_devices')
+  .select('id, user_id, name, device_type, ...')
+  .lt('last_seen_at', offlineThreshold)
+  .neq('status', 'offline')
+```
+
+**Client-side (Flutter):**
+Use the `isEffectivelyOnline` getter on the Device model, which checks heartbeat staleness:
+
+```dart
+// In Device model
+bool get isEffectivelyOnline {
+  if (lastSeenAt == null) return false;
+  final staleness = DateTime.now().difference(lastSeenAt!);
+  return staleness < const Duration(minutes: 10);
+}
+
+// Usage in screens
+final onlineCount = devices.where((d) => d.isEffectivelyOnline).length;
+```
+
+**Important:** Do not rely on `consumer_devices.status` alone. This field can become stale. Always use `isEffectivelyOnline` in the Flutter app or check `last_seen_at` directly in Edge Functions.
+
+## Scheduled Edge Functions (pg_cron Setup)
+
+Some notifications cannot be triggered by database events because they detect the **absence** of an event (e.g., "device offline" means no heartbeat received in 10 minutes). For these, we use scheduled Edge Functions invoked via pg_cron.
+
+### Prerequisites
+
+Enable the required Postgres extensions in Supabase Dashboard → Database → Extensions:
+- `pg_cron` - Scheduling cron jobs in Postgres
+- `pg_net` - Making HTTP requests from Postgres
+
+### Setting Up a Scheduled Edge Function
+
+1. **Deploy the Edge Function first:**
+   ```bash
+   supabase functions deploy check-device-status
+   ```
+
+2. **Open Supabase Dashboard → SQL Editor**
+
+3. **Schedule the function using pg_cron:**
+
+   ```sql
+   -- Schedule check-device-status to run every minute
+   SELECT cron.schedule(
+     'check-device-status',  -- Job name (must be unique)
+     '* * * * *',            -- Cron expression (every minute)
+     $$
+     SELECT net.http_post(
+       url := 'https://YOUR_PROJECT_REF.supabase.co/functions/v1/check-device-status',
+       headers := jsonb_build_object(
+         'Content-Type', 'application/json',
+         'Authorization', 'Bearer YOUR_SERVICE_ROLE_KEY'
+       ),
+       body := '{}'::jsonb
+     ) AS request_id;
+     $$
+   );
+   ```
+
+   **Important:** Replace `YOUR_PROJECT_REF` with your Supabase project reference and `YOUR_SERVICE_ROLE_KEY` with your actual service role key. The service role key must be hardcoded in the SQL because `current_setting('app.settings.service_role_key')` is not available in the cron context.
+
+### Managing Cron Jobs
+
+**List all scheduled jobs:**
+```sql
+SELECT * FROM cron.job;
+```
+
+**View job run history:**
+```sql
+SELECT * FROM cron.job_run_details ORDER BY start_time DESC LIMIT 20;
+```
+
+**Unschedule a job:**
+```sql
+SELECT cron.unschedule('check-device-status');
+```
+
+**Update a job schedule:**
+```sql
+-- First unschedule, then reschedule with new parameters
+SELECT cron.unschedule('check-device-status');
+SELECT cron.schedule('check-device-status', '*/5 * * * *', $$ ... $$);
+```
+
+### Cron Expression Reference
+
+| Expression | Meaning |
+|------------|---------|
+| `* * * * *` | Every minute |
+| `*/5 * * * *` | Every 5 minutes |
+| `0 * * * *` | Every hour (at minute 0) |
+| `0 0 * * *` | Every day at midnight |
+| `0 9 * * 1` | Every Monday at 9 AM |
+
+### Troubleshooting Cron Jobs
+
+**Job not running:**
+1. Check that `pg_cron` and `pg_net` extensions are enabled
+2. Verify the job exists: `SELECT * FROM cron.job WHERE jobname = 'check-device-status';`
+3. Check job history for errors: `SELECT * FROM cron.job_run_details WHERE jobid = X ORDER BY start_time DESC;`
+
+**HTTP request failing:**
+1. Check Edge Function logs in Supabase Dashboard → Edge Functions → Logs
+2. Verify the function URL is correct
+3. Ensure the service role key is valid and has not been regenerated
+
+**"unrecognized configuration parameter" error:**
+If you see `ERROR: unrecognized configuration parameter "app.settings.service_role_key"`, you cannot use `current_setting()` in cron jobs. Hardcode the service role key directly in the SQL instead.
 
 ## Testing
 
@@ -231,3 +495,47 @@ const message = {
 1. By default, FCM doesn't show banners when app is in foreground
 2. Use `flutter_local_notifications` to show local notifications
 3. Or handle silently and update UI via state management
+
+### 401 THIRD_PARTY_AUTH_ERROR when sending to real FCM tokens
+
+**Symptoms:**
+- Test with fake FCM token returns 400 (auth works)
+- Test with real FCM token returns 401 with `THIRD_PARTY_AUTH_ERROR`
+- OAuth token exchange succeeds, but FCM call fails
+
+**Root Cause:** Missing or misconfigured APNs credentials in Firebase Console.
+
+For iOS push notifications, Firebase needs to forward pushes to Apple's APNs servers. If the APNs authentication key is missing or only configured for one environment (development vs production), you'll get this error.
+
+**Solution:**
+
+1. **Check Firebase Console → Project Settings → Cloud Messaging → Apple app configuration**
+
+2. **Ensure APNs Authentication Key is uploaded for BOTH environments:**
+   - Development APNs auth key (for debug builds / `flutter run`)
+   - Production APNs auth key (for release builds / TestFlight / App Store)
+
+   Note: The same `.p8` key file works for both - just upload it in both slots.
+
+3. **After adding/updating APNs keys:**
+   - Wait 5 minutes for Firebase to sync
+   - Delete stale FCM tokens from `push_notification_tokens` table
+   - Reinstall the app (delete and reinstall, not just restart)
+   - The app will register a fresh FCM token on launch
+
+4. **Verify the fix:**
+   ```sql
+   -- Check token was recently created
+   SELECT token, created_at FROM push_notification_tokens ORDER BY created_at DESC;
+   ```
+
+**Common scenarios that cause this:**
+- Initially configured only development APNs key, then started testing with TestFlight
+- Switching between `flutter run` (debug) and TestFlight (release) builds
+- FCM tokens registered before APNs key was properly configured become "stale"
+
+**Getting APNs Authentication Key:**
+1. Go to [Apple Developer Portal → Keys](https://developer.apple.com/account/resources/authkeys/list)
+2. Create or use existing APNs key
+3. Download the `.p8` file (Apple only allows one download!)
+4. Upload to Firebase Console for both development and production

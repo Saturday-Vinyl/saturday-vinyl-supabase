@@ -63,9 +63,7 @@ class AccountScreen extends ConsumerWidget {
               context,
               icon: Icons.notifications_outlined,
               title: 'Notifications',
-              onTap: () {
-                // TODO: Navigate to notifications
-              },
+              onTap: () => context.pushNamed(RouteNames.notificationSettings),
             ),
             _buildSettingsTile(
               context,
@@ -294,7 +292,8 @@ class AccountScreen extends ConsumerWidget {
       data: (devices) {
         final hubCount = devices.where((d) => d.isHub).length;
         final crateCount = devices.where((d) => d.isCrate).length;
-        final onlineCount = devices.where((d) => d.isOnline).length;
+        // Use isEffectivelyOnline to account for heartbeat staleness
+        final onlineCount = devices.where((d) => d.isEffectivelyOnline).length;
 
         return Column(
           children: [

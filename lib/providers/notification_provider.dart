@@ -1,22 +1,16 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:saturday_consumer_app/providers/notification_preferences_provider.dart';
 import 'package:saturday_consumer_app/services/notification_service.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
-/// Keys for notification preferences in SharedPreferences.
-class _NotificationPrefKeys {
-  static const flipRemindersEnabled = 'notifications.flip_reminders_enabled';
-  static const deviceAlertsEnabled = 'notifications.device_alerts_enabled';
-  static const batteryAlertsEnabled = 'notifications.battery_alerts_enabled';
-}
-
-/// State for notification preferences and permissions.
+/// State for notification permission status.
+///
+/// Note: Notification preference toggles (flip reminders, device alerts, etc.)
+/// are managed by [NotificationPreferencesState] which syncs with the server.
+/// This state only tracks OS-level permission status.
 class NotificationState {
   const NotificationState({
     this.hasPermission = false,
     this.permissionRequested = false,
-    this.flipRemindersEnabled = true,
-    this.deviceAlertsEnabled = true,
-    this.batteryAlertsEnabled = true,
   });
 
   /// Whether the user has granted notification permissions.
@@ -25,62 +19,32 @@ class NotificationState {
   /// Whether we've requested permissions this session.
   final bool permissionRequested;
 
-  /// Whether flip reminders are enabled.
-  final bool flipRemindersEnabled;
-
-  /// Whether device status alerts are enabled.
-  final bool deviceAlertsEnabled;
-
-  /// Whether battery low alerts are enabled.
-  final bool batteryAlertsEnabled;
-
-  /// Whether any notifications are effectively enabled.
-  bool get anyEnabled =>
-      hasPermission &&
-      (flipRemindersEnabled || deviceAlertsEnabled || batteryAlertsEnabled);
-
   NotificationState copyWith({
     bool? hasPermission,
     bool? permissionRequested,
-    bool? flipRemindersEnabled,
-    bool? deviceAlertsEnabled,
-    bool? batteryAlertsEnabled,
   }) {
     return NotificationState(
       hasPermission: hasPermission ?? this.hasPermission,
       permissionRequested: permissionRequested ?? this.permissionRequested,
-      flipRemindersEnabled: flipRemindersEnabled ?? this.flipRemindersEnabled,
-      deviceAlertsEnabled: deviceAlertsEnabled ?? this.deviceAlertsEnabled,
-      batteryAlertsEnabled: batteryAlertsEnabled ?? this.batteryAlertsEnabled,
     );
   }
 }
 
-/// Provider for managing notification state and preferences.
+/// Provider for managing notification permission state.
+///
+/// Note: Notification preference toggles are managed by [notificationPreferencesProvider]
+/// which syncs with the server. This provider handles OS-level permission state.
 class NotificationNotifier extends StateNotifier<NotificationState> {
   NotificationNotifier() : super(const NotificationState()) {
-    _loadPreferences();
+    _checkPermissions();
   }
 
-  SharedPreferences? _prefs;
-
-  /// Initialize and load preferences.
-  Future<void> _loadPreferences() async {
-    _prefs = await SharedPreferences.getInstance();
-
-    // Check current permission status.
+  /// Check current permission status.
+  Future<void> _checkPermissions() async {
     final hasPermission =
         await NotificationService.instance.checkPermissions();
 
-    state = state.copyWith(
-      hasPermission: hasPermission,
-      flipRemindersEnabled:
-          _prefs?.getBool(_NotificationPrefKeys.flipRemindersEnabled) ?? true,
-      deviceAlertsEnabled:
-          _prefs?.getBool(_NotificationPrefKeys.deviceAlertsEnabled) ?? true,
-      batteryAlertsEnabled:
-          _prefs?.getBool(_NotificationPrefKeys.batteryAlertsEnabled) ?? true,
-    );
+    state = state.copyWith(hasPermission: hasPermission);
   }
 
   /// Request notification permissions from the user.
@@ -95,36 +59,17 @@ class NotificationNotifier extends StateNotifier<NotificationState> {
     return granted;
   }
 
-  /// Toggle flip reminders.
-  Future<void> setFlipRemindersEnabled(bool enabled) async {
-    state = state.copyWith(flipRemindersEnabled: enabled);
-    await _prefs?.setBool(_NotificationPrefKeys.flipRemindersEnabled, enabled);
-
-    // Cancel any pending flip reminders if disabled.
-    if (!enabled) {
-      await NotificationService.instance.cancelFlipReminder();
-    }
-  }
-
-  /// Toggle device alerts.
-  Future<void> setDeviceAlertsEnabled(bool enabled) async {
-    state = state.copyWith(deviceAlertsEnabled: enabled);
-    await _prefs?.setBool(_NotificationPrefKeys.deviceAlertsEnabled, enabled);
-  }
-
-  /// Toggle battery alerts.
-  Future<void> setBatteryAlertsEnabled(bool enabled) async {
-    state = state.copyWith(batteryAlertsEnabled: enabled);
-    await _prefs?.setBool(_NotificationPrefKeys.batteryAlertsEnabled, enabled);
-  }
-
   /// Schedule a flip reminder for the current now playing album.
+  ///
+  /// Note: This checks the permission state but the enabled state should be
+  /// checked by the caller using [notificationPreferencesProvider].
   Future<void> scheduleFlipReminder({
     required String albumTitle,
     required String nextSide,
     required Duration delay,
+    required bool flipRemindersEnabled,
   }) async {
-    if (!state.hasPermission || !state.flipRemindersEnabled) return;
+    if (!state.hasPermission || !flipRemindersEnabled) return;
 
     await NotificationService.instance.scheduleFlipReminder(
       albumTitle: albumTitle,
@@ -139,12 +84,16 @@ class NotificationNotifier extends StateNotifier<NotificationState> {
   }
 
   /// Show a battery low alert for a device.
+  ///
+  /// Note: This checks the permission state but the enabled state should be
+  /// checked by the caller using [notificationPreferencesProvider].
   Future<void> showBatteryLowAlert({
     required String deviceId,
     required String deviceName,
     required int batteryLevel,
+    required bool batteryAlertsEnabled,
   }) async {
-    if (!state.hasPermission || !state.batteryAlertsEnabled) return;
+    if (!state.hasPermission || !batteryAlertsEnabled) return;
 
     await NotificationService.instance.showDeviceAlert(
       deviceId: deviceId,
@@ -155,11 +104,15 @@ class NotificationNotifier extends StateNotifier<NotificationState> {
   }
 
   /// Show a device offline alert.
+  ///
+  /// Note: This checks the permission state but the enabled state should be
+  /// checked by the caller using [notificationPreferencesProvider].
   Future<void> showDeviceOfflineAlert({
     required String deviceId,
     required String deviceName,
+    required bool deviceAlertsEnabled,
   }) async {
-    if (!state.hasPermission || !state.deviceAlertsEnabled) return;
+    if (!state.hasPermission || !deviceAlertsEnabled) return;
 
     await NotificationService.instance.showDeviceAlert(
       deviceId: deviceId,
@@ -195,10 +148,10 @@ void scheduleFlipReminderIfNeeded({
   required Ref ref,
 }) {
   final notificationState = ref.read(notificationProvider);
+  final prefsState = ref.read(notificationPreferencesProvider);
 
-  // Check if notifications are enabled.
-  if (!notificationState.hasPermission ||
-      !notificationState.flipRemindersEnabled) {
+  // Check if notifications are enabled (permission + preference).
+  if (!notificationState.hasPermission || !prefsState.flipRemindersEnabled) {
     return;
   }
 
@@ -216,6 +169,7 @@ void scheduleFlipReminderIfNeeded({
     albumTitle: albumTitle,
     nextSide: nextSide,
     delay: remaining,
+    flipRemindersEnabled: prefsState.flipRemindersEnabled,
   );
 }
 
