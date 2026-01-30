@@ -2,9 +2,17 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:saturday_app/config/theme.dart';
+// USB monitoring imports - re-enable when firmware responds to get_status
+// import 'package:saturday_app/models/connected_device.dart';
+// import 'package:saturday_app/providers/device_communication_provider.dart';
+// import 'package:saturday_app/widgets/device_communication/usb_device_indicator.dart';
+// import 'package:saturday_app/screens/units/unit_detail_screen.dart' as new_unit;
+// import 'package:saturday_app/repositories/unit_repository.dart';
 import 'package:saturday_app/repositories/production_unit_repository.dart';
 import 'package:saturday_app/screens/dashboard/dashboard_screen.dart';
+import 'package:saturday_app/screens/device_communication/device_communication_screen.dart';
 import 'package:saturday_app/screens/device_types/device_type_list_screen.dart';
 import 'package:saturday_app/screens/files/files_screen.dart';
 import 'package:saturday_app/screens/products/product_list_screen.dart';
@@ -25,18 +33,22 @@ import 'package:saturday_app/widgets/navigation/sidebar_nav.dart';
 import 'package:saturday_app/widgets/production/qr_fab_button.dart';
 
 /// Main app scaffold with sidebar navigation
-class MainScaffold extends StatefulWidget {
+class MainScaffold extends ConsumerStatefulWidget {
   const MainScaffold({super.key});
 
   @override
-  State<MainScaffold> createState() => _MainScaffoldState();
+  ConsumerState<MainScaffold> createState() => _MainScaffoldState();
 }
 
-class _MainScaffoldState extends State<MainScaffold> {
+class _MainScaffoldState extends ConsumerState<MainScaffold> {
   String _currentRoute = '/dashboard';
   KeyboardListenerService? _keyboardListener;
   final _qrScannerService = QRScannerService();
   final _unitRepository = ProductionUnitRepository();
+
+  // USB monitoring - re-enable when firmware responds to get_status
+  // final _newUnitRepository = UnitRepository();
+  // bool _usbMonitorInitialized = false;
 
   bool get _isDesktop =>
       !kIsWeb && (Platform.isMacOS || Platform.isWindows || Platform.isLinux);
@@ -49,6 +61,15 @@ class _MainScaffoldState extends State<MainScaffold> {
     if (_isDesktop) {
       _initializeKeyboardListener();
     }
+
+    // NOTE: USB monitoring disabled for debugging
+    // Re-enable once firmware responds correctly to get_status command
+    // WidgetsBinding.instance.addPostFrameCallback((_) {
+    //   if (_isDesktop && !_usbMonitorInitialized) {
+    //     _initializeUSBMonitoring();
+    //     _usbMonitorInitialized = true;
+    //   }
+    // });
   }
 
   @override
@@ -60,8 +81,15 @@ class _MainScaffoldState extends State<MainScaffold> {
       );
       _keyboardListener!.dispose();
     }
+    // USB monitor cleanup is handled by Riverpod provider disposal
     super.dispose();
   }
+
+  // USB monitoring - re-enable when firmware responds to get_status
+  // void _initializeUSBMonitoring() {
+  //   ref.read(usbMonitorProvider.notifier).startMonitoring();
+  //   AppLogger.info('USB device monitoring initialized');
+  // }
 
   void _initializeKeyboardListener() {
     _keyboardListener = KeyboardListenerService()
@@ -164,7 +192,10 @@ class _MainScaffoldState extends State<MainScaffold> {
       case '/production':
         return const ProductionUnitsScreen();
       case '/service-mode':
+        // Legacy service mode screen (deprecated)
         return ServiceModeScreen();
+      case '/device-communication':
+        return const DeviceCommunicationScreen();
       case '/files':
         return const FilesScreen();
       case '/tags':
@@ -177,6 +208,60 @@ class _MainScaffoldState extends State<MainScaffold> {
         return const DashboardScreen();
     }
   }
+
+  // USB indicator callbacks - re-enable when firmware responds to get_status
+  // /// Navigate to unit detail screen by serial number
+  // Future<void> _navigateToUnit(String serialNumber) async {
+  //   try {
+  //     final unit = await _newUnitRepository.getUnitBySerialNumber(serialNumber);
+  //     if (unit != null && mounted) {
+  //       Navigator.of(context).push(
+  //         MaterialPageRoute(
+  //           builder: (context) => new_unit.UnitDetailScreen(unitId: unit.id),
+  //         ),
+  //       );
+  //     } else {
+  //       if (mounted) {
+  //         ScaffoldMessenger.of(context).showSnackBar(
+  //           SnackBar(
+  //             content: Text('Unit $serialNumber not found'),
+  //             backgroundColor: SaturdayColors.error,
+  //           ),
+  //         );
+  //       }
+  //     }
+  //   } catch (e) {
+  //     AppLogger.error('Failed to navigate to unit', e);
+  //     if (mounted) {
+  //       ScaffoldMessenger.of(context).showSnackBar(
+  //         SnackBar(
+  //           content: Text('Error: $e'),
+  //           backgroundColor: SaturdayColors.error,
+  //         ),
+  //       );
+  //     }
+  //   }
+  // }
+  //
+  // /// Open device communication screen for a device
+  // void _openDeviceCommunication(ConnectedDevice device) {
+  //   Navigator.of(context).push(
+  //     MaterialPageRoute(
+  //       builder: (context) => DeviceCommunicationScreen(initialDevice: device),
+  //     ),
+  //   );
+  // }
+  //
+  // /// Open provisioning flow for an unprovisioned device
+  // void _openProvisioningFlow(ConnectedDevice device) {
+  //   // For now, just open the device communication screen
+  //   // A dedicated provisioning flow can be added later
+  //   Navigator.of(context).push(
+  //     MaterialPageRoute(
+  //       builder: (context) => DeviceCommunicationScreen(initialDevice: device),
+  //     ),
+  //   );
+  // }
 
   @override
   Widget build(BuildContext context) {

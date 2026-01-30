@@ -1,19 +1,70 @@
 import 'package:logger/logger.dart';
 
+/// Compact single-line log printer for cleaner console output
+class CompactPrinter extends LogPrinter {
+  static final _levelEmojis = {
+    Level.trace: '🔍',
+    Level.debug: '🐛',
+    Level.info: '💡',
+    Level.warning: '⚠️',
+    Level.error: '❌',
+    Level.fatal: '💀',
+  };
+
+  static final _levelLabels = {
+    Level.trace: 'TRACE',
+    Level.debug: 'DEBUG',
+    Level.info: 'INFO',
+    Level.warning: 'WARN',
+    Level.error: 'ERROR',
+    Level.fatal: 'FATAL',
+  };
+
+  @override
+  List<String> log(LogEvent event) {
+    final emoji = _levelEmojis[event.level] ?? '📝';
+    final label = _levelLabels[event.level] ?? 'LOG';
+    final time = _formatTime(event.time);
+    final message = event.message;
+
+    final lines = <String>[];
+
+    // Main log line - compact single line
+    lines.add('$emoji $time [$label] $message');
+
+    // Only show error/stacktrace for warnings and above
+    if (event.error != null && event.level.index >= Level.warning.index) {
+      lines.add('   Error: ${event.error}');
+    }
+    if (event.stackTrace != null && event.level.index >= Level.error.index) {
+      // Show only first 3 stack frames for errors
+      final frames = event.stackTrace.toString().split('\n').take(3);
+      for (final frame in frames) {
+        if (frame.trim().isNotEmpty) {
+          lines.add('   $frame');
+        }
+      }
+    }
+
+    return lines;
+  }
+
+  String _formatTime(DateTime time) {
+    return '${time.hour.toString().padLeft(2, '0')}:'
+        '${time.minute.toString().padLeft(2, '0')}:'
+        '${time.second.toString().padLeft(2, '0')}.'
+        '${time.millisecond.toString().padLeft(3, '0')}';
+  }
+}
+
 /// Application logger wrapper
 /// Provides consistent logging throughout the app
 class AppLogger {
   AppLogger._(); // Private constructor
 
   static final Logger _logger = Logger(
-    printer: PrettyPrinter(
-      methodCount: 2, // Number of method calls to be displayed
-      errorMethodCount: 8, // Number of method calls if stacktrace is provided
-      lineLength: 120, // Width of the output
-      colors: true, // Colorful log messages
-      printEmojis: true, // Print an emoji for each log message
-      dateTimeFormat: DateTimeFormat.onlyTimeAndSinceStart, // Include timestamp
-    ),
+    printer: CompactPrinter(),
+    level: Level.debug, // Set minimum level (trace < debug < info < warning < error < fatal)
   );
 
   /// Log debug message

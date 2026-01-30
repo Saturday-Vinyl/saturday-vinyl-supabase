@@ -28,6 +28,18 @@ final deviceTypeProvider =
   return await repository.getById(id);
 });
 
+/// Provider for a single device type by slug (family provider)
+final deviceTypeBySlugProvider =
+    FutureProvider.family<DeviceType?, String>((ref, slug) async {
+  final repository = ref.watch(deviceTypeRepositoryProvider);
+  try {
+    return await repository.getBySlug(slug);
+  } catch (e) {
+    // Return null if not found
+    return null;
+  }
+});
+
 /// Provider for device type management actions
 final deviceTypeManagementProvider =
     Provider((ref) => DeviceTypeManagement(ref));

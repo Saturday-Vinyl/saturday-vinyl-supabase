@@ -20,6 +20,7 @@ class UnitsListScreen extends ConsumerStatefulWidget {
 class _UnitsListScreenState extends ConsumerState<UnitsListScreen> {
   final _searchController = TextEditingController();
   bool _isRealtimeInitialized = false;
+  List<String>? _lastInitializedUnitIds;
 
   @override
   void initState() {
@@ -35,6 +36,27 @@ class _UnitsListScreenState extends ConsumerState<UnitsListScreen> {
       ref.read(unitRealtimeUpdatesProvider.notifier).startListening();
       _isRealtimeInitialized = true;
     }
+  }
+
+  /// Initialize realtime state only when units data actually changes
+  void _initializeFromUnitsIfNeeded(List<UnitListItem> units) {
+    // Build a list of unit IDs to compare
+    final currentUnitIds = units.map((u) => u.id).toList()..sort();
+
+    // Only initialize if the unit list has changed
+    if (_lastInitializedUnitIds == null ||
+        !_listEquals(_lastInitializedUnitIds!, currentUnitIds)) {
+      _lastInitializedUnitIds = currentUnitIds;
+      ref.read(unitRealtimeUpdatesProvider.notifier).initializeFromUnits(units);
+    }
+  }
+
+  bool _listEquals(List<String> a, List<String> b) {
+    if (a.length != b.length) return false;
+    for (int i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 
   @override
@@ -107,11 +129,9 @@ class _UnitsListScreenState extends ConsumerState<UnitsListScreen> {
           Expanded(
             child: unitsAsync.when(
               data: (units) {
-                // Initialize realtime state with loaded units
+                // Initialize realtime state only when unit list changes
                 WidgetsBinding.instance.addPostFrameCallback((_) {
-                  ref
-                      .read(unitRealtimeUpdatesProvider.notifier)
-                      .initializeFromUnits(units);
+                  _initializeFromUnitsIfNeeded(units);
                 });
 
                 return _buildUnitList(units, realtimeUpdates);

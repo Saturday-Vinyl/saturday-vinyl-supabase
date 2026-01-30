@@ -95,10 +95,10 @@ class SidebarNav extends ConsumerWidget {
                     isSelected: currentRoute == '/production',
                   ),
                   _buildNavItem(
-                    icon: Icons.build,
-                    label: 'Service Mode',
-                    route: '/service-mode',
-                    isSelected: currentRoute == '/service-mode',
+                    icon: Icons.usb,
+                    label: 'Device Communication',
+                    route: '/device-communication',
+                    isSelected: currentRoute == '/device-communication',
                   ),
                   _buildNavItem(
                     icon: Icons.folder,
