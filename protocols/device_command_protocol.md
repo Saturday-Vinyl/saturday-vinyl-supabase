@@ -1,6 +1,6 @@
 # Saturday Device Command Protocol
 
-**Version:** 1.3.0
+**Version:** 1.2.3
 **Last Updated:** 2026-01-27
 **Audience:** Saturday Admin App developers, Firmware engineers, Consumer App developers
 
@@ -69,69 +69,20 @@ For factory provisioning and local diagnostics via USB serial connection.
 
 For remote device management via cloud WebSocket.
 
-**Channel Subscription (Postgres Changes):**
-- Device subscribes to Postgres Changes on `device_commands` table
-- Channel topic: `realtime:public:device_commands`
-- Filter: `device_mac=eq.{mac_address}` (MAC with dashes, e.g., `AA-BB-CC-DD-EE-01`)
+**Channel Subscription:**
+- Device subscribes to: `device:{mac_address}` (colons replaced with dashes)
+- Example: `device:AA-BB-CC-DD-EE-01` for MAC `AA:BB:CC:DD:EE:01`
 - Uses Phoenix protocol over WebSocket
-
-**Phoenix Join Payload:**
-```json
-{
-  "topic": "realtime:public:device_commands",
-  "event": "phx_join",
-  "payload": {
-    "config": {
-      "postgres_changes": [{
-        "event": "INSERT",
-        "schema": "public",
-        "table": "device_commands",
-        "filter": "device_mac=eq.AA-BB-CC-DD-EE-01"
-      }]
-    }
-  },
-  "ref": "1"
-}
-```
 
 **Command Flow:**
 ```
-1. Admin App → INSERT into device_commands table (with device_mac column)
-2. Supabase Realtime → postgres_changes event to subscribed devices
-3. Device receives INSERT event via WebSocket
-4. Device extracts command from record payload
+1. Admin App → INSERT into device_commands table
+2. Database Trigger → pg_notify to Supabase Realtime
+3. Supabase Realtime → Broadcast to device:{mac_address} channel
+4. Device receives command via WebSocket
 5. Device executes command
 6. Device → PATCH device_commands with status/result via REST API
 ```
-
-**Postgres Changes Event Format:**
-```json
-{
-  "topic": "realtime:public:device_commands",
-  "event": "postgres_changes",
-  "payload": {
-    "data": {
-      "type": "INSERT",
-      "table": "device_commands",
-      "schema": "public",
-      "record": {
-        "id": "uuid",
-        "device_mac": "AA-BB-CC-DD-EE-01",
-        "command": "reboot",
-        "parameters": {...},
-        "status": "pending",
-        "created_at": "2026-01-27T12:00:00Z"
-      },
-      "old_record": null
-    }
-  }
-}
-```
-
-**Supabase Setup Required:**
-1. Enable Realtime for the `device_commands` table in Supabase Dashboard
-2. Ensure the table has a `device_mac` column (text, stores MAC with dashes)
-3. Enable Row Level Security (RLS) if needed for production
 
 **Status Reporting:**
 - Device sends heartbeats via REST POST to `device_heartbeats` table
@@ -530,6 +481,49 @@ Additional capability-specific fields (e.g., `wifi_rssi`, `rfid_tag_count`) are 
 ### Storage
 
 Heartbeats are stored in the `device_heartbeats` table with automatic cleanup (24-hour retention).
+
+### Relayed Heartbeats
+
+Some devices lack direct cloud connectivity (e.g., Thread-only devices without WiFi). These devices send heartbeats through a **relay** - another device or application that has cloud access.
+
+**Relay Types:**
+- **Hub**: A Saturday Hub with WiFi connectivity relays heartbeats for Thread-connected devices
+- **Consumer Phone**: A consumer's mobile app can relay heartbeats for BLE-connected devices during setup
+
+**Relayed Heartbeat Format:**
+
+When a relay forwards a heartbeat, it adds relay identification fields:
+
+```json
+{
+  "mac_address": "AA:BB:CC:DD:EE:FF",
+  "unit_id": "SV-CRT-000001",
+  "device_type": "crate",
+  "firmware_version": "1.2.0",
+  "uptime_sec": 123456,
+  "free_heap": 245760,
+  "min_free_heap": 180224,
+  "largest_free_block": 114688,
+  "relay_device_type": "hub",
+  "relay_instance_id": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+**Relay Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `relay_device_type` | string | Slug of the relay's device type (e.g., "hub", "crate") |
+| `relay_instance_id` | uuid | Instance identifier of the relay (device ID or session ID for non-device relays) |
+
+**Relay Implementation:**
+
+1. The originating device sends its heartbeat via Thread/BLE to the relay
+2. The relay receives the heartbeat payload
+3. The relay adds `relay_device_type` and `relay_instance_id` fields
+4. The relay POSTs the complete payload to the cloud
+
+The originating device's fields (`mac_address`, `unit_id`, etc.) remain unchanged - the relay only adds relay identification.
 
 ---
 
@@ -1193,14 +1187,14 @@ Reference implementation: `saturday-player-hub/s3-master/components/cloud/realti
 
 Key components:
 - Phoenix protocol WebSocket client
-- Postgres Changes subscription to `device_commands` table filtered by `device_mac`
+- Channel subscription to `device:{mac_address}`
 - Heartbeat timer (30-second interval)
 - JSON command parsing
 - REST API for status reporting
 
 ### Database Tables
 
-- `device_commands` - Command queue with `device_mac` column (must have Realtime enabled)
+- `device_commands` - Command queue with broadcast trigger
 - `device_heartbeats` - Heartbeat storage with 24-hour retention
 - `devices` - Device registry with `last_seen_at` tracking
 
@@ -1210,7 +1204,7 @@ Key components:
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.3.0 | 2026-01-27 | **Breaking**: Changed Supabase Realtime subscription from custom broadcast channel to Postgres Changes; devices now subscribe to `realtime:public:device_commands` with `device_mac` filter; requires `device_mac` column in `device_commands` table |
+| 1.2.3 | 2026-01-27 | Added Relayed Heartbeats section documenting `relay_device_type` and `relay_instance_id` fields for devices without direct cloud access |
 | 1.2.2 | 2026-01-27 | Changed `uptime_ms` to `uptime_sec` (seconds instead of milliseconds); added `unit_id` and `device_type` to standard heartbeat fields |
 | 1.2.1 | 2026-01-26 | Added standard heartbeat fields section with required memory health fields (`min_free_heap`, `largest_free_block`) |
 | 1.2.0 | 2026-01-26 | Flattened all request/response payloads; capability schemas now use `factory_input`/`factory_output`/`consumer_input`/`consumer_output`/`heartbeat`/`tests`; added Firmware JSON Schema section; added ESP-IDF Implementation Guide |
