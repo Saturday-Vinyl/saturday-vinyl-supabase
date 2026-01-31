@@ -457,9 +457,10 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
                 ESP_LOGE(TAG, "Connection failed - bad password or network rejected");
                 s_wifi.state = WIFI_STATE_DISCONNECTED;
 
-                /* Post connection failed event */
+                /* Post connection failed event with reason */
+                wifi_connection_failed_info_t fail_info = { .reason = event->reason };
                 esp_event_post(WIFI_MANAGER_EVENTS, WIFI_MANAGER_EVENT_CONNECTION_FAILED,
-                               NULL, 0, portMAX_DELAY);
+                               &fail_info, sizeof(fail_info), portMAX_DELAY);
                 break;
             }
 
@@ -469,9 +470,10 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
                 ESP_LOGE(TAG, "Network '%s' not found", s_wifi.ssid);
                 s_wifi.state = WIFI_STATE_DISCONNECTED;
 
-                /* Post connection failed event */
+                /* Post connection failed event with reason */
+                wifi_connection_failed_info_t fail_info = { .reason = event->reason };
                 esp_event_post(WIFI_MANAGER_EVENTS, WIFI_MANAGER_EVENT_CONNECTION_FAILED,
-                               NULL, 0, portMAX_DELAY);
+                               &fail_info, sizeof(fail_info), portMAX_DELAY);
                 break;
             }
 

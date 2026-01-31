@@ -1,8 +1,8 @@
 # Saturday Vinyl BLE Provisioning Protocol
 
-**Version:** 1.1.0
+**Version:** 1.2.0
 **Status:** Draft
-**Last Updated:** 2026-01-24
+**Last Updated:** 2026-01-30
 **Audience:** Saturday Vinyl app developers, firmware engineers
 
 > **Note:** This protocol works with the unified device architecture. See
@@ -299,6 +299,32 @@ Write: [0xFF, 0x52, 0x45, 0x53, 0x54]
 | `error` | Error details |
 | `progress` | Operation progress |
 
+**Error Response Format:**
+
+When Wi-Fi connection fails, the device sends a specific error code to help the app provide actionable feedback:
+
+```json
+{
+  "type": "error",
+  "code": "AUTH_FAILED",
+  "message": "Incorrect password"
+}
+```
+
+**Error Codes:**
+
+| Code | Message | Description | User Action |
+|------|---------|-------------|-------------|
+| `AUTH_FAILED` | "Incorrect password" | WiFi authentication failed (wrong password) | Prompt to re-enter password |
+| `NETWORK_NOT_FOUND` | "Network not found" | SSID not found in scan | Verify network name, check range |
+| `TIMEOUT` | "Connection timed out" | No response after 45 seconds | Check network availability |
+| `WIFI_FAILED` | "Connection failed" | Other WiFi errors | Generic retry |
+| `STORAGE_ERROR` | "Failed to store credentials" | NVS write failed | Retry or factory reset |
+
+> **Note:** `AUTH_FAILED` and `NETWORK_NOT_FOUND` errors are reported within 1-2 seconds
+> of the connection attempt, allowing for immediate user feedback. Previously, all errors
+> waited for the 45-second timeout.
+
 **Wi-Fi Scan Response Example:**
 ```json
 {
@@ -560,23 +586,67 @@ Long-running commands (CONNECT, SCAN_WIFI) provide progress via Status and Respo
 
 ### Recovery Procedures
 
-| Error | Recovery |
-|-------|----------|
-| `ERROR_INVALID_SSID` | Re-write valid SSID |
-| `ERROR_INVALID_PASSWORD` | Re-write valid password |
-| `ERROR_WIFI_FAILED` | Check credentials, retry |
-| `ERROR_WIFI_TIMEOUT` | Check network availability, retry |
-| `ERROR_CLOUD_FAILED` | Retry, or check cloud status |
-| `ERROR_BUSY` | Wait 1s, retry command |
+**Status Characteristic Errors (0x0002):**
+
+| Status Code | Recovery |
+|-------------|----------|
+| `ERROR_INVALID_SSID` (0x10) | Re-write valid SSID |
+| `ERROR_INVALID_PASSWORD` (0x11) | Re-write valid password |
+| `ERROR_WIFI_FAILED` (0x12) | Check credentials, retry |
+| `ERROR_WIFI_TIMEOUT` (0x13) | Check network availability, retry |
+| `ERROR_CLOUD_FAILED` (0x15) | Retry, or check cloud status |
+| `ERROR_BUSY` (0x1E) | Wait 1s, retry command |
+
+**Response Characteristic Error Codes (0x0004):**
+
+The Response characteristic provides more specific error information via JSON:
+
+| Response Code | Status Byte | Recovery |
+|---------------|-------------|----------|
+| `AUTH_FAILED` | 0x12 | Wrong password - prompt user to re-enter |
+| `NETWORK_NOT_FOUND` | 0x12 | SSID not found - verify network name |
+| `TIMEOUT` | 0x13 | Connection timed out - check network availability |
+| `WIFI_FAILED` | 0x12 | Generic failure - retry connection |
+| `STORAGE_ERROR` | 0x1F | NVS failure - retry or factory reset |
+
+> **Important:** Apps should primarily use the Response characteristic JSON `code` field
+> for error handling, as it provides more specific information than the Status byte alone.
+> For example, both `AUTH_FAILED` and `NETWORK_NOT_FOUND` map to Status 0x12, but require
+> different user actions.
 
 ### App UI Recommendations
 
-1. **Show clear error messages** - Map status codes to user-friendly text
-2. **Offer retry option** - Most errors are recoverable
-3. **Timeout handling** - If no status update for 30s, show timeout message
-4. **Connection loss** - If BLE disconnects during provisioning, show reconnect option
+1. **Show clear error messages** - Use Response characteristic `code` field for specific errors
+2. **Immediate feedback** - `AUTH_FAILED` and `NETWORK_NOT_FOUND` errors arrive within 1-2 seconds
+3. **Offer retry option** - Most errors are recoverable
+4. **Timeout handling** - The device times out after 45 seconds if no WiFi events are received
+5. **Connection loss** - If BLE disconnects during provisioning, show reconnect option
 
 ### Example Error Messages
+
+**Swift (using Response characteristic JSON):**
+
+```swift
+func handleResponse(_ json: [String: Any]) {
+    guard let type = json["type"] as? String, type == "error",
+          let code = json["code"] as? String else { return }
+
+    switch code {
+    case "AUTH_FAILED":
+        showError("Incorrect password. Please check and try again.")
+    case "NETWORK_NOT_FOUND":
+        showError("Network not found. Make sure the network name is correct.")
+    case "TIMEOUT":
+        showError("Connection timed out. Make sure you're near the router.")
+    case "WIFI_FAILED":
+        showError("Could not connect to Wi-Fi. Please try again.")
+    default:
+        showError("An unexpected error occurred.")
+    }
+}
+```
+
+**Swift (using Status characteristic byte - legacy):**
 
 ```swift
 func errorMessage(for status: UInt8) -> String {
@@ -948,10 +1018,21 @@ User Token:     53560030-0001-1000-8000-00805f9b34fb
 0xFF = FACTORY_RESET (requires confirmation: 0x52 0x45 0x53 0x54)
 ```
 
-### D. Version History
+### D. Response Error Codes Quick Reference
+
+```
+AUTH_FAILED       = Incorrect WiFi password (immediate, ~1-2s)
+NETWORK_NOT_FOUND = SSID not found (immediate, ~1-2s)
+TIMEOUT           = No WiFi event received within 45s
+WIFI_FAILED       = Other WiFi connection errors
+STORAGE_ERROR     = Failed to store credentials in NVS
+```
+
+### E. Version History
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.2.0 | 2026-01-30 | Added specific WiFi error codes (`AUTH_FAILED`, `NETWORK_NOT_FOUND`) to Response characteristic for immediate error feedback. Auth failures now reported in ~1-2 seconds instead of 45-second timeout. Updated Error Handling section with Response code documentation. |
 | 1.1.0 | 2026-01-24 | Aligned with unified device architecture: renamed `unit_id` to `serial_number`, added `mac_address` to Device Info, added cross-references to Device Command Protocol and Capability Schema |
 | 1.0.0 | 2026-01-05 | Initial protocol specification |
 

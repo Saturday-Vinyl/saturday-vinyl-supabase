@@ -400,8 +400,10 @@ static esp_err_t send_heartbeat_internal(void)
     }
 
     /* Log complete heartbeat payload to serial monitor for debugging.
-     * Use printf to avoid ESP_LOG truncation on long messages. */
+     * Use printf to avoid ESP_LOG truncation on long messages.
+     * fflush ensures the output is immediately sent before any other logging. */
     printf("[EVENT_RPT] Heartbeat payload (%d bytes): %s\n", len, json);
+    fflush(stdout);
 
     /* Completely shutdown Thread to give WiFi exclusive radio access.
      * The suspend approach wasn't reliable enough - full shutdown ensures

@@ -56,6 +56,16 @@ typedef struct {
 } wifi_connection_info_t;
 
 /**
+ * @brief Wi-Fi connection failure info (included with CONNECTION_FAILED event)
+ *
+ * Contains the underlying WiFi disconnect reason code to help consumers
+ * distinguish between auth failures, network not found, and other errors.
+ */
+typedef struct {
+    uint8_t reason;         /**< WiFi disconnect reason (wifi_err_reason_t) */
+} wifi_connection_failed_info_t;
+
+/**
  * @brief Wi-Fi manager status
  */
 typedef struct {

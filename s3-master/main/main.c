@@ -927,59 +927,54 @@ void app_main(void)
         }
     }
 
-    /* Phase S3-8: Initialize service mode handler */
+    /* Phase S3-8: Initialize serial command handler (Device Command Protocol v1.3)
+     * Per the protocol, devices are "always-listening" - no entry window required. */
     ret = serial_prov_init();
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Service mode init failed: %s", esp_err_to_name(ret));
+        ESP_LOGE(TAG, "Serial command handler init failed: %s", esp_err_to_name(ret));
     } else {
-        ESP_LOGI(TAG, "Service mode initialized");
+        ESP_LOGI(TAG, "Serial command handler initialized");
         serial_prov_register_callback(on_service_mode_state_change, NULL);
+
+        /* Start always-listening command handler immediately.
+         * Per Device Command Protocol v1.3, devices continuously listen for
+         * commands when connected - no entry window or service mode required.
+         * This handles get_status, factory_provision, run_test, etc. */
+        ret = serial_prov_start_background_listener();
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to start command listener: %s", esp_err_to_name(ret));
+        } else {
+            ESP_LOGI(TAG, "Command listener active (always-listening mode)");
+        }
     }
 
-    /* Check if device needs factory provisioning or consumer WiFi setup */
+    /* Check provisioning state and set appropriate LED/mode */
     if (!config_has_unit_id()) {
-        /* No unit_id = fresh from factory, needs service mode provisioning */
-        ESP_LOGW(TAG, "Device not provisioned (no unit_id) - entering service mode");
+        /* No unit_id = fresh from factory, awaiting provisioning */
+        ESP_LOGW(TAG, "Device not provisioned (no unit_id) - awaiting factory_provision command");
         led_set_state(LED_COLOR_WHITE, LED_PATTERN_PULSE, 2000);
-        ret = serial_prov_start();
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to start service mode: %s", esp_err_to_name(ret));
-        }
     } else {
-        /* Device is provisioned - check for service mode entry during boot window */
+        /* Device is provisioned */
         char unit_id[32];
         config_get_unit_id(unit_id, sizeof(unit_id));
         ESP_LOGI(TAG, "Device provisioned: %s", unit_id);
 
-        /* Per Service Mode Protocol: Listen for enter_service_mode for 10 seconds.
-         * This allows technicians to access service mode on provisioned devices. */
-        ESP_LOGI(TAG, "Listening for service mode entry (10 second window)...");
-        led_set_state(LED_COLOR_WHITE, LED_PATTERN_BLINK_SLOW, 1000);
-
-        if (serial_prov_wait_for_entry(10000)) {
-            /* Service mode was entered - stay in service mode */
-            ESP_LOGI(TAG, "Entered service mode via boot window");
-            s_service_mode_active = true;
+        if (!config_has_wifi()) {
+            /* Has unit_id but no WiFi = factory provisioned, needs consumer WiFi setup */
+            ESP_LOGI(TAG, "No WiFi configured - starting BLE provisioning");
+            s_ble_prov_active = true;
+            ret = ble_prov_start();
+            if (ret != ESP_OK) {
+                ESP_LOGE(TAG, "Failed to start BLE provisioning: %s", esp_err_to_name(ret));
+                s_ble_prov_active = false;
+            }
         } else {
-            /* No service mode entry - proceed to standard operation */
-            if (!config_has_wifi()) {
-                /* Has unit_id but no WiFi = factory provisioned, needs consumer WiFi setup */
-                ESP_LOGI(TAG, "No WiFi configured - starting BLE provisioning");
-                s_ble_prov_active = true;  /* Set flag before starting to prevent yellow LED race */
-                ret = ble_prov_start();
-                if (ret != ESP_OK) {
-                    ESP_LOGE(TAG, "Failed to start BLE provisioning: %s", esp_err_to_name(ret));
-                    s_ble_prov_active = false;
-                }
+            /* Fully provisioned - proceed to normal operation */
+            ESP_LOGI(TAG, "Proceeding to standard operation");
+            if (s_wifi_connected) {
+                led_set_state(LED_COLOR_GREEN, LED_PATTERN_PULSE, 3000);
             } else {
-                /* Fully provisioned - proceed to normal operation */
-                ESP_LOGI(TAG, "Proceeding to standard operation");
-                /* Return LED to appropriate state based on WiFi */
-                if (s_wifi_connected) {
-                    led_set_state(LED_COLOR_GREEN, LED_PATTERN_PULSE, 3000);
-                } else {
-                    led_set_state(LED_COLOR_YELLOW, LED_PATTERN_BLINK_SLOW, 1000);
-                }
+                led_set_state(LED_COLOR_YELLOW, LED_PATTERN_BLINK_SLOW, 1000);
             }
         }
     }

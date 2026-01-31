@@ -114,11 +114,25 @@ CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 # Power management (disable for now, enable if battery operation needed)
 CONFIG_PM_ENABLE=n
 
-# Serial console - Use USB Serial/JTAG for ESP32-C6 DevKitC
-# This enables stdin/stdout over the USB connection
-CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+# Serial console - DISABLED to allow device_protocol.c exclusive USB Serial JTAG access
+#
+# When CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y, the console installs the USB Serial JTAG
+# driver and sets up VFS to use it. This conflicts with our direct use of
+# usb_serial_jtag_read_bytes().
+#
+# By disabling the console's USB Serial JTAG ownership, we can:
+# 1. Install the driver ourselves in device_protocol.c
+# 2. Use usb_serial_jtag_read_bytes() for receiving commands
+# 3. Use printf() or usb_serial_jtag_write_bytes() for output
+#
+# ESP_LOG will use ROM functions which write directly to the USB Serial JTAG
+# hardware FIFO (no driver required for TX).
+#
+# Reference: ESP-IDF usb_serial_jtag_echo example uses this same approach.
+CONFIG_ESP_CONSOLE_NONE=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
 
-# VFS configuration for non-blocking stdin reads
+# VFS configuration
 CONFIG_VFS_SUPPORT_IO=y
 CONFIG_VFS_SUPPORT_SELECT=y
 

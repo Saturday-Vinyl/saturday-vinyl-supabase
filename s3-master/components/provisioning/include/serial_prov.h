@@ -217,6 +217,37 @@ esp_err_t serial_prov_send_json(const char *json);
  */
 bool serial_prov_wait_for_entry(uint32_t timeout_ms);
 
+/**
+ * @brief Start background command listener (always-listening mode)
+ *
+ * Per Device Command Protocol v1.3, the device should always be listening
+ * for commands over USB serial, not just during service mode. This function
+ * starts a lightweight background task that:
+ * - Handles get_status commands at any time
+ * - Handles enter_service_mode to transition to full service mode
+ * - Does NOT send periodic status beacons (unlike full service mode)
+ *
+ * This should be called after the boot window expires for provisioned devices,
+ * allowing the Saturday Admin app to probe the device at any time.
+ *
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t serial_prov_start_background_listener(void);
+
+/**
+ * @brief Stop background command listener
+ *
+ * @return ESP_OK on success
+ */
+esp_err_t serial_prov_stop_background_listener(void);
+
+/**
+ * @brief Check if background listener is running
+ *
+ * @return true if background listener is active
+ */
+bool serial_prov_is_background_listener_active(void);
+
 #ifdef __cplusplus
 }
 #endif

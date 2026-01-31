@@ -38,8 +38,12 @@ static const char *TAG = "BLE_PROV";
 #define TASK_STACK_SIZE         4096
 #define TASK_PRIORITY           5
 
-/* Wi-Fi connection timeout in milliseconds */
-#define WIFI_CONNECT_TIMEOUT_MS 15000
+/* Wi-Fi connection timeout in milliseconds.
+ * This must be longer than the WiFi Manager's DHCP timeout (15s) plus time for
+ * at least one reconnect attempt. The WiFi Manager disconnects and retries if
+ * DHCP doesn't complete within 15s, which can happen on busy networks. We allow
+ * 45s total to accommodate: DHCP timeout (15s) + reconnect + second DHCP (15s). */
+#define WIFI_CONNECT_TIMEOUT_MS 45000
 
 /*
  * Full 128-bit UUIDs for Saturday Provisioning Service
@@ -206,6 +210,13 @@ static struct {
 
     /* Timeout timer */
     esp_timer_handle_t timeout_timer;
+
+    /* WiFi connection event handling */
+    TaskHandle_t wifi_connect_task_handle;
+    esp_event_handler_instance_t wifi_event_handler_instance;
+    volatile uint8_t wifi_failure_reason;  /* wifi_err_reason_t from WiFi driver */
+    volatile bool wifi_event_received;
+    volatile bool wifi_connected;
 } s_ble = {0};
 
 /*******************************************************************************
@@ -331,13 +342,169 @@ static void timeout_callback(void *arg)
 }
 
 /*******************************************************************************
- * Wi-Fi Connection Handler
+ * Wi-Fi Connection Event Handling
+ ******************************************************************************/
+
+/**
+ * @brief WiFi event handler for immediate connection status detection
+ *
+ * Called from the default event loop when WiFi connection succeeds or fails.
+ * Uses task notification to wake wifi_connect_task immediately instead of
+ * waiting for the polling timeout.
+ */
+static void ble_prov_wifi_event_handler(void *arg, esp_event_base_t event_base,
+                                         int32_t event_id, void *event_data)
+{
+    (void)arg;
+
+    if (s_ble.wifi_connect_task_handle == NULL) {
+        return;  /* No task waiting for WiFi events */
+    }
+
+    if (event_id == WIFI_MANAGER_EVENT_CONNECTED) {
+        ESP_LOGI(TAG, "WiFi connected event received");
+        s_ble.wifi_connected = true;
+        s_ble.wifi_failure_reason = 0;
+        s_ble.wifi_event_received = true;
+        xTaskNotifyGive(s_ble.wifi_connect_task_handle);
+    } else if (event_id == WIFI_MANAGER_EVENT_CONNECTION_FAILED) {
+        /* Extract failure reason if available */
+        uint8_t reason = 0;
+        if (event_data != NULL) {
+            wifi_connection_failed_info_t *info = (wifi_connection_failed_info_t *)event_data;
+            reason = info->reason;
+        }
+        ESP_LOGI(TAG, "WiFi connection failed event received (reason=%d)", reason);
+        s_ble.wifi_connected = false;
+        s_ble.wifi_failure_reason = reason;
+        s_ble.wifi_event_received = true;
+        xTaskNotifyGive(s_ble.wifi_connect_task_handle);
+    }
+}
+
+/**
+ * @brief Clean up WiFi event handler registration
+ */
+static void cleanup_wifi_event_handler(void)
+{
+    if (s_ble.wifi_event_handler_instance != NULL) {
+        esp_event_handler_instance_unregister(WIFI_MANAGER_EVENTS, ESP_EVENT_ANY_ID,
+                                               s_ble.wifi_event_handler_instance);
+        s_ble.wifi_event_handler_instance = NULL;
+    }
+    s_ble.wifi_connect_task_handle = NULL;
+}
+
+/**
+ * @brief Handle successful WiFi connection
+ */
+static void handle_wifi_prov_success(void)
+{
+    char response[BLE_PROV_MAX_RESPONSE_LEN];
+
+    ESP_LOGI(TAG, "Wi-Fi connected successfully!");
+
+    set_state(BLE_PROV_STATE_SUCCESS);
+    update_status(BLE_PROV_STATUS_SUCCESS);
+    snprintf(response, sizeof(response),
+             "{\"type\":\"message\",\"code\":\"SUCCESS\",\"message\":\"Connected to %s\"}",
+             s_ble.wifi_ssid);
+    send_response(response);
+
+    /* Mark provisioning as complete */
+    s_ble.provisioning_complete = true;
+
+    /* Flash green to indicate success */
+    led_flash(LED_COLOR_GREEN, 500);
+    vTaskDelay(pdMS_TO_TICKS(600));
+    led_set_state(LED_COLOR_GREEN, LED_PATTERN_SOLID, 0);
+    led_set_brightness(64);
+
+    /* Invoke completion callback */
+    if (s_ble.complete_cb) {
+        s_ble.complete_cb(true, s_ble.wifi_ssid, s_ble.user_data);
+    }
+
+    /* Stop BLE advertising/connection after short delay */
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    ble_prov_stop();
+}
+
+/**
+ * @brief Handle WiFi connection failure with specific error codes
+ *
+ * Maps WiFi disconnect reasons to user-friendly BLE provisioning error codes.
+ */
+static void handle_wifi_prov_failure(uint8_t reason, bool is_timeout)
+{
+    char response[BLE_PROV_MAX_RESPONSE_LEN];
+    const char *error_code;
+    const char *error_message;
+    ble_prov_status_code_t status_code;
+
+    if (is_timeout) {
+        error_code = "TIMEOUT";
+        error_message = "Connection timed out";
+        status_code = BLE_PROV_STATUS_ERROR_TIMEOUT;
+    } else {
+        /* Map WiFi reason codes to user-friendly errors.
+         * See esp_wifi_types.h for full list of wifi_err_reason_t values.
+         * Common auth-related reasons: 2, 15, 16, 204
+         * Network not found: 201 */
+        switch (reason) {
+            case 2:   /* WIFI_REASON_AUTH_EXPIRE */
+            case 15:  /* WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT */
+            case 16:  /* WIFI_REASON_GROUP_KEY_UPDATE_TIMEOUT */
+            case 204: /* WIFI_REASON_AUTH_FAIL */
+                error_code = "AUTH_FAILED";
+                error_message = "Incorrect password";
+                status_code = BLE_PROV_STATUS_ERROR_WIFI;
+                break;
+            case 201: /* WIFI_REASON_NO_AP_FOUND */
+                error_code = "NETWORK_NOT_FOUND";
+                error_message = "Network not found";
+                status_code = BLE_PROV_STATUS_ERROR_WIFI;
+                break;
+            default:
+                error_code = "WIFI_FAILED";
+                error_message = "Connection failed";
+                status_code = BLE_PROV_STATUS_ERROR_WIFI;
+                break;
+        }
+    }
+
+    ESP_LOGE(TAG, "WiFi connection failed: %s (reason=%d)", error_message, reason);
+
+    set_state(BLE_PROV_STATE_FAILED);
+    update_status(status_code);
+    snprintf(response, sizeof(response),
+             "{\"type\":\"error\",\"code\":\"%s\",\"message\":\"%s\"}",
+             error_code, error_message);
+    send_response(response);
+
+    led_set_state(LED_COLOR_RED, LED_PATTERN_BLINK_SLOW, 1000);
+
+    /* Stop WiFi Manager from continuing to retry */
+    wifi_disconnect();
+
+    /* Clear the bad credentials */
+    config_clear_wifi();
+
+    /* Invoke completion callback with failure */
+    if (s_ble.complete_cb) {
+        s_ble.complete_cb(false, s_ble.wifi_ssid, s_ble.user_data);
+    }
+}
+
+/*******************************************************************************
+ * Wi-Fi Connection Task
  ******************************************************************************/
 
 static void wifi_connect_task(void *arg)
 {
     (void)arg;
     char response[BLE_PROV_MAX_RESPONSE_LEN];
+    esp_err_t ret;
 
     ESP_LOGI(TAG, "Attempting Wi-Fi connection to '%s'...", s_ble.wifi_ssid);
 
@@ -352,7 +519,7 @@ static void wifi_connect_task(void *arg)
     led_set_state(LED_COLOR_YELLOW, LED_PATTERN_PULSE, 1500);
 
     /* Store credentials in config */
-    esp_err_t ret = config_set_wifi(s_ble.wifi_ssid, s_ble.wifi_pass);
+    ret = config_set_wifi(s_ble.wifi_ssid, s_ble.wifi_pass);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to store Wi-Fi credentials: %s", esp_err_to_name(ret));
         set_state(BLE_PROV_STATE_FAILED);
@@ -363,72 +530,51 @@ static void wifi_connect_task(void *arg)
         return;
     }
 
+    /* Initialize event handling state */
+    s_ble.wifi_event_received = false;
+    s_ble.wifi_connected = false;
+    s_ble.wifi_failure_reason = 0;
+    s_ble.wifi_connect_task_handle = xTaskGetCurrentTaskHandle();
+
+    /* Register for WiFi events BEFORE starting connection to avoid missing early events */
+    ret = esp_event_handler_instance_register(WIFI_MANAGER_EVENTS, ESP_EVENT_ANY_ID,
+                                               ble_prov_wifi_event_handler, NULL,
+                                               &s_ble.wifi_event_handler_instance);
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to register WiFi event handler: %s", esp_err_to_name(ret));
+        s_ble.wifi_event_handler_instance = NULL;
+        /* Continue anyway - we'll fall back to timeout-based detection */
+    }
+
     /* Attempt connection */
     ret = wifi_connect(s_ble.wifi_ssid, s_ble.wifi_pass);
     if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "Wi-Fi connect failed: %s", esp_err_to_name(ret));
-        set_state(BLE_PROV_STATE_FAILED);
-        update_status(BLE_PROV_STATUS_ERROR_WIFI);
-        send_response("{\"type\":\"error\",\"code\":\"WIFI_FAILED\",\"message\":\"Connection failed - check password\"}");
-        led_set_state(LED_COLOR_RED, LED_PATTERN_BLINK_SLOW, 1000);
-
-        /* Clear the bad credentials */
-        config_clear_wifi();
-
+        ESP_LOGE(TAG, "wifi_connect() failed: %s", esp_err_to_name(ret));
+        cleanup_wifi_event_handler();
+        handle_wifi_prov_failure(0, false);
         vTaskDelete(NULL);
         return;
     }
 
-    /* Wait for connection with timeout */
-    int64_t start = esp_timer_get_time();
-    while ((esp_timer_get_time() - start) < (WIFI_CONNECT_TIMEOUT_MS * 1000)) {
-        if (wifi_is_connected()) {
-            ESP_LOGI(TAG, "Wi-Fi connected successfully!");
+    /* Wait for WiFi event notification with timeout.
+     * The event handler will call xTaskNotifyGive() when connection succeeds or fails.
+     * This is much more responsive than polling - auth failures are detected in ~1 second. */
+    TickType_t timeout_ticks = pdMS_TO_TICKS(WIFI_CONNECT_TIMEOUT_MS);
+    uint32_t notified = ulTaskNotifyTake(pdTRUE, timeout_ticks);
 
-            set_state(BLE_PROV_STATE_SUCCESS);
-            update_status(BLE_PROV_STATUS_SUCCESS);
-            snprintf(response, sizeof(response),
-                     "{\"type\":\"message\",\"code\":\"SUCCESS\",\"message\":\"Connected to %s\"}",
-                     s_ble.wifi_ssid);
-            send_response(response);
+    /* Clean up event handler before processing result */
+    cleanup_wifi_event_handler();
 
-            /* Mark provisioning as complete */
-            s_ble.provisioning_complete = true;
-
-            /* Flash green to indicate success */
-            led_flash(LED_COLOR_GREEN, 500);
-            vTaskDelay(pdMS_TO_TICKS(600));
-            led_set_state(LED_COLOR_GREEN, LED_PATTERN_SOLID, 0);
-            led_set_brightness(64);
-
-            /* Invoke completion callback */
-            if (s_ble.complete_cb) {
-                s_ble.complete_cb(true, s_ble.wifi_ssid, s_ble.user_data);
-            }
-
-            /* Stop BLE advertising/connection after short delay */
-            vTaskDelay(pdMS_TO_TICKS(2000));
-            ble_prov_stop();
-
-            vTaskDelete(NULL);
-            return;
-        }
-        vTaskDelay(pdMS_TO_TICKS(500));
-    }
-
-    /* Timeout waiting for connection */
-    ESP_LOGE(TAG, "Wi-Fi connection timeout");
-    set_state(BLE_PROV_STATE_FAILED);
-    update_status(BLE_PROV_STATUS_ERROR_TIMEOUT);
-    send_response("{\"type\":\"error\",\"code\":\"TIMEOUT\",\"message\":\"Connection timed out\"}");
-    led_set_state(LED_COLOR_RED, LED_PATTERN_BLINK_SLOW, 1000);
-
-    /* Clear the bad credentials */
-    config_clear_wifi();
-
-    /* Invoke completion callback with failure */
-    if (s_ble.complete_cb) {
-        s_ble.complete_cb(false, s_ble.wifi_ssid, s_ble.user_data);
+    if (notified == 0) {
+        /* Timeout - no event received within the timeout period */
+        ESP_LOGE(TAG, "WiFi connection timeout (no event received)");
+        handle_wifi_prov_failure(0, true);
+    } else if (s_ble.wifi_connected) {
+        /* Success - WiFi connected event received */
+        handle_wifi_prov_success();
+    } else {
+        /* Failure - connection failed event received with specific reason */
+        handle_wifi_prov_failure(s_ble.wifi_failure_reason, false);
     }
 
     vTaskDelete(NULL);

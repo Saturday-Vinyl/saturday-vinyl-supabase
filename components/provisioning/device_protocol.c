@@ -125,22 +125,31 @@ esp_err_t device_protocol_init(void)
         return ESP_ERR_NO_MEM;
     }
 
-    /* Install USB Serial JTAG driver for receiving data */
+    /* Install USB Serial JTAG driver for receiving data.
+     * On ESP32-C6 DevKitC, the USB port is connected to the USB Serial/JTAG
+     * controller, not a regular UART. We need this driver to read input.
+     * This is the same approach used in the working serial_prov.c implementation. */
     usb_serial_jtag_driver_config_t usb_serial_config = {
         .rx_buffer_size = UART_RX_BUF_SIZE,
         .tx_buffer_size = UART_RX_BUF_SIZE,
     };
 
     esp_err_t err = usb_serial_jtag_driver_install(&usb_serial_config);
-    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "USB Serial JTAG driver installed successfully");
+    } else if (err == ESP_ERR_INVALID_STATE) {
+        /* Driver already installed - this happens when CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+         * because the console subsystem installs it during early startup.
+         * This is expected and we can still use usb_serial_jtag_read_bytes(). */
+        ESP_LOGI(TAG, "USB Serial JTAG driver already installed");
+    } else {
         ESP_LOGE(TAG, "Failed to install USB Serial JTAG driver: %s", esp_err_to_name(err));
         vSemaphoreDelete(s_proto.mutex);
         return err;
     }
-    ESP_LOGI(TAG, "USB Serial JTAG driver installed");
 
     s_proto.initialized = true;
-    ESP_LOGI(TAG, "Device protocol initialized");
+    ESP_LOGI(TAG, "Device protocol initialized - using usb_serial_jtag_read_bytes()");
     return ESP_OK;
 }
 
@@ -236,8 +245,19 @@ esp_err_t device_protocol_send_json(const char *json)
         return ESP_ERR_INVALID_ARG;
     }
 
-    printf("%s\n", json);
-    fflush(stdout);
+    /* Write JSON response directly to USB Serial JTAG.
+     * We use the driver's write function instead of printf() because
+     * with CONFIG_ESP_CONSOLE_NONE=y, stdout may not be connected to
+     * USB Serial JTAG. */
+    size_t len = strlen(json);
+    int written = usb_serial_jtag_write_bytes(json, len, pdMS_TO_TICKS(100));
+    if (written < 0) {
+        ESP_LOGE(TAG, "Failed to write JSON response");
+        return ESP_FAIL;
+    }
+
+    /* Write newline */
+    usb_serial_jtag_write_bytes("\n", 1, pdMS_TO_TICKS(100));
 
     return ESP_OK;
 }
@@ -251,16 +271,19 @@ static void device_protocol_task(void *arg)
     (void)arg;
     uint8_t byte;
 
-    ESP_LOGI(TAG, "Protocol task started");
+    ESP_LOGI(TAG, "Protocol task started - listening for commands");
 
     s_proto.rx_len = 0;
     memset(s_proto.rx_buffer, 0, sizeof(s_proto.rx_buffer));
 
     while (1) {
+        /* Read from USB Serial JTAG driver with timeout.
+         * This is the same approach used in the original working serial_prov.c */
         int len = usb_serial_jtag_read_bytes(&byte, 1, pdMS_TO_TICKS(50));
 
         if (len > 0) {
             if (byte == '\n' || byte == '\r') {
+                /* End of message - process if we have content */
                 if (s_proto.rx_len > 0) {
                     s_proto.rx_buffer[s_proto.rx_len] = '\0';
                     ESP_LOGI(TAG, "Received: %s", s_proto.rx_buffer);
@@ -268,13 +291,16 @@ static void device_protocol_task(void *arg)
                     s_proto.rx_len = 0;
                 }
             } else if (s_proto.rx_len < sizeof(s_proto.rx_buffer) - 1) {
+                /* Add byte to buffer */
                 s_proto.rx_buffer[s_proto.rx_len++] = (char)byte;
             } else {
+                /* Buffer overflow - discard */
                 ESP_LOGW(TAG, "RX buffer overflow, discarding");
                 s_proto.rx_len = 0;
             }
         }
 
+        /* Small delay to allow IDLE task to run and feed watchdog */
         vTaskDelay(pdMS_TO_TICKS(5));
     }
 }
@@ -411,7 +437,7 @@ static void handle_get_status(const char *cmd_id, cJSON *params)
     }
 
     /* System info */
-    cJSON_AddNumberToObject(data, "uptime_ms", esp_timer_get_time() / 1000);
+    cJSON_AddNumberToObject(data, "uptime_sec", esp_timer_get_time() / 1000000);
     cJSON_AddNumberToObject(data, "free_heap", esp_get_free_heap_size());
 
     /* Capability status */

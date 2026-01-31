@@ -74,8 +74,24 @@ CONFIG_BT_NIMBLE_GAP_DEVICE_NAME_MAX_LEN=32
 # USB Configuration (for Service Mode and esp-serial-flasher)
 # =============================================================================
 # ESP32-S3 has native USB support
-CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 CONFIG_USB_OTG_SUPPORTED=y
+
+# Serial console configuration for bidirectional USB Serial JTAG communication
+#
+# We use CONFIG_ESP_CONSOLE_NONE for the primary console to prevent the VFS layer
+# from taking ownership of USB Serial JTAG stdin. This allows serial_prov.c to use
+# usb_serial_jtag_read_bytes() directly for receiving commands.
+#
+# We use CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG to route ESP_LOG output
+# to USB Serial JTAG. This uses ROM printf functions that write directly to the
+# hardware FIFO, which doesn't conflict with our RX driver usage.
+#
+# This split configuration allows:
+# 1. ESP_LOG output via USB Serial JTAG (secondary console)
+# 2. usb_serial_jtag_read_bytes() for receiving commands (no VFS conflict)
+# 3. usb_serial_jtag_write_bytes() for sending JSON responses
+CONFIG_ESP_CONSOLE_NONE=y
+CONFIG_ESP_CONSOLE_SECONDARY_USB_SERIAL_JTAG=y
 
 # =============================================================================
 # UART Configuration

@@ -27,6 +27,7 @@
 #include "sdkconfig.h"
 
 #include "serial_prov.h"
+#include "app_config.h"
 #include "config_store.h"
 #include "supabase_client.h"
 #include "wifi_manager.h"
@@ -34,6 +35,7 @@
 #include "rfid_protocol.h"
 #include "led_manager.h"
 #include "ota_manager.h"
+#include "esp_heap_caps.h"
 
 /* 2-SoC Architecture: Thread is handled by H2 co-processor.
  * Thread credentials will be retrieved via UART from H2.
@@ -91,6 +93,13 @@ static struct {
     bool has_test_results;
     char rx_buffer[SERIAL_PROV_MAX_MSG_LEN];
     size_t rx_len;
+    /* Background listener state (always-listening mode) */
+    bool background_listener_active;
+    TaskHandle_t background_task_handle;
+    char bg_rx_buffer[SERIAL_PROV_MAX_MSG_LEN];
+    size_t bg_rx_len;
+    /* Current command ID for response correlation (Device Command Protocol v1.3) */
+    char current_cmd_id[64];
 } s_prov = {0};
 
 /*******************************************************************************
@@ -105,9 +114,27 @@ extern const uint8_t service_manifest_end[] asm("_binary_service_manifest_json_e
  ******************************************************************************/
 
 static void serial_prov_task(void *arg);
+static void background_listener_task(void *arg);
 static void status_timer_callback(void *arg);
 static void process_command(const char *json_str);
+static void process_background_command(const char *json_str);
+/* Core commands (Device Command Protocol v1.3) */
 static void handle_get_status(cJSON *params);
+static void handle_get_capabilities(cJSON *params);
+static void handle_reboot(cJSON *params);
+static void handle_consumer_reset(cJSON *params);
+static void handle_factory_reset(cJSON *params);
+/* Provisioning commands */
+static void handle_factory_provision(cJSON *params);
+static void handle_set_provision_data(cJSON *params);
+static void handle_get_provision_data(cJSON *params);
+/* Testing commands */
+static void handle_run_test(cJSON *root);  /* Takes root to access capability/test_name */
+/* OTA commands */
+static void handle_ota_update(cJSON *params);
+static void handle_check_ota(cJSON *params);
+static void handle_get_ota_status(cJSON *params);
+/* Legacy commands (backwards compatibility) */
 static void handle_get_manifest(cJSON *params);
 static void handle_enter_service_mode(cJSON *params);
 static void handle_exit_service_mode(cJSON *params);
@@ -118,11 +145,8 @@ static void handle_test_cloud(cJSON *params);
 static void handle_test_thread(cJSON *params);
 static void handle_test_all(cJSON *params);
 static void handle_customer_reset(cJSON *params);
-static void handle_factory_reset(cJSON *params);
-static void handle_reboot(cJSON *params);
-static void handle_check_ota(cJSON *params);
 static void handle_start_ota(cJSON *params);
-static void handle_get_ota_status(cJSON *params);
+/* Internal helpers */
 static void set_state(serial_prov_state_t new_state);
 static void send_response(const char *status, const char *message, cJSON *data);
 static void send_error(const char *error_code, const char *message);
@@ -145,8 +169,9 @@ esp_err_t serial_prov_init(void)
     }
 
     /* Install USB Serial JTAG driver for receiving data.
-     * On ESP32-C6 DevKitC, the USB port is connected to the USB Serial/JTAG
-     * controller, not a regular UART. We need this driver to read input. */
+     * On ESP32-S3 DevKitC, the USB port is connected to the USB Serial/JTAG
+     * controller, not a regular UART. We need this driver to read input.
+     * Note: CONFIG_ESP_CONSOLE_NONE must be set to avoid conflicts with VFS. */
     usb_serial_jtag_driver_config_t usb_serial_config = {
         .rx_buffer_size = UART_RX_BUF_SIZE,
         .tx_buffer_size = UART_RX_BUF_SIZE,
@@ -399,13 +424,16 @@ esp_err_t serial_prov_send_json(const char *json)
         return ESP_ERR_INVALID_ARG;
     }
 
-    /* Send JSON followed by newline via stdout (console).
-     * On ESP32-C6 with USB-Serial/JTAG, this goes through the USB interface.
-     * Using printf ensures output goes to the same stream as ESP_LOG. */
-    printf("%s\n", json);
-    fflush(stdout);
+    /* Send JSON followed by newline via USB Serial JTAG driver.
+     * We use the driver directly (not printf/stdout) because:
+     * 1. CONFIG_ESP_CONSOLE_NONE disables console VFS ownership of the USB Serial JTAG
+     * 2. This ensures reliable TX alongside our usb_serial_jtag_read_bytes() RX
+     * 3. ESP_LOG output still works via ROM functions that write directly to hardware FIFO */
+    size_t len = strlen(json);
+    int written = usb_serial_jtag_write_bytes((const uint8_t *)json, len, pdMS_TO_TICKS(100));
+    usb_serial_jtag_write_bytes((const uint8_t *)"\n", 1, pdMS_TO_TICKS(100));
 
-    return ESP_OK;
+    return (written == (int)len) ? ESP_OK : ESP_FAIL;
 }
 
 /*******************************************************************************
@@ -510,6 +538,15 @@ static void process_command(const char *json_str)
         return;
     }
 
+    /* Extract command ID for response correlation (Device Command Protocol v1.3) */
+    cJSON *id = cJSON_GetObjectItem(root, "id");
+    if (cJSON_IsString(id) && id->valuestring) {
+        strncpy(s_prov.current_cmd_id, id->valuestring, sizeof(s_prov.current_cmd_id) - 1);
+        s_prov.current_cmd_id[sizeof(s_prov.current_cmd_id) - 1] = '\0';
+    } else {
+        s_prov.current_cmd_id[0] = '\0';  /* No ID provided */
+    }
+
     cJSON *cmd = cJSON_GetObjectItem(root, "cmd");
     if (!cJSON_IsString(cmd)) {
         send_error("invalid_command", "Missing 'cmd' field");
@@ -517,45 +554,82 @@ static void process_command(const char *json_str)
         return;
     }
 
-    cJSON *params = cJSON_GetObjectItem(root, "data");
+    /* Support both "params" (Device Command Protocol v1.3) and "data" (legacy) */
+    cJSON *params = cJSON_GetObjectItem(root, "params");
+    if (params == NULL) {
+        params = cJSON_GetObjectItem(root, "data");  /* Fallback for legacy */
+    }
 
     const char *cmd_str = cmd->valuestring;
     ESP_LOGI(TAG, "Processing command: %s", cmd_str);
 
+    /***************************************************************************
+     * Device Command Protocol v1.3 - Core Commands
+     **************************************************************************/
     if (strcmp(cmd_str, "get_status") == 0) {
         handle_get_status(params);
-    } else if (strcmp(cmd_str, "get_manifest") == 0) {
-        handle_get_manifest(params);
-    } else if (strcmp(cmd_str, "enter_service_mode") == 0) {
-        handle_enter_service_mode(params);
-    } else if (strcmp(cmd_str, "exit_service_mode") == 0) {
-        handle_exit_service_mode(params);
-    } else if (strcmp(cmd_str, "provision") == 0) {
-        handle_provision(params);
-    } else if (strcmp(cmd_str, "test_wifi") == 0) {
-        handle_test_wifi(params);
-    } else if (strcmp(cmd_str, "test_rfid") == 0) {
-        handle_test_rfid(params);
-    } else if (strcmp(cmd_str, "test_cloud") == 0) {
-        handle_test_cloud(params);
-    } else if (strcmp(cmd_str, "test_thread") == 0) {
-        handle_test_thread(params);
-    } else if (strcmp(cmd_str, "test_all") == 0) {
-        handle_test_all(params);
-    } else if (strcmp(cmd_str, "customer_reset") == 0) {
-        handle_customer_reset(params);
-    } else if (strcmp(cmd_str, "factory_reset") == 0) {
-        handle_factory_reset(params);
+    } else if (strcmp(cmd_str, "get_capabilities") == 0) {
+        handle_get_capabilities(params);
     } else if (strcmp(cmd_str, "reboot") == 0) {
         handle_reboot(params);
+    } else if (strcmp(cmd_str, "consumer_reset") == 0) {
+        handle_consumer_reset(params);
+    } else if (strcmp(cmd_str, "factory_reset") == 0) {
+        handle_factory_reset(params);
+    }
+    /***************************************************************************
+     * Device Command Protocol v1.3 - Provisioning Commands
+     **************************************************************************/
+    else if (strcmp(cmd_str, "factory_provision") == 0) {
+        handle_factory_provision(params);
+    } else if (strcmp(cmd_str, "set_provision_data") == 0) {
+        handle_set_provision_data(params);
+    } else if (strcmp(cmd_str, "get_provision_data") == 0) {
+        handle_get_provision_data(params);
+    }
+    /***************************************************************************
+     * Device Command Protocol v1.3 - Testing Commands
+     **************************************************************************/
+    else if (strcmp(cmd_str, "run_test") == 0) {
+        handle_run_test(root);  /* Pass root to access capability/test_name */
+    }
+    /***************************************************************************
+     * Device Command Protocol v1.3 - OTA Commands
+     **************************************************************************/
+    else if (strcmp(cmd_str, "ota_update") == 0) {
+        handle_ota_update(params);
+    }
+    /***************************************************************************
+     * Legacy Commands (backwards compatibility with Service Mode Protocol)
+     **************************************************************************/
+    else if (strcmp(cmd_str, "get_manifest") == 0) {
+        handle_get_manifest(params);  /* Alias: get_capabilities */
+    } else if (strcmp(cmd_str, "enter_service_mode") == 0) {
+        handle_enter_service_mode(params);  /* No-op in always-listening mode */
+    } else if (strcmp(cmd_str, "exit_service_mode") == 0) {
+        handle_exit_service_mode(params);  /* No-op in always-listening mode */
+    } else if (strcmp(cmd_str, "provision") == 0) {
+        handle_provision(params);  /* Legacy: use factory_provision */
+    } else if (strcmp(cmd_str, "test_wifi") == 0) {
+        handle_test_wifi(params);  /* Legacy: use run_test */
+    } else if (strcmp(cmd_str, "test_rfid") == 0) {
+        handle_test_rfid(params);  /* Legacy: use run_test */
+    } else if (strcmp(cmd_str, "test_cloud") == 0) {
+        handle_test_cloud(params);  /* Legacy: use run_test */
+    } else if (strcmp(cmd_str, "test_thread") == 0) {
+        handle_test_thread(params);  /* Legacy: use run_test */
+    } else if (strcmp(cmd_str, "test_all") == 0) {
+        handle_test_all(params);  /* Legacy: use run_test */
+    } else if (strcmp(cmd_str, "customer_reset") == 0) {
+        handle_customer_reset(params);  /* Legacy: use consumer_reset */
     } else if (strcmp(cmd_str, "check_ota") == 0) {
         handle_check_ota(params);
     } else if (strcmp(cmd_str, "start_ota") == 0) {
-        handle_start_ota(params);
+        handle_start_ota(params);  /* Legacy: use ota_update */
     } else if (strcmp(cmd_str, "get_ota_status") == 0) {
         handle_get_ota_status(params);
     } else {
-        send_error("unknown_command", "Unknown command");
+        send_error("invalid_command", "Unknown command");
     }
 
     cJSON_Delete(root);
@@ -564,6 +638,12 @@ static void process_command(const char *json_str)
 static void send_response(const char *status, const char *message, cJSON *data)
 {
     cJSON *root = cJSON_CreateObject();
+
+    /* Include command ID for response correlation (Device Command Protocol v1.3) */
+    if (s_prov.current_cmd_id[0] != '\0') {
+        cJSON_AddStringToObject(root, "id", s_prov.current_cmd_id);
+    }
+
     cJSON_AddStringToObject(root, "status", status);
 
     if (message != NULL) {
@@ -601,9 +681,9 @@ static void handle_get_status(cJSON *params)
 
     cJSON *data = cJSON_CreateObject();
 
-    /* Device info */
-    cJSON_AddStringToObject(data, "device_type", "hub");
-    cJSON_AddStringToObject(data, "firmware_version", FIRMWARE_VERSION);
+    /* Device info - use values from firmware JSON schema (app_config.h) */
+    cJSON_AddStringToObject(data, "device_type", DEVICE_TYPE);
+    cJSON_AddStringToObject(data, "firmware_version", FW_VERSION_STRING);
 
     /* MAC address (unique hardware identifier) */
     uint8_t mac[6];
@@ -697,9 +777,11 @@ static void handle_get_status(cJSON *params)
     }
 #endif /* CONFIG_OPENTHREAD_ENABLED */
 
-    /* System info */
+    /* System info - match heartbeat format per Device Command Protocol v1.3 */
     cJSON_AddNumberToObject(data, "free_heap", esp_get_free_heap_size());
-    cJSON_AddNumberToObject(data, "uptime_ms", esp_timer_get_time() / 1000);
+    cJSON_AddNumberToObject(data, "min_free_heap", esp_get_minimum_free_heap_size());
+    cJSON_AddNumberToObject(data, "largest_free_block", heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+    cJSON_AddNumberToObject(data, "uptime_sec", (uint32_t)(esp_timer_get_time() / 1000000));
 
     /* Test results if available */
     if (s_prov.has_test_results) {
@@ -713,6 +795,280 @@ static void handle_get_status(cJSON *params)
     send_response("ok", NULL, data);
     cJSON_Delete(data);
 }
+
+/*******************************************************************************
+ * Device Command Protocol v1.3 - Core Commands
+ ******************************************************************************/
+
+static void handle_get_capabilities(cJSON *params)
+{
+    /* Alias for get_manifest - returns device capability manifest */
+    handle_get_manifest(params);
+}
+
+static void handle_consumer_reset(cJSON *params)
+{
+    /* Alias for customer_reset - clears consumer data, preserves factory config */
+    handle_customer_reset(params);
+}
+
+/*******************************************************************************
+ * Device Command Protocol v1.3 - Provisioning Commands
+ ******************************************************************************/
+
+static void handle_factory_provision(cJSON *params)
+{
+    if (params == NULL) {
+        send_error("missing_params", "Parameters required");
+        return;
+    }
+
+    /* Accept both "serial_number" (protocol) and "unit_id" (legacy) */
+    cJSON *serial_number = cJSON_GetObjectItem(params, "serial_number");
+    if (serial_number == NULL) {
+        serial_number = cJSON_GetObjectItem(params, "unit_id");  /* Legacy fallback */
+    }
+
+    cJSON *name = cJSON_GetObjectItem(params, "name");
+    cJSON *cloud_url = cJSON_GetObjectItem(params, "cloud_url");
+    cJSON *cloud_anon_key = cJSON_GetObjectItem(params, "cloud_anon_key");
+
+    if (!cJSON_IsString(serial_number)) {
+        send_error("missing_params", "Required: serial_number");
+        return;
+    }
+
+    if (!cJSON_IsString(cloud_url) || !cJSON_IsString(cloud_anon_key)) {
+        send_error("missing_params", "Required: cloud_url, cloud_anon_key");
+        return;
+    }
+
+    /* Extract optional fields */
+    cJSON *wifi_ssid = cJSON_GetObjectItem(params, "wifi_ssid");
+    cJSON *wifi_password = cJSON_GetObjectItem(params, "wifi_password");
+
+    esp_err_t err;
+
+    /* Store serial_number as the core provisioning identifier (unit_id in NVS) */
+    err = config_set_unit_id(serial_number->valuestring);
+    if (err != ESP_OK) {
+        send_error("internal_error", "Failed to store serial_number");
+        return;
+    }
+    ESP_LOGI(TAG, "Serial number stored: %s", serial_number->valuestring);
+
+    /* Store cloud (Supabase) configuration */
+    supabase_config_t sb_config = {0};
+    strncpy(sb_config.unit_id, serial_number->valuestring, sizeof(sb_config.unit_id) - 1);
+    strncpy(sb_config.url, cloud_url->valuestring, sizeof(sb_config.url) - 1);
+    strncpy(sb_config.anon_key, cloud_anon_key->valuestring, sizeof(sb_config.anon_key) - 1);
+
+    err = supabase_set_config(&sb_config);
+    if (err != ESP_OK) {
+        send_error("internal_error", "Failed to store cloud config");
+        return;
+    }
+    ESP_LOGI(TAG, "Cloud config stored for: %s", cloud_url->valuestring);
+
+    /* Store Wi-Fi credentials if provided */
+    if (cJSON_IsString(wifi_ssid)) {
+        const char *password = cJSON_IsString(wifi_password) ? wifi_password->valuestring : "";
+        err = config_set_wifi(wifi_ssid->valuestring, password);
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "Failed to store Wi-Fi credentials: %s", esp_err_to_name(err));
+        } else {
+            ESP_LOGI(TAG, "Wi-Fi credentials stored for: %s", wifi_ssid->valuestring);
+        }
+    }
+
+    /* Mark as factory provisioned */
+    err = config_set_provisioned(true);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to set provisioned flag: %s", esp_err_to_name(err));
+    }
+
+    /* Build response with device info */
+    cJSON *data = cJSON_CreateObject();
+    cJSON_AddStringToObject(data, "serial_number", serial_number->valuestring);
+    if (cJSON_IsString(name)) {
+        cJSON_AddStringToObject(data, "name", name->valuestring);
+    }
+
+    /* Add MAC address */
+    uint8_t mac[6];
+    if (esp_read_mac(mac, ESP_MAC_WIFI_STA) == ESP_OK) {
+        char mac_str[18];
+        snprintf(mac_str, sizeof(mac_str), "%02X:%02X:%02X:%02X:%02X:%02X",
+                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+        cJSON_AddStringToObject(data, "mac_address", mac_str);
+    }
+
+    send_response("ok", "Device provisioned successfully", data);
+    cJSON_Delete(data);
+}
+
+static void handle_set_provision_data(cJSON *params)
+{
+    if (params == NULL) {
+        send_error("missing_params", "Parameters required");
+        return;
+    }
+
+    /* Update individual provisioning fields without full re-provision */
+    esp_err_t err;
+    bool any_updated = false;
+
+    /* Cloud URL */
+    cJSON *cloud_url = cJSON_GetObjectItem(params, "cloud_url");
+    cJSON *cloud_anon_key = cJSON_GetObjectItem(params, "cloud_anon_key");
+    if (cJSON_IsString(cloud_url) && cJSON_IsString(cloud_anon_key)) {
+        supabase_config_t sb_config;
+        supabase_get_config(&sb_config);
+        strncpy(sb_config.url, cloud_url->valuestring, sizeof(sb_config.url) - 1);
+        strncpy(sb_config.anon_key, cloud_anon_key->valuestring, sizeof(sb_config.anon_key) - 1);
+        err = supabase_set_config(&sb_config);
+        if (err == ESP_OK) {
+            any_updated = true;
+            ESP_LOGI(TAG, "Cloud config updated");
+        }
+    }
+
+    /* Wi-Fi credentials */
+    cJSON *wifi_ssid = cJSON_GetObjectItem(params, "wifi_ssid");
+    cJSON *wifi_password = cJSON_GetObjectItem(params, "wifi_password");
+    if (cJSON_IsString(wifi_ssid)) {
+        const char *password = cJSON_IsString(wifi_password) ? wifi_password->valuestring : "";
+        err = config_set_wifi(wifi_ssid->valuestring, password);
+        if (err == ESP_OK) {
+            any_updated = true;
+            ESP_LOGI(TAG, "Wi-Fi credentials updated");
+        }
+    }
+
+    if (any_updated) {
+        send_response("ok", "Provision data updated", NULL);
+    } else {
+        send_error("invalid_params", "No valid fields to update");
+    }
+}
+
+static void handle_get_provision_data(cJSON *params)
+{
+    (void)params;
+
+    cJSON *data = cJSON_CreateObject();
+
+    /* Serial number / unit_id */
+    char unit_id[32] = {0};
+    if (config_get_unit_id(unit_id, sizeof(unit_id)) == ESP_OK) {
+        cJSON_AddStringToObject(data, "serial_number", unit_id);
+    } else {
+        cJSON_AddNullToObject(data, "serial_number");
+    }
+
+    /* Cloud configuration */
+    if (supabase_is_configured()) {
+        supabase_config_t sb_config;
+        if (supabase_get_config(&sb_config) == ESP_OK) {
+            cJSON_AddStringToObject(data, "cloud_url", sb_config.url);
+            cJSON_AddBoolToObject(data, "cloud_configured", true);
+        }
+    } else {
+        cJSON_AddBoolToObject(data, "cloud_configured", false);
+    }
+
+    /* Wi-Fi configuration (don't return password) */
+    cJSON_AddBoolToObject(data, "wifi_configured", config_has_wifi());
+
+    send_response("ok", NULL, data);
+    cJSON_Delete(data);
+}
+
+/*******************************************************************************
+ * Device Command Protocol v1.3 - Testing Commands
+ ******************************************************************************/
+
+static void handle_run_test(cJSON *root)
+{
+    /* Extract capability and test_name from root (not params) */
+    cJSON *capability = cJSON_GetObjectItem(root, "capability");
+    cJSON *test_name = cJSON_GetObjectItem(root, "test_name");
+    cJSON *params = cJSON_GetObjectItem(root, "params");
+    if (params == NULL) {
+        params = cJSON_GetObjectItem(root, "data");  /* Legacy fallback */
+    }
+
+    if (!cJSON_IsString(capability) || !cJSON_IsString(test_name)) {
+        send_error("missing_params", "Required: capability, test_name");
+        return;
+    }
+
+    const char *cap = capability->valuestring;
+    const char *test = test_name->valuestring;
+
+    ESP_LOGI(TAG, "Running test: capability=%s, test=%s", cap, test);
+
+    /* Route to appropriate test handler based on capability */
+    if (strcmp(cap, "wifi") == 0) {
+        if (strcmp(test, "connect") == 0) {
+            handle_test_wifi(params);
+        } else {
+            send_error("test_not_found", "Unknown wifi test");
+        }
+    } else if (strcmp(cap, "cloud") == 0) {
+        if (strcmp(test, "connect") == 0 || strcmp(test, "api") == 0) {
+            handle_test_cloud(params);
+        } else {
+            send_error("test_not_found", "Unknown cloud test");
+        }
+    } else if (strcmp(cap, "rfid") == 0) {
+        if (strcmp(test, "scan") == 0) {
+            handle_test_rfid(params);
+        } else {
+            send_error("test_not_found", "Unknown rfid test");
+        }
+    } else if (strcmp(cap, "thread") == 0) {
+        if (strcmp(test, "connect") == 0 || strcmp(test, "start") == 0) {
+            handle_test_thread(params);
+        } else {
+            send_error("test_not_found", "Unknown thread test");
+        }
+    } else {
+        send_error("capability_not_found", "Unknown capability");
+    }
+}
+
+/*******************************************************************************
+ * Device Command Protocol v1.3 - OTA Commands
+ ******************************************************************************/
+
+static void handle_ota_update(cJSON *params)
+{
+    /* Wrapper for start_ota with protocol-compliant parameter names */
+    if (params == NULL) {
+        send_error("missing_params", "Parameters required");
+        return;
+    }
+
+    /* Protocol uses firmware_url, target_version, firmware_id */
+    cJSON *firmware_url = cJSON_GetObjectItem(params, "firmware_url");
+    if (!cJSON_IsString(firmware_url)) {
+        /* Try legacy field name */
+        firmware_url = cJSON_GetObjectItem(params, "url");
+    }
+
+    if (!cJSON_IsString(firmware_url)) {
+        send_error("missing_params", "Required: firmware_url");
+        return;
+    }
+
+    /* Delegate to existing OTA handler */
+    handle_start_ota(params);
+}
+
+/*******************************************************************************
+ * Legacy Command Handlers (backwards compatibility)
+ ******************************************************************************/
 
 static void handle_get_manifest(cJSON *params)
 {
@@ -1591,4 +1947,123 @@ static void handle_get_ota_status(cJSON *params)
 
     send_response("ok", NULL, data);
     cJSON_Delete(data);
+}
+
+/*******************************************************************************
+ * Background Listener (Always-Listening Mode)
+ ******************************************************************************/
+
+/**
+ * @brief Background listener task - handles commands during normal operation
+ *
+ * Unlike the full service mode task, this runs with minimal overhead:
+ * - No periodic status beacons
+ * - Only handles get_status and enter_service_mode commands
+ * - Other commands trigger entry into full service mode
+ */
+static void background_listener_task(void *arg)
+{
+    (void)arg;
+    uint8_t byte;
+
+    ESP_LOGI(TAG, "Background listener started - ready for commands");
+
+    s_prov.bg_rx_len = 0;
+    memset(s_prov.bg_rx_buffer, 0, sizeof(s_prov.bg_rx_buffer));
+
+    while (1) {
+        /* Read from USB Serial JTAG driver with timeout */
+        int len = usb_serial_jtag_read_bytes(&byte, 1, pdMS_TO_TICKS(50));
+
+        if (len > 0) {
+            if (byte == '\n' || byte == '\r') {
+                /* End of message - process if we have content */
+                if (s_prov.bg_rx_len > 0) {
+                    s_prov.bg_rx_buffer[s_prov.bg_rx_len] = '\0';
+                    ESP_LOGI(TAG, "Background received: %s", s_prov.bg_rx_buffer);
+                    process_background_command(s_prov.bg_rx_buffer);
+                    s_prov.bg_rx_len = 0;
+                }
+            } else if (s_prov.bg_rx_len < sizeof(s_prov.bg_rx_buffer) - 1) {
+                /* Add byte to buffer */
+                s_prov.bg_rx_buffer[s_prov.bg_rx_len++] = (char)byte;
+            } else {
+                /* Buffer overflow - discard */
+                ESP_LOGW(TAG, "Background RX buffer overflow, discarding");
+                s_prov.bg_rx_len = 0;
+            }
+        }
+
+        /* Small delay to allow IDLE task to run and feed watchdog */
+        vTaskDelay(pdMS_TO_TICKS(5));
+    }
+}
+
+/**
+ * @brief Process commands received via always-listening mode
+ *
+ * Per Device Command Protocol v1.3, all commands are handled directly without
+ * requiring "service mode" entry. This function routes commands to the same
+ * handlers used by the legacy service mode, providing full command support.
+ *
+ * Legacy commands like enter_service_mode and exit_service_mode are still
+ * accepted for backwards compatibility but are essentially no-ops since the
+ * device is always listening.
+ */
+static void process_background_command(const char *json_str)
+{
+    /* Route to the main command processor - it handles all commands */
+    process_command(json_str);
+}
+
+esp_err_t serial_prov_start_background_listener(void)
+{
+    if (!s_prov.initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (s_prov.background_listener_active || s_prov.active) {
+        /* Already running background listener or full service mode */
+        return ESP_OK;
+    }
+
+    /* Create background listener task with smaller stack (no tests/WiFi operations) */
+    BaseType_t ret = xTaskCreate(
+        background_listener_task,
+        "bg_serial",
+        4096,  /* Smaller stack than full service mode */
+        NULL,
+        TASK_PRIORITY - 1,  /* Slightly lower priority than service mode */
+        &s_prov.background_task_handle
+    );
+
+    if (ret != pdPASS) {
+        ESP_LOGE(TAG, "Failed to create background listener task");
+        return ESP_ERR_NO_MEM;
+    }
+
+    s_prov.background_listener_active = true;
+    ESP_LOGI(TAG, "Background listener started - device commands available");
+    return ESP_OK;
+}
+
+esp_err_t serial_prov_stop_background_listener(void)
+{
+    if (!s_prov.background_listener_active) {
+        return ESP_OK;
+    }
+
+    if (s_prov.background_task_handle) {
+        vTaskDelete(s_prov.background_task_handle);
+        s_prov.background_task_handle = NULL;
+    }
+
+    s_prov.background_listener_active = false;
+    ESP_LOGI(TAG, "Background listener stopped");
+    return ESP_OK;
+}
+
+bool serial_prov_is_background_listener_active(void)
+{
+    return s_prov.background_listener_active;
 }

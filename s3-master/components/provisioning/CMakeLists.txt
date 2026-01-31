@@ -11,6 +11,7 @@ idf_component_register(
         esp_timer
         freertos
     PRIV_REQUIRES
+        app_config
         config
         cloud
         network
