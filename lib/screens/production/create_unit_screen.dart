@@ -7,11 +7,11 @@ import 'package:saturday_app/config/theme.dart';
 import 'package:saturday_app/models/order.dart';
 import 'package:saturday_app/models/product.dart';
 import 'package:saturday_app/models/product_variant.dart';
-import 'package:saturday_app/models/production_unit.dart';
+import 'package:saturday_app/models/unit.dart';
 import 'package:saturday_app/providers/auth_provider.dart';
 import 'package:saturday_app/providers/order_provider.dart';
 import 'package:saturday_app/providers/product_provider.dart';
-import 'package:saturday_app/providers/production_unit_provider.dart';
+import 'package:saturday_app/providers/unit_provider.dart';
 import 'package:saturday_app/providers/settings_provider.dart';
 import 'package:saturday_app/services/printer_service.dart';
 import 'package:saturday_app/services/qr_service.dart';
@@ -36,7 +36,7 @@ class _CreateUnitScreenState extends ConsumerState<CreateUnitScreen> {
   ProductVariant? _selectedVariant;
   Order? _selectedOrder;
   bool _buildForInventory = true;
-  ProductionUnit? _createdUnit;
+  Unit? _createdUnit;
   bool _isCreating = false;
 
   @override
@@ -230,14 +230,11 @@ class _CreateUnitScreenState extends ConsumerState<CreateUnitScreen> {
         throw Exception('No user logged in');
       }
 
-      final management = ref.read(productionUnitManagementProvider);
+      final management = ref.read(unitManagementProvider);
       final unit = await management.createUnit(
         productId: _selectedProduct!.id,
         variantId: _selectedVariant!.id,
         userId: currentUser.id,
-        shopifyOrderId: _selectedOrder?.shopifyOrderId,
-        shopifyOrderNumber: _selectedOrder?.shopifyOrderNumber,
-        customerName: _selectedOrder?.customerName,
         orderId: _selectedOrder?.id, // Link order to unit
       );
 
@@ -250,7 +247,7 @@ class _CreateUnitScreenState extends ConsumerState<CreateUnitScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Unit ${unit.unitId} created successfully!'),
+            content: Text('Unit ${unit.serialNumber ?? unit.id} created successfully!'),
             backgroundColor: SaturdayColors.success,
           ),
         );
@@ -303,14 +300,17 @@ class _CreateUnitScreenState extends ConsumerState<CreateUnitScreen> {
       // Download QR code image
       Uint8List? qrImageData;
       try {
-        final response = await http.get(Uri.parse(_createdUnit!.qrCodeUrl));
-        if (response.statusCode == 200) {
-          qrImageData = response.bodyBytes;
-        } else {
-          // If download fails, generate QR code
+        if (_createdUnit!.qrCodeUrl != null) {
+          final response = await http.get(Uri.parse(_createdUnit!.qrCodeUrl!));
+          if (response.statusCode == 200) {
+            qrImageData = response.bodyBytes;
+          }
+        }
+        // If download fails or no URL, generate QR code
+        if (qrImageData == null) {
           final qrService = QRService();
           qrImageData = await qrService.generateQRCode(
-            _createdUnit!.uuid,
+            _createdUnit!.id,
             size: 200,
           );
         }
@@ -319,7 +319,7 @@ class _CreateUnitScreenState extends ConsumerState<CreateUnitScreen> {
         // Generate QR code as fallback
         final qrService = QRService();
         qrImageData = await qrService.generateQRCode(
-          _createdUnit!.uuid,
+          _createdUnit!.id,
           size: 200,
         );
       }
@@ -613,8 +613,8 @@ class _CreateUnitScreenState extends ConsumerState<CreateUnitScreen> {
     return Column(
       children: [
         QRCodeDisplay(
-          qrCodeUrl: _createdUnit!.qrCodeUrl,
-          unitId: _createdUnit!.unitId,
+          qrCodeUrl: _createdUnit!.qrCodeUrl ?? '',
+          unitId: _createdUnit!.serialNumber ?? 'Unassigned',
         ),
         const SizedBox(height: 24),
         _buildSummaryCard(),
@@ -644,7 +644,7 @@ class _CreateUnitScreenState extends ConsumerState<CreateUnitScreen> {
             ),
             if (_createdUnit != null) ...[
               const Divider(),
-              _buildSummaryRow('Unit ID', _createdUnit!.unitId),
+              _buildSummaryRow('Serial Number', _createdUnit!.serialNumber ?? 'Unassigned'),
             ],
           ],
         ),
@@ -690,14 +690,17 @@ class _CreateUnitScreenState extends ConsumerState<CreateUnitScreen> {
       // Download QR code image
       Uint8List? qrImageData;
       try {
-        final response = await http.get(Uri.parse(_createdUnit!.qrCodeUrl));
-        if (response.statusCode == 200) {
-          qrImageData = response.bodyBytes;
-        } else {
-          // If download fails, generate QR code
+        if (_createdUnit!.qrCodeUrl != null) {
+          final response = await http.get(Uri.parse(_createdUnit!.qrCodeUrl!));
+          if (response.statusCode == 200) {
+            qrImageData = response.bodyBytes;
+          }
+        }
+        // If download fails or no URL, generate QR code
+        if (qrImageData == null) {
           final qrService = QRService();
           qrImageData = await qrService.generateQRCode(
-            _createdUnit!.uuid,
+            _createdUnit!.id,
             size: 200,
           );
         }
@@ -706,7 +709,7 @@ class _CreateUnitScreenState extends ConsumerState<CreateUnitScreen> {
         // Generate QR code as fallback
         final qrService = QRService();
         qrImageData = await qrService.generateQRCode(
-          _createdUnit!.uuid,
+          _createdUnit!.id,
           size: 200,
         );
       }

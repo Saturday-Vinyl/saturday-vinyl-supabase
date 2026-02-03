@@ -140,6 +140,130 @@ class RealtimeService {
     return channel;
   }
 
+  /// Subscribe to device_heartbeats for specific MAC addresses
+  ///
+  /// Receives heartbeat inserts for the specified devices.
+  /// Used for remote device monitoring.
+  RealtimeChannel subscribeToHeartbeatsByMacs({
+    required List<String> macAddresses,
+    required void Function(PostgresChangePayload payload) onInsert,
+  }) {
+    if (macAddresses.isEmpty) {
+      throw ArgumentError('macAddresses cannot be empty');
+    }
+
+    final channelName = 'heartbeats-${macAddresses.hashCode}';
+    AppLogger.info(
+        'Subscribing to heartbeats for ${macAddresses.length} devices: $channelName');
+
+    final channel = _client.channel(channelName);
+
+    // Subscribe to heartbeats with MAC filter
+    // Note: Supabase Realtime filter uses 'in' for array matching
+    channel.onPostgresChanges(
+      event: PostgresChangeEvent.insert,
+      schema: 'public',
+      table: 'device_heartbeats',
+      filter: PostgresChangeFilter(
+        type: PostgresChangeFilterType.inFilter,
+        column: 'mac_address',
+        value: macAddresses,
+      ),
+      callback: (payload) {
+        final record = payload.newRecord;
+        AppLogger.debug(
+            'Realtime: Heartbeat INSERT - mac=${record['mac_address']}, type=${record['type']}');
+        onInsert(payload);
+      },
+    );
+
+    channel.subscribe((status, error) {
+      if (error != null) {
+        AppLogger.error(
+            'Heartbeats realtime channel error', error, StackTrace.current);
+      } else {
+        AppLogger.info('Heartbeats realtime channel status: $status');
+        if (status.toString() == 'RealtimeSubscribeStatus.subscribed') {
+          AppLogger.info(
+              'Heartbeats realtime subscription ACTIVE for ${macAddresses.length} devices');
+        }
+      }
+    });
+
+    return channel;
+  }
+
+  /// Subscribe to device_commands for specific MAC addresses
+  ///
+  /// Receives command inserts and updates for the specified devices.
+  /// Used for remote device monitoring.
+  RealtimeChannel subscribeToCommandsByMacs({
+    required List<String> macAddresses,
+    required void Function(PostgresChangePayload payload) onInsert,
+    required void Function(PostgresChangePayload payload) onUpdate,
+  }) {
+    if (macAddresses.isEmpty) {
+      throw ArgumentError('macAddresses cannot be empty');
+    }
+
+    final channelName = 'commands-${macAddresses.hashCode}';
+    AppLogger.info(
+        'Subscribing to commands for ${macAddresses.length} devices: $channelName');
+
+    final channel = _client.channel(channelName);
+
+    // Subscribe to command inserts
+    channel.onPostgresChanges(
+      event: PostgresChangeEvent.insert,
+      schema: 'public',
+      table: 'device_commands',
+      filter: PostgresChangeFilter(
+        type: PostgresChangeFilterType.inFilter,
+        column: 'mac_address',
+        value: macAddresses,
+      ),
+      callback: (payload) {
+        final record = payload.newRecord;
+        AppLogger.debug(
+            'Realtime: Command INSERT - id=${record['id']}, cmd=${record['command']}');
+        onInsert(payload);
+      },
+    );
+
+    // Subscribe to command updates (status changes)
+    channel.onPostgresChanges(
+      event: PostgresChangeEvent.update,
+      schema: 'public',
+      table: 'device_commands',
+      filter: PostgresChangeFilter(
+        type: PostgresChangeFilterType.inFilter,
+        column: 'mac_address',
+        value: macAddresses,
+      ),
+      callback: (payload) {
+        final record = payload.newRecord;
+        AppLogger.debug(
+            'Realtime: Command UPDATE - id=${record['id']}, status=${record['status']}');
+        onUpdate(payload);
+      },
+    );
+
+    channel.subscribe((status, error) {
+      if (error != null) {
+        AppLogger.error(
+            'Commands realtime channel error', error, StackTrace.current);
+      } else {
+        AppLogger.info('Commands realtime channel status: $status');
+        if (status.toString() == 'RealtimeSubscribeStatus.subscribed') {
+          AppLogger.info(
+              'Commands realtime subscription ACTIVE for ${macAddresses.length} devices');
+        }
+      }
+    });
+
+    return channel;
+  }
+
   /// Unsubscribe from a channel and remove it
   Future<void> unsubscribe(RealtimeChannel channel) async {
     try {

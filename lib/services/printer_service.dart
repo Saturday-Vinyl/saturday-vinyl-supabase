@@ -4,7 +4,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import '../models/printer_settings.dart';
-import '../models/production_unit.dart';
+import '../models/unit.dart';
 import '../repositories/settings_repository.dart';
 import '../utils/app_logger.dart';
 import 'niimbot/niimbot_printer.dart';
@@ -122,13 +122,12 @@ class PrinterService {
   ///
   /// Creates a thermal label (default 1" x 1") with:
   /// - QR code with embedded logo
-  /// - Unit ID
+  /// - Serial number
   /// - Product name + variant
-  /// - Customer name and order date (if applicable)
   ///
   /// Label size can be customized via settings or parameters
   Future<Uint8List> generateUnitLabel({
-    required ProductionUnit unit,
+    required Unit unit,
     required String productName,
     required String variantName,
     required Uint8List qrImageData,
@@ -136,7 +135,7 @@ class PrinterService {
     double? labelHeight,
   }) async {
     try {
-      AppLogger.info('Generating unit label for ${unit.unitId}');
+      AppLogger.info('Generating unit label for ${unit.serialNumber ?? 'Unknown'}');
 
       // Use provided dimensions, or fall back to settings, or default to 1"x1"
       final width = labelWidth ?? _cachedSettings?.labelWidth ?? 1.0;
@@ -199,12 +198,11 @@ class PrinterService {
   ///
   /// Creates a thermal label with:
   /// - QR code
-  /// - Unit ID
+  /// - Serial number
   /// - Product name + variant
   /// - Custom label text (if provided)
-  /// - Order number (if applicable)
   Future<Uint8List> generateStepLabel({
-    required ProductionUnit unit,
+    required Unit unit,
     required String productName,
     required String variantName,
     required Uint8List qrImageData,
@@ -213,7 +211,7 @@ class PrinterService {
     double? labelHeight,
   }) async {
     try {
-      AppLogger.info('Generating step label for unit ${unit.unitId}');
+      AppLogger.info('Generating step label for unit ${unit.serialNumber ?? 'Unknown'}');
 
       // Use provided dimensions, or fall back to settings, or default to 1"x1"
       final width = labelWidth ?? _cachedSettings?.labelWidth ?? 1.0;

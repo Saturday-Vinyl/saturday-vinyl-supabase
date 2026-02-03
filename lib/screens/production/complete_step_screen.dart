@@ -5,7 +5,7 @@ import 'package:saturday_app/config/theme.dart';
 import 'package:saturday_app/models/production_step.dart';
 import 'package:saturday_app/providers/auth_provider.dart';
 import 'package:saturday_app/providers/product_provider.dart';
-import 'package:saturday_app/providers/production_unit_provider.dart';
+import 'package:saturday_app/providers/unit_provider.dart';
 import 'package:saturday_app/providers/step_label_provider.dart';
 import 'package:saturday_app/providers/step_timer_provider.dart';
 import 'package:saturday_app/providers/unit_timer_provider.dart';
@@ -56,7 +56,7 @@ class _CompleteStepScreenState extends ConsumerState<CompleteStepScreen> {
     });
 
     try {
-      final management = ref.read(productionUnitManagementProvider);
+      final management = ref.read(unitManagementProvider);
       final updatedUnit = await management.completeStep(
         unitId: widget.unitId,
         stepId: widget.step.id,
@@ -104,8 +104,13 @@ class _CompleteStepScreenState extends ConsumerState<CompleteStepScreen> {
         return;
       }
 
+      if (unit.productId == null || unit.variantId == null) {
+        _showError('Unit missing product/variant info');
+        return;
+      }
+
       // Get product and variant info
-      final productAsync = ref.read(productProvider(unit.productId));
+      final productAsync = ref.read(productProvider(unit.productId!));
       final product = productAsync.value;
 
       if (product == null) {
@@ -113,7 +118,7 @@ class _CompleteStepScreenState extends ConsumerState<CompleteStepScreen> {
         return;
       }
 
-      final variantAsync = ref.read(variantProvider(unit.variantId));
+      final variantAsync = ref.read(variantProvider(unit.variantId!));
       final variant = variantAsync.value;
 
       if (variant == null) {
@@ -135,7 +140,7 @@ class _CompleteStepScreenState extends ConsumerState<CompleteStepScreen> {
       // Generate QR code once (used for all labels)
       final qrService = QRService();
       final qrImageData = await qrService.generateQRCode(
-        unit.uuid,
+        unit.id,
         size: 512,
         embedLogo: true,
       );

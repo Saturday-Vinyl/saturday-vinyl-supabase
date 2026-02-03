@@ -2,7 +2,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:saturday_app/config/theme.dart';
-import 'package:saturday_app/repositories/production_unit_repository.dart';
+import 'package:saturday_app/repositories/unit_repository.dart';
 import 'package:saturday_app/screens/production/unit_detail_screen.dart';
 import 'package:saturday_app/utils/app_logger.dart';
 import 'package:saturday_app/widgets/production/qr_scanner_desktop.dart';
@@ -17,7 +17,7 @@ class QRScanScreen extends StatefulWidget {
 }
 
 class _QRScanScreenState extends State<QRScanScreen> {
-  final _unitRepository = ProductionUnitRepository();
+  final _unitRepository = UnitRepository();
 
   bool get _isMobile =>
       !kIsWeb && (Platform.isAndroid || Platform.isIOS);
@@ -48,12 +48,12 @@ class _QRScanScreenState extends State<QRScanScreen> {
     );
   }
 
-  Future<void> _navigateToUnit(BuildContext context, String uuid) async {
+  Future<void> _navigateToUnit(BuildContext context, String unitId) async {
     try {
-      AppLogger.info('Looking up unit by UUID: $uuid');
+      AppLogger.info('Looking up unit by ID: $unitId');
 
-      // Fetch unit to get primary key id
-      final unit = await _unitRepository.getUnitByUuid(uuid);
+      // Fetch unit by ID (QR code now encodes the unit's primary key directly)
+      final unit = await _unitRepository.getUnitById(unitId);
 
       if (!context.mounted) return;
 
@@ -65,7 +65,7 @@ class _QRScanScreenState extends State<QRScanScreen> {
         ),
       );
 
-      AppLogger.info('Navigated to unit detail: ${unit.unitId}');
+      AppLogger.info('Navigated to unit detail: ${unit.serialNumber}');
     } catch (e) {
       AppLogger.error('Failed to navigate to unit', e, StackTrace.current);
 

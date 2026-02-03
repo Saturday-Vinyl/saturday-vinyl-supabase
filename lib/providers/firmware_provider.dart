@@ -181,6 +181,13 @@ final latestReleasedFirmwareProvider =
   return repository.getLatestReleasedFirmware(deviceTypeId);
 });
 
+/// Provider for latest development (unreleased) firmware for a device type
+final latestDevFirmwareProvider =
+    FutureProvider.family<Firmware?, String>((ref, deviceTypeId) async {
+  final repository = ref.watch(firmwareRepositoryProvider);
+  return repository.getLatestDevFirmware(deviceTypeId);
+});
+
 /// Provider for critical firmware updates for a device type
 final criticalFirmwareProvider =
     FutureProvider.family<List<Firmware>, String>((ref, deviceTypeId) async {

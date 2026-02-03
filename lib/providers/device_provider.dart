@@ -14,11 +14,11 @@ final devicesByUnitProvider =
   return repository.getDevicesForUnit(unitId);
 });
 
-/// Provider for devices by device type
+/// Provider for devices by device type (by slug)
 final devicesByTypeProvider =
-    FutureProvider.family<List<Device>, String>((ref, deviceTypeId) async {
+    FutureProvider.family<List<Device>, String>((ref, deviceTypeSlug) async {
   final repository = ref.watch(deviceRepositoryProvider);
-  return repository.getDevicesByType(deviceTypeId);
+  return repository.getDevicesByType(deviceTypeSlug);
 });
 
 /// Provider for devices by status
@@ -69,7 +69,7 @@ class DeviceManagement {
   /// Create a new device
   Future<Device> createDevice({
     required String macAddress,
-    required String deviceTypeId,
+    required String deviceTypeSlug,
     String? unitId,
     String? firmwareVersion,
     String? firmwareId,
@@ -77,14 +77,14 @@ class DeviceManagement {
     final repository = ref.read(deviceRepositoryProvider);
     final device = await repository.createDevice(
       macAddress: macAddress,
-      deviceTypeId: deviceTypeId,
+      deviceTypeSlug: deviceTypeSlug,
       unitId: unitId,
       firmwareVersion: firmwareVersion,
       firmwareId: firmwareId,
     );
 
     // Invalidate relevant providers
-    ref.invalidate(devicesByTypeProvider(deviceTypeId));
+    ref.invalidate(devicesByTypeProvider(deviceTypeSlug));
     if (unitId != null) {
       ref.invalidate(devicesByUnitProvider(unitId));
     }
@@ -94,25 +94,35 @@ class DeviceManagement {
   }
 
   /// Create or update a device (upsert by MAC address)
+  ///
+  /// For factory provisioning, also pass factoryProvisionedAt, factoryProvisionedBy, and status.
   Future<Device> upsertDevice({
     required String macAddress,
-    required String deviceTypeId,
+    required String deviceTypeSlug,
     String? unitId,
     String? firmwareVersion,
     String? firmwareId,
+    DateTime? factoryProvisionedAt,
+    String? factoryProvisionedBy,
+    Map<String, dynamic>? factoryAttributes,
+    String? status,
   }) async {
     final repository = ref.read(deviceRepositoryProvider);
     final device = await repository.upsertDevice(
       macAddress: macAddress,
-      deviceTypeId: deviceTypeId,
+      deviceTypeSlug: deviceTypeSlug,
       unitId: unitId,
       firmwareVersion: firmwareVersion,
       firmwareId: firmwareId,
+      factoryProvisionedAt: factoryProvisionedAt,
+      factoryProvisionedBy: factoryProvisionedBy,
+      factoryAttributes: factoryAttributes,
+      status: status,
     );
 
     // Invalidate relevant providers
     ref.invalidate(deviceByMacProvider(macAddress));
-    ref.invalidate(devicesByTypeProvider(deviceTypeId));
+    ref.invalidate(devicesByTypeProvider(deviceTypeSlug));
     if (unitId != null) {
       ref.invalidate(devicesByUnitProvider(unitId));
     }
@@ -264,7 +274,9 @@ class DeviceManagement {
     await repository.deleteDevice(deviceId);
 
     // Invalidate relevant providers
-    ref.invalidate(devicesByTypeProvider(device.deviceTypeId!));
+    if (device.deviceTypeSlug != null) {
+      ref.invalidate(devicesByTypeProvider(device.deviceTypeSlug!));
+    }
     if (device.unitId != null) {
       ref.invalidate(devicesByUnitProvider(device.unitId!));
     }
@@ -282,8 +294,8 @@ class DeviceManagement {
 
     if (device != null) {
       ref.invalidate(deviceByMacProvider(macAddress));
-      if (device.deviceTypeId != null) {
-        ref.invalidate(devicesByTypeProvider(device.deviceTypeId!));
+      if (device.deviceTypeSlug != null) {
+        ref.invalidate(devicesByTypeProvider(device.deviceTypeSlug!));
       }
       if (device.unitId != null) {
         ref.invalidate(devicesByUnitProvider(device.unitId!));

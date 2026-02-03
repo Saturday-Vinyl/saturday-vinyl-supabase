@@ -7,7 +7,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:path/path.dart' as path;
 import '../../config/theme.dart';
 import '../../models/printer_settings.dart';
-import '../../models/production_unit.dart';
+import '../../models/unit.dart';
 import '../../models/app_association.dart';
 import '../../providers/settings_provider.dart';
 import '../../services/printer_service.dart';
@@ -334,18 +334,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     }
   }
 
-  // Create a test production unit for test printing
-  ProductionUnit _createTestUnit() {
+  // Create a test unit for test printing
+  Unit _createTestUnit() {
     final now = DateTime.now();
-    return ProductionUnit(
+    return Unit(
       id: 'test-id',
-      uuid: 'test-uuid',
-      unitId: 'SV-TEST-00001',
+      serialNumber: 'SV-TEST-00001',
       productId: 'test-product',
       variantId: 'test-variant',
       qrCodeUrl: 'https://example.com/test-qr.png',
-      customerName: 'Test Customer',
-      shopifyOrderNumber: 'TEST-123',
       isCompleted: false,
       createdAt: now,
       createdBy: 'test',

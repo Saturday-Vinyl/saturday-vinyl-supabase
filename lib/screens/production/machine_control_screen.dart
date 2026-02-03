@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:saturday_app/config/theme.dart';
 import 'package:saturday_app/models/production_step.dart';
-import 'package:saturday_app/models/production_unit.dart';
+import 'package:saturday_app/models/unit.dart';
 import 'package:saturday_app/models/app_file.dart';
 import 'package:saturday_app/models/machine_macro.dart';
 import 'package:saturday_app/services/machine_connection_service.dart';
@@ -34,7 +34,7 @@ enum JogMode {
 
 class MachineControlScreen extends ConsumerStatefulWidget {
   final ProductionStep step;
-  final ProductionUnit unit;
+  final Unit unit;
 
   const MachineControlScreen({
     super.key,
@@ -460,9 +460,42 @@ class _MachineControlScreenState extends ConsumerState<MachineControlScreen> {
   }
 
   Widget _buildUnitDetailsSection() {
+    // Handle case where product/variant are not assigned
+    if (widget.unit.productId == null || widget.unit.variantId == null) {
+      return Card(
+        elevation: 4,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Unit Information',
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+              ),
+              const SizedBox(height: 16),
+              _buildInfoRow(
+                label: 'Serial Number',
+                value: widget.unit.serialNumber ?? 'Unassigned',
+                isLoading: false,
+              ),
+              const SizedBox(height: 12),
+              _buildInfoRow(
+                label: 'Status',
+                value: 'No product/variant assigned',
+                isLoading: false,
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     // Fetch product and variant data using providers
-    final productAsync = ref.watch(productProvider(widget.unit.productId));
-    final variantAsync = ref.watch(variantProvider(widget.unit.variantId));
+    final productAsync = ref.watch(productProvider(widget.unit.productId!));
+    final variantAsync = ref.watch(variantProvider(widget.unit.variantId!));
 
     return Card(
       elevation: 4,
@@ -485,10 +518,10 @@ class _MachineControlScreenState extends ConsumerState<MachineControlScreen> {
             ),
             const SizedBox(height: 16),
 
-            // Unit ID
+            // Serial Number
             _buildInfoRow(
-              label: 'Unit ID',
-              value: widget.unit.unitId,
+              label: 'Serial Number',
+              value: widget.unit.serialNumber ?? 'Unassigned',
               isLoading: false,
             ),
             const SizedBox(height: 12),
@@ -552,15 +585,6 @@ class _MachineControlScreenState extends ConsumerState<MachineControlScreen> {
               ),
             ),
 
-            // Order Number (if available)
-            if (widget.unit.shopifyOrderNumber != null) ...[
-              const SizedBox(height: 12),
-              _buildInfoRow(
-                label: 'Order Number',
-                value: widget.unit.shopifyOrderNumber!,
-                isLoading: false,
-              ),
-            ],
           ],
         ),
       ),

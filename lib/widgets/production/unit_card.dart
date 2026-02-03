@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:saturday_app/config/theme.dart';
-import 'package:saturday_app/models/production_unit.dart';
+import 'package:saturday_app/models/unit.dart';
 
 /// Card widget displaying production unit summary
 class UnitCard extends StatelessWidget {
-  final ProductionUnit unit;
+  final Unit unit;
   final VoidCallback onTap;
   final int totalSteps;
   final int completedSteps;
@@ -40,7 +40,7 @@ class UnitCard extends StatelessWidget {
                 children: [
                   Expanded(
                     child: Text(
-                      unit.unitId,
+                      unit.serialNumber ?? 'Unassigned',
                       style: Theme.of(context).textTheme.titleLarge?.copyWith(
                             fontWeight: FontWeight.bold,
                             color: SaturdayColors.primaryDark,
@@ -118,13 +118,6 @@ class UnitCard extends StatelessWidget {
                       Icons.check_circle_outline,
                       'Completed',
                       _formatDate(unit.productionCompletedAt!),
-                    ),
-                  if (unit.customerName != null)
-                    _buildMetadata(
-                      context,
-                      Icons.person_outline,
-                      'Customer',
-                      unit.customerName!,
                     ),
                 ],
               ),

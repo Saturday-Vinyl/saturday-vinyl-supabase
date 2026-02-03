@@ -2,7 +2,7 @@ import 'dart:typed_data';
 import 'package:image/image.dart' as img;
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:saturday_app/utils/app_logger.dart';
-import 'package:saturday_app/models/production_unit.dart';
+import 'package:saturday_app/models/unit.dart';
 import 'package:saturday_app/models/production_step.dart';
 import 'package:saturday_app/services/qr_code_fetch_service.dart';
 
@@ -279,7 +279,7 @@ class ImageToGCodeService {
   /// Fetches the QR code image from storage and converts it to laser engraving gCode
   /// using the parameters defined in the production step.
   Future<String> generateQREngraveGCode({
-    required ProductionUnit unit,
+    required Unit unit,
     required ProductionStep step,
   }) async {
     // Validate step has engraving config
@@ -297,11 +297,15 @@ class ImageToGCodeService {
     }
 
     try {
-      AppLogger.info('Generating QR engrave gCode for unit: ${unit.unitId}');
+      AppLogger.info('Generating QR engrave gCode for unit: ${unit.serialNumber ?? 'Unknown'}');
+
+      if (unit.qrCodeUrl == null) {
+        throw Exception('Unit has no QR code URL');
+      }
 
       // Fetch QR code image from Supabase
       final qrFetchService = QRCodeFetchService(Supabase.instance.client);
-      final pngData = await qrFetchService.fetchQRCodeImage(unit.qrCodeUrl);
+      final pngData = await qrFetchService.fetchQRCodeImage(unit.qrCodeUrl!);
 
       AppLogger.info('Fetched QR code image: ${pngData.length} bytes');
 

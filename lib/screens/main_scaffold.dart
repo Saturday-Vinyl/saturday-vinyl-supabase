@@ -10,7 +10,7 @@ import 'package:saturday_app/config/theme.dart';
 // import 'package:saturday_app/widgets/device_communication/usb_device_indicator.dart';
 // import 'package:saturday_app/screens/units/unit_detail_screen.dart' as new_unit;
 // import 'package:saturday_app/repositories/unit_repository.dart';
-import 'package:saturday_app/repositories/production_unit_repository.dart';
+import 'package:saturday_app/repositories/unit_repository.dart';
 import 'package:saturday_app/screens/dashboard/dashboard_screen.dart';
 import 'package:saturday_app/screens/device_communication/device_communication_screen.dart';
 import 'package:saturday_app/screens/device_types/device_type_list_screen.dart';
@@ -25,7 +25,6 @@ import 'package:saturday_app/screens/settings/settings_screen.dart';
 import 'package:saturday_app/screens/tags/tag_list_screen.dart';
 import 'package:saturday_app/screens/rolls/roll_list_screen.dart';
 import 'package:saturday_app/screens/users/user_management_screen.dart';
-import 'package:saturday_app/screens/service_mode/service_mode_screen.dart';
 import 'package:saturday_app/services/keyboard_listener_service.dart';
 import 'package:saturday_app/services/qr_scanner_service.dart';
 import 'package:saturday_app/utils/app_logger.dart';
@@ -44,7 +43,7 @@ class _MainScaffoldState extends ConsumerState<MainScaffold> {
   String _currentRoute = '/dashboard';
   KeyboardListenerService? _keyboardListener;
   final _qrScannerService = QRScannerService();
-  final _unitRepository = ProductionUnitRepository();
+  final _unitRepository = UnitRepository();
 
   // USB monitoring - re-enable when firmware responds to get_status
   // final _newUnitRepository = UnitRepository();
@@ -117,9 +116,9 @@ class _MainScaffoldState extends ConsumerState<MainScaffold> {
 
       if (!mounted) return;
 
-      // Verify unit exists before navigating
+      // Verify unit exists before navigating (QR now encodes unit.id directly)
       AppLogger.info('Verifying unit exists: $uuid');
-      final unit = await _unitRepository.getUnitByUuid(uuid);
+      final unit = await _unitRepository.getUnitById(uuid);
 
       if (!mounted) return;
 
@@ -130,7 +129,7 @@ class _MainScaffoldState extends ConsumerState<MainScaffold> {
         ),
       );
 
-      AppLogger.info('Navigated to unit detail: ${unit.unitId}');
+      AppLogger.info('Navigated to unit detail: ${unit.serialNumber}');
     } catch (e) {
       AppLogger.error('Failed to process scanned data', e, StackTrace.current);
 
@@ -191,9 +190,6 @@ class _MainScaffoldState extends ConsumerState<MainScaffold> {
         return const CapabilitiesListScreen();
       case '/production':
         return const ProductionUnitsScreen();
-      case '/service-mode':
-        // Legacy service mode screen (deprecated)
-        return ServiceModeScreen();
       case '/device-communication':
         return const DeviceCommunicationScreen();
       case '/files':

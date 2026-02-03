@@ -1,6 +1,11 @@
+import 'package:saturday_app/models/firmware_version.dart';
+import 'package:saturday_app/models/production_step.dart';
+import 'package:saturday_app/models/thread_credentials.dart';
 import 'package:saturday_app/models/unit.dart';
 import 'package:saturday_app/models/unit_filter.dart';
+import 'package:saturday_app/models/unit_firmware_history.dart';
 import 'package:saturday_app/models/unit_list_item.dart';
+import 'package:saturday_app/models/unit_step_completion.dart';
 import 'package:saturday_app/services/qr_service.dart';
 import 'package:saturday_app/services/storage_service.dart';
 import 'package:saturday_app/services/supabase_service.dart';
@@ -274,6 +279,127 @@ class UnitRepository {
     }
   }
 
+  /// Search units filtered by device type slug
+  ///
+  /// Finds units whose products use the specified device type.
+  /// Optionally filters by serial number search query.
+  Future<List<Unit>> searchUnitsByDeviceType({
+    required String deviceTypeSlug,
+    String? searchQuery,
+  }) async {
+    try {
+      AppLogger.info(
+          'Searching units for device type: $deviceTypeSlug, query: $searchQuery');
+
+      // First, get the device type ID from the slug
+      final deviceTypeResponse = await _supabase
+          .from('device_types')
+          .select('id')
+          .eq('slug', deviceTypeSlug)
+          .maybeSingle();
+
+      if (deviceTypeResponse == null) {
+        AppLogger.warning('Device type not found: $deviceTypeSlug');
+        // Fall back to searching all units if device type not found
+        return searchQuery != null && searchQuery.isNotEmpty
+            ? searchUnits(searchQuery)
+            : [];
+      }
+
+      final deviceTypeId = deviceTypeResponse['id'] as String;
+
+      // Get product IDs that use this device type
+      final productDeviceTypesResponse = await _supabase
+          .from('product_device_types')
+          .select('product_id')
+          .eq('device_type_id', deviceTypeId);
+
+      final productIds = (productDeviceTypesResponse as List)
+          .map((item) => item['product_id'] as String)
+          .toList();
+
+      if (productIds.isEmpty) {
+        AppLogger.info('No products use device type: $deviceTypeSlug');
+        return [];
+      }
+
+      // Build the units query
+      var queryBuilder = _supabase
+          .from('units')
+          .select()
+          .inFilter('product_id', productIds);
+
+      // Add serial number filter if search query provided
+      if (searchQuery != null && searchQuery.isNotEmpty) {
+        queryBuilder = queryBuilder.ilike('serial_number', '%$searchQuery%');
+      }
+
+      final response =
+          await queryBuilder.order('created_at', ascending: false).limit(50);
+
+      final units =
+          (response as List).map((json) => Unit.fromJson(json)).toList();
+
+      AppLogger.info(
+          'Found ${units.length} units for device type $deviceTypeSlug');
+      return units;
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to search units by device type', error, stackTrace);
+      rethrow;
+    }
+  }
+
+  /// Check if a unit already has a device of a specific type provisioned
+  ///
+  /// Returns true if the unit already has a device with the given device type slug.
+  Future<bool> unitHasDeviceOfType({
+    required String unitId,
+    required String deviceTypeSlug,
+  }) async {
+    try {
+      final response = await _supabase
+          .from('devices')
+          .select('id')
+          .eq('unit_id', unitId)
+          .eq('device_type_slug', deviceTypeSlug)
+          .limit(1);
+
+      return (response as List).isNotEmpty;
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to check device type for unit', error, stackTrace);
+      return false; // Fail open - don't block provisioning
+    }
+  }
+
+  /// Get units with their device type provisioning status
+  ///
+  /// Returns a map of unit IDs to whether they have a device of the given type.
+  Future<Map<String, bool>> getUnitsDeviceTypeStatus({
+    required List<String> unitIds,
+    required String deviceTypeSlug,
+  }) async {
+    try {
+      if (unitIds.isEmpty) return {};
+
+      final response = await _supabase
+          .from('devices')
+          .select('unit_id')
+          .inFilter('unit_id', unitIds)
+          .eq('device_type_slug', deviceTypeSlug);
+
+      final unitsWithDevice =
+          (response as List).map((item) => item['unit_id'] as String).toSet();
+
+      return {
+        for (final unitId in unitIds) unitId: unitsWithDevice.contains(unitId)
+      };
+    } catch (error, stackTrace) {
+      AppLogger.error(
+          'Failed to get device type status for units', error, stackTrace);
+      return {for (final unitId in unitIds) unitId: false};
+    }
+  }
+
   // ============================================================================
   // Dashboard View
   // ============================================================================
@@ -503,6 +629,440 @@ class UnitRepository {
   }
 
   // ============================================================================
+  // Production Steps
+  // ============================================================================
+
+  /// Get production steps for a unit (from the unit's product)
+  Future<List<ProductionStep>> getUnitSteps(String unitId) async {
+    try {
+      AppLogger.info('Fetching production steps for unit: $unitId');
+
+      // First get the unit's product ID
+      final unitResponse = await _supabase
+          .from('units')
+          .select('product_id')
+          .eq('id', unitId)
+          .single();
+
+      final productId = unitResponse['product_id'] as String;
+
+      // Then get the production steps for that product
+      final stepsResponse = await _supabase
+          .from('production_steps')
+          .select()
+          .eq('product_id', productId)
+          .order('step_order', ascending: true);
+
+      final steps = (stepsResponse as List)
+          .map((json) => ProductionStep.fromJson(json))
+          .toList();
+
+      AppLogger.info('Found ${steps.length} production steps');
+      return steps;
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to fetch unit steps', error, stackTrace);
+      rethrow;
+    }
+  }
+
+  /// Get completed steps for a unit
+  Future<List<UnitStepCompletion>> getUnitStepCompletions(String unitId) async {
+    try {
+      AppLogger.info('Fetching step completions for unit: $unitId');
+
+      final response = await _supabase
+          .from('unit_step_completions')
+          .select()
+          .eq('unit_id', unitId)
+          .order('completed_at', ascending: true);
+
+      final completions = (response as List)
+          .map((json) => UnitStepCompletion.fromJson(json))
+          .toList();
+
+      AppLogger.info('Found ${completions.length} completed steps');
+      return completions;
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to fetch step completions', error, stackTrace);
+      rethrow;
+    }
+  }
+
+  /// Mark a production step as complete for a unit
+  ///
+  /// If all steps are now complete, automatically marks the unit as completed
+  Future<Unit> completeStep({
+    required String unitId,
+    required String stepId,
+    required String userId,
+    String? notes,
+  }) async {
+    try {
+      AppLogger.info('Completing step $stepId for unit $unitId');
+
+      // Create step completion record
+      final completionData = {
+        'unit_id': unitId,
+        'step_id': stepId,
+        'completed_by': userId,
+        'notes': notes,
+      };
+
+      await _supabase.from('unit_step_completions').insert(completionData);
+
+      AppLogger.info('Step completion recorded');
+
+      // Check if this was the first step (set production_started_at)
+      final unit = await getUnitById(unitId);
+      if (unit.productionStartedAt == null) {
+        await _supabase
+            .from('units')
+            .update({'production_started_at': DateTime.now().toIso8601String()})
+            .eq('id', unitId);
+
+        AppLogger.info('Set production_started_at for unit');
+      }
+
+      // Check if all steps are complete
+      final allSteps = await getUnitSteps(unitId);
+      final completedSteps = await getUnitStepCompletions(unitId);
+
+      final allStepsComplete = allSteps.length == completedSteps.length;
+
+      if (allStepsComplete) {
+        AppLogger.info('All steps complete - marking unit as complete');
+        await markProductionComplete(unitId);
+      }
+
+      // Return updated unit
+      return await getUnitById(unitId);
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to complete step', error, stackTrace);
+      rethrow;
+    }
+  }
+
+  // ============================================================================
+  // Firmware Management
+  // ============================================================================
+
+  /// Get firmware requirements for a unit
+  /// Returns a map of deviceTypeId -> latest production-ready firmware
+  Future<Map<String, FirmwareVersion>> getFirmwareForUnit(String unitId) async {
+    try {
+      AppLogger.info('Getting firmware for unit: $unitId');
+
+      // Get the unit's product
+      final unit = await getUnitById(unitId);
+
+      if (unit.productId == null) {
+        AppLogger.info('Unit $unitId has no product assigned');
+        return {};
+      }
+
+      // Get device types for this product
+      final deviceTypesResponse = await _supabase
+          .from('product_device_types')
+          .select('device_type_id, quantity')
+          .eq('product_id', unit.productId!);
+
+      final deviceTypeIds = (deviceTypesResponse as List)
+          .map((row) => row['device_type_id'] as String)
+          .toList();
+
+      if (deviceTypeIds.isEmpty) {
+        AppLogger.info('No device types found for unit $unitId');
+        return {};
+      }
+
+      // Get latest production-ready firmware for each device type
+      final firmwareMap = <String, FirmwareVersion>{};
+
+      for (final deviceTypeId in deviceTypeIds) {
+        final firmwareResponse = await _supabase
+            .from('firmware')
+            .select()
+            .eq('device_type_id', deviceTypeId)
+            .eq('is_production_ready', true)
+            .order('created_at', ascending: false)
+            .limit(1);
+
+        if (firmwareResponse.isNotEmpty) {
+          final firmware = FirmwareVersion.fromJson(firmwareResponse.first);
+          firmwareMap[deviceTypeId] = firmware;
+        }
+      }
+
+      AppLogger.info('Found firmware for ${firmwareMap.length} device types');
+      return firmwareMap;
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to get firmware for unit', error, stackTrace);
+      rethrow;
+    }
+  }
+
+  /// Record a firmware installation on a unit
+  ///
+  /// If [stepId] is provided, marks that production step as complete after recording
+  Future<UnitFirmwareHistory> recordFirmwareInstallation({
+    required String unitId,
+    required String deviceTypeId,
+    required String firmwareVersionId,
+    required String userId,
+    String? installationMethod,
+    String? notes,
+    String? stepId,
+  }) async {
+    try {
+      AppLogger.info('Recording firmware installation for unit: $unitId');
+
+      final history = UnitFirmwareHistory(
+        id: _uuid.v4(),
+        unitId: unitId,
+        deviceTypeId: deviceTypeId,
+        firmwareVersionId: firmwareVersionId,
+        installedAt: DateTime.now(),
+        installedBy: userId,
+        installationMethod: installationMethod,
+        notes: notes,
+      );
+
+      await _supabase.from('unit_firmware_history').insert(history.toInsertJson());
+
+      AppLogger.info('Firmware installation recorded successfully');
+
+      // Mark the production step as complete if stepId is provided
+      if (stepId != null) {
+        AppLogger.info('Marking firmware provisioning step as complete: $stepId');
+        await completeStep(
+          unitId: unitId,
+          stepId: stepId,
+          userId: userId,
+          notes: notes,
+        );
+      }
+
+      return history;
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to record firmware installation', error, stackTrace);
+      rethrow;
+    }
+  }
+
+  /// Get firmware installation history for a unit
+  Future<List<UnitFirmwareHistory>> getUnitFirmwareHistory(String unitId) async {
+    try {
+      AppLogger.info('Getting firmware history for unit: $unitId');
+
+      final response = await _supabase
+          .from('unit_firmware_history')
+          .select()
+          .eq('unit_id', unitId)
+          .order('installed_at', ascending: false);
+
+      final history = (response as List)
+          .map((json) => UnitFirmwareHistory.fromJson(json))
+          .toList();
+
+      AppLogger.info('Found ${history.length} firmware installation records');
+      return history;
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to get unit firmware history', error, stackTrace);
+      rethrow;
+    }
+  }
+
+  /// Get all units that have a specific firmware version installed
+  Future<List<Unit>> getUnitsWithFirmware(String firmwareVersionId) async {
+    try {
+      AppLogger.info('Getting units with firmware: $firmwareVersionId');
+
+      final response = await _supabase
+          .from('unit_firmware_history')
+          .select('unit_id')
+          .eq('firmware_version_id', firmwareVersionId);
+
+      final unitIds = (response as List)
+          .map((row) => row['unit_id'] as String)
+          .toSet() // Remove duplicates
+          .toList();
+
+      if (unitIds.isEmpty) {
+        return [];
+      }
+
+      // Get the actual unit records
+      final unitsResponse =
+          await _supabase.from('units').select().inFilter('id', unitIds);
+
+      final units =
+          (unitsResponse as List).map((json) => Unit.fromJson(json)).toList();
+
+      AppLogger.info('Found ${units.length} units with this firmware');
+      return units;
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to get units with firmware', error, stackTrace);
+      rethrow;
+    }
+  }
+
+  // ============================================================================
+  // Thread Credentials
+  // ============================================================================
+
+  /// Save Thread Border Router credentials for a unit (Hub)
+  ///
+  /// These credentials are captured during Hub provisioning and used by the
+  /// mobile app to provision crates to join the Thread network.
+  ///
+  /// If credentials already exist for this unit, they will be updated.
+  Future<ThreadCredentials> saveThreadCredentials(
+    ThreadCredentials credentials,
+  ) async {
+    try {
+      AppLogger.info('Saving Thread credentials for unit: ${credentials.unitId}');
+
+      // Validate credentials before saving
+      final validationError = credentials.validate();
+      if (validationError != null) {
+        throw Exception('Invalid Thread credentials: $validationError');
+      }
+
+      // Use upsert to handle both insert and update
+      final response = await _supabase
+          .from('thread_credentials')
+          .upsert(
+            credentials.toInsertJson(),
+            onConflict: 'unit_id',
+          )
+          .select()
+          .single();
+
+      final saved = ThreadCredentials.fromJson(response);
+      AppLogger.info('Thread credentials saved successfully');
+      return saved;
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to save Thread credentials', error, stackTrace);
+      rethrow;
+    }
+  }
+
+  /// Get Thread credentials for a unit by unit database ID
+  Future<ThreadCredentials?> getThreadCredentials(String unitId) async {
+    try {
+      AppLogger.info('Fetching Thread credentials for unit: $unitId');
+
+      final response = await _supabase
+          .from('thread_credentials')
+          .select()
+          .eq('unit_id', unitId)
+          .maybeSingle();
+
+      if (response == null) {
+        AppLogger.info('No Thread credentials found for unit: $unitId');
+        return null;
+      }
+
+      final credentials = ThreadCredentials.fromJson(response);
+      AppLogger.info('Found Thread credentials: ${credentials.networkName}');
+      return credentials;
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to fetch Thread credentials', error, stackTrace);
+      rethrow;
+    }
+  }
+
+  /// Get Thread credentials by unit serial number (e.g., "SV-HUB-00001")
+  ///
+  /// This is useful when the mobile app knows the Hub's serial number
+  /// and needs to get the Thread credentials to provision a crate.
+  Future<ThreadCredentials?> getThreadCredentialsBySerialNumber(
+    String serialNumber,
+  ) async {
+    try {
+      AppLogger.info('Fetching Thread credentials by serial: $serialNumber');
+
+      // First get the unit ID
+      final unit = await getUnitBySerialNumber(serialNumber);
+      if (unit == null) {
+        AppLogger.info('Unit not found: $serialNumber');
+        return null;
+      }
+
+      return await getThreadCredentials(unit.id);
+    } catch (error, stackTrace) {
+      AppLogger.error(
+        'Failed to fetch Thread credentials by serial',
+        error,
+        stackTrace,
+      );
+      rethrow;
+    }
+  }
+
+  /// Delete Thread credentials for a unit
+  Future<void> deleteThreadCredentials(String unitId) async {
+    try {
+      AppLogger.info('Deleting Thread credentials for unit: $unitId');
+
+      await _supabase.from('thread_credentials').delete().eq('unit_id', unitId);
+
+      AppLogger.info('Thread credentials deleted successfully');
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to delete Thread credentials', error, stackTrace);
+      rethrow;
+    }
+  }
+
+  /// Check if a unit has Thread credentials stored
+  Future<bool> hasThreadCredentials(String unitId) async {
+    try {
+      final response = await _supabase
+          .from('thread_credentials')
+          .select('id')
+          .eq('unit_id', unitId)
+          .maybeSingle();
+
+      return response != null;
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to check Thread credentials', error, stackTrace);
+      rethrow;
+    }
+  }
+
+  /// Get all available Thread credentials (from provisioned Hubs)
+  ///
+  /// Used when testing Thread on non-BR devices that need to join
+  /// an existing Thread network. Returns credentials with the associated
+  /// Hub's serial number for display purposes.
+  Future<List<ThreadCredentialsWithUnit>> getAllThreadCredentials() async {
+    try {
+      AppLogger.info('Fetching all Thread credentials');
+
+      final response = await _supabase.from('thread_credentials').select('''
+            *,
+            units!inner (
+              serial_number
+            )
+          ''').order('created_at', ascending: false);
+
+      final credentials = (response as List).map((json) {
+        final unitData = json['units'] as Map<String, dynamic>?;
+        return ThreadCredentialsWithUnit(
+          credentials: ThreadCredentials.fromJson(json),
+          hubSerialNumber: unitData?['serial_number'] as String? ?? 'Unknown',
+        );
+      }).toList();
+
+      AppLogger.info('Found ${credentials.length} Thread credential sets');
+      return credentials;
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to fetch all Thread credentials', error, stackTrace);
+      rethrow;
+    }
+  }
+
+  // ============================================================================
   // Unit Deletion
   // ============================================================================
 
@@ -514,7 +1074,14 @@ class UnitRepository {
       // Get unit to get QR code URL
       final unit = await getUnitById(unitId);
 
-      // Delete from database (cascade will delete related records)
+      // Disassociate any devices linked to this unit
+      await _supabase
+          .from('devices')
+          .update({'unit_id': null})
+          .eq('unit_id', unitId);
+      AppLogger.info('Disassociated devices from unit');
+
+      // Delete from database
       await _supabase.from('units').delete().eq('id', unitId);
 
       // Delete QR code from storage if present

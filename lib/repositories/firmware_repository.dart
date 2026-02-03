@@ -338,6 +338,38 @@ class FirmwareRepository {
     }
   }
 
+  /// Get the latest development (unreleased) firmware for a device type
+  Future<Firmware?> getLatestDevFirmware(String deviceTypeId) async {
+    try {
+      AppLogger.info('Fetching latest dev firmware for device type: $deviceTypeId');
+
+      final supabase = SupabaseService.instance.client;
+      final response = await supabase
+          .from(_newTableName)
+          .select('''
+            *,
+            firmware_files (*)
+          ''')
+          .eq('device_type_id', deviceTypeId)
+          .isFilter('released_at', null)
+          .order('created_at', ascending: false)
+          .limit(1)
+          .maybeSingle();
+
+      if (response == null) {
+        AppLogger.info('No dev firmware found for device type');
+        return null;
+      }
+
+      final firmware = Firmware.fromJson(response as Map<String, dynamic>);
+      AppLogger.info('Found dev firmware: ${firmware.version}');
+      return firmware;
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to fetch latest dev firmware', error, stackTrace);
+      rethrow;
+    }
+  }
+
   /// Get the latest released firmware for a device type
   Future<Firmware?> getLatestReleasedFirmware(String deviceTypeId) async {
     try {

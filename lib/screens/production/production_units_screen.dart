@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:saturday_app/config/theme.dart';
-import 'package:saturday_app/providers/production_unit_provider.dart';
+import 'package:saturday_app/providers/unit_provider.dart';
 import 'package:saturday_app/screens/production/create_unit_screen.dart';
 import 'package:saturday_app/screens/production/unit_detail_screen.dart';
 import 'package:saturday_app/widgets/production/unit_card.dart';

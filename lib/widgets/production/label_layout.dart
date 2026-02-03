@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
-import '../../models/production_unit.dart';
+import '../../models/unit.dart';
 
 /// Widget for displaying a preview of the 1" x 1" thermal label
 ///
 /// This widget shows exactly how the label will look when printed,
-/// including QR code, unit ID, product info, and customer details.
+/// including QR code, unit ID, and product info.
 class LabelLayout extends StatelessWidget {
-  final ProductionUnit unit;
+  final Unit unit;
   final String productName;
   final String variantName;
   final String qrCodeUrl;
@@ -68,9 +68,9 @@ class LabelLayout extends StatelessWidget {
 
             SizedBox(height: 2 * scale),
 
-            // Unit ID (bold, larger font)
+            // Serial number (bold, larger font)
             Text(
-              unit.unitId,
+              unit.serialNumber ?? 'Unassigned',
               style: TextStyle(
                 fontSize: 6 * scale,
                 fontWeight: FontWeight.bold,
@@ -94,34 +94,6 @@ class LabelLayout extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
-
-            // Customer name (if available)
-            if (unit.customerName != null)
-              Text(
-                unit.customerName!,
-                style: TextStyle(
-                  fontSize: 4 * scale,
-                  color: Colors.black,
-                  height: 1.0,
-                ),
-                textAlign: TextAlign.center,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-
-            // Order number (if available)
-            if (unit.shopifyOrderNumber != null)
-              Text(
-                'Order #${unit.shopifyOrderNumber}',
-                style: TextStyle(
-                  fontSize: 3 * scale,
-                  color: Colors.black,
-                  height: 1.0,
-                ),
-                textAlign: TextAlign.center,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
           ],
         ),
       ),

@@ -465,7 +465,7 @@ class CapabilityRepository {
     }
   }
 
-  /// Get all tests available for a device type
+  /// Get all tests available for a device type (by ID)
   Future<List<CapabilityTest>> getTestsForDeviceType(
       String deviceTypeId) async {
     try {
@@ -483,6 +483,33 @@ class CapabilityRepository {
     } catch (error, stackTrace) {
       AppLogger.error(
           'Failed to get tests for device type', error, stackTrace);
+      rethrow;
+    }
+  }
+
+  /// Get all tests available for a device type (by slug)
+  Future<List<CapabilityTest>> getTestsForDeviceTypeBySlug(
+      String deviceTypeSlug) async {
+    try {
+      AppLogger.info('Getting tests for device type by slug: $deviceTypeSlug');
+
+      // First get the device type ID from slug
+      final deviceTypeResponse = await _supabase
+          .from('device_types')
+          .select('id')
+          .eq('slug', deviceTypeSlug)
+          .maybeSingle();
+
+      if (deviceTypeResponse == null) {
+        AppLogger.info('Device type not found for slug: $deviceTypeSlug');
+        return [];
+      }
+
+      final deviceTypeId = deviceTypeResponse['id'] as String;
+      return getTestsForDeviceType(deviceTypeId);
+    } catch (error, stackTrace) {
+      AppLogger.error(
+          'Failed to get tests for device type by slug', error, stackTrace);
       rethrow;
     }
   }

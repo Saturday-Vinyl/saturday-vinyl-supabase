@@ -22,7 +22,7 @@ enum UnitTimerStatus {
 /// to track when it was started, when it expires, and its current status.
 class UnitTimer extends Equatable {
   final String id; // UUID
-  final String unitId; // Foreign key to ProductionUnit
+  final String unitId; // Foreign key to units table
   final String stepTimerId; // Foreign key to StepTimer (configuration)
   final DateTime startedAt; // When the timer was started
   final DateTime expiresAt; // When the timer should expire

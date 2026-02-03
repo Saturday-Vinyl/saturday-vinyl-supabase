@@ -48,8 +48,8 @@ class Device extends Equatable {
   /// Primary identifier: MAC address of the master SoC
   final String macAddress;
 
-  /// Device type (template defining capabilities)
-  final String? deviceTypeId;
+  /// Device type slug (e.g., "hub", "crate") - references device_types.slug
+  final String? deviceTypeSlug;
 
   /// Link to the unit this device belongs to
   final String? unitId;
@@ -80,7 +80,7 @@ class Device extends Equatable {
   const Device({
     required this.id,
     required this.macAddress,
-    this.deviceTypeId,
+    this.deviceTypeSlug,
     this.unitId,
     this.firmwareVersion,
     this.firmwareId,
@@ -130,7 +130,7 @@ class Device extends Equatable {
     return Device(
       id: json['id'] as String,
       macAddress: json['mac_address'] as String,
-      deviceTypeId: json['device_type_id'] as String?,
+      deviceTypeSlug: json['device_type_slug'] as String?,
       unitId: json['unit_id'] as String?,
       firmwareVersion: json['firmware_version'] as String?,
       firmwareId: json['firmware_id'] as String?,
@@ -160,7 +160,7 @@ class Device extends Equatable {
     return {
       'id': id,
       'mac_address': macAddress,
-      'device_type_id': deviceTypeId,
+      'device_type_slug': deviceTypeSlug,
       'unit_id': unitId,
       'firmware_version': firmwareVersion,
       'firmware_id': firmwareId,
@@ -179,7 +179,7 @@ class Device extends Equatable {
   Map<String, dynamic> toInsertJson() {
     return {
       'mac_address': macAddress,
-      'device_type_id': deviceTypeId,
+      'device_type_slug': deviceTypeSlug,
       'unit_id': unitId,
       'firmware_version': firmwareVersion,
       'firmware_id': firmwareId,
@@ -192,7 +192,7 @@ class Device extends Equatable {
   Device copyWith({
     String? id,
     String? macAddress,
-    String? deviceTypeId,
+    String? deviceTypeSlug,
     String? unitId,
     String? firmwareVersion,
     String? firmwareId,
@@ -208,7 +208,7 @@ class Device extends Equatable {
     return Device(
       id: id ?? this.id,
       macAddress: macAddress ?? this.macAddress,
-      deviceTypeId: deviceTypeId ?? this.deviceTypeId,
+      deviceTypeSlug: deviceTypeSlug ?? this.deviceTypeSlug,
       unitId: unitId ?? this.unitId,
       firmwareVersion: firmwareVersion ?? this.firmwareVersion,
       firmwareId: firmwareId ?? this.firmwareId,
@@ -227,7 +227,7 @@ class Device extends Equatable {
   List<Object?> get props => [
         id,
         macAddress,
-        deviceTypeId,
+        deviceTypeSlug,
         unitId,
         firmwareVersion,
         firmwareId,

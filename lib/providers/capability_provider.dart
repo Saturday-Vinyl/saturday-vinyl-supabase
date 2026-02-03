@@ -75,11 +75,18 @@ final heartbeatSchemaForDeviceTypeProvider =
   return repository.getHeartbeatSchemaForDeviceType(deviceTypeId);
 });
 
-/// Provider for tests available for a device type
+/// Provider for tests available for a device type (by ID)
 final testsForDeviceTypeProvider =
     FutureProvider.family<List<CapabilityTest>, String>((ref, deviceTypeId) async {
   final repository = ref.watch(capabilityRepositoryProvider);
   return repository.getTestsForDeviceType(deviceTypeId);
+});
+
+/// Provider for tests available for a device type (by slug)
+final testsForDeviceTypeSlugProvider =
+    FutureProvider.family<List<CapabilityTest>, String>((ref, deviceTypeSlug) async {
+  final repository = ref.watch(capabilityRepositoryProvider);
+  return repository.getTestsForDeviceTypeBySlug(deviceTypeSlug);
 });
 
 /// Provider for capability management actions

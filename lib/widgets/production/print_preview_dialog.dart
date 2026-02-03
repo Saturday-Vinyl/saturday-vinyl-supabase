@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:printing/printing.dart';
 import '../../config/theme.dart';
-import '../../models/production_unit.dart';
+import '../../models/unit.dart';
 import '../../services/printer_service.dart';
 import '../../utils/app_logger.dart';
 import 'label_layout.dart';
@@ -15,7 +15,7 @@ import 'label_layout.dart';
 /// - Select a printer
 /// - Print the label
 class PrintPreviewDialog extends ConsumerStatefulWidget {
-  final ProductionUnit unit;
+  final Unit unit;
   final String productName;
   final String variantName;
   final Uint8List qrImageData;
@@ -167,7 +167,7 @@ class _PrintPreviewDialogState extends ConsumerState<PrintPreviewDialog> {
                 unit: widget.unit,
                 productName: widget.productName,
                 variantName: widget.variantName,
-                qrCodeUrl: widget.unit.qrCodeUrl,
+                qrCodeUrl: widget.unit.qrCodeUrl ?? '',
                 scale: 3.0,
               ),
             ),

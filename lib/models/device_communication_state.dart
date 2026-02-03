@@ -120,6 +120,9 @@ class DeviceCommunicationState extends Equatable {
   /// Last successful get_status timestamp
   final DateTime? lastStatusAt;
 
+  /// Whether the device's serial number was not found in database
+  final bool unitNotFoundInDb;
+
   const DeviceCommunicationState({
     this.phase = DeviceCommunicationPhase.disconnected,
     this.portName,
@@ -130,6 +133,7 @@ class DeviceCommunicationState extends Equatable {
     this.logLines = const [],
     this.errorMessage,
     this.lastStatusAt,
+    this.unitNotFoundInDb = false,
   });
 
   /// Whether currently connected to a device
@@ -159,6 +163,7 @@ class DeviceCommunicationState extends Equatable {
     List<String>? logLines,
     String? errorMessage,
     DateTime? lastStatusAt,
+    bool? unitNotFoundInDb,
     bool clearPortName = false,
     bool clearConnectedDevice = false,
     bool clearAssociatedUnit = false,
@@ -180,6 +185,7 @@ class DeviceCommunicationState extends Equatable {
       errorMessage:
           clearErrorMessage ? null : (errorMessage ?? this.errorMessage),
       lastStatusAt: lastStatusAt ?? this.lastStatusAt,
+      unitNotFoundInDb: unitNotFoundInDb ?? this.unitNotFoundInDb,
     );
   }
 
@@ -211,6 +217,7 @@ class DeviceCommunicationState extends Equatable {
         logLines,
         errorMessage,
         lastStatusAt,
+        unitNotFoundInDb,
       ];
 
   @override

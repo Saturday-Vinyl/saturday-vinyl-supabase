@@ -18,13 +18,13 @@ class DeviceRepository {
   /// Called during factory provisioning when a device first reports its MAC address.
   Future<Device> createDevice({
     required String macAddress,
-    required String deviceTypeId,
+    required String deviceTypeSlug,
     String? unitId,
     String? firmwareVersion,
     String? firmwareId,
   }) async {
     try {
-      AppLogger.info('Creating device with MAC: $macAddress');
+      AppLogger.info('Creating device with MAC: $macAddress, type: $deviceTypeSlug');
 
       // Validate MAC address format
       if (!Device.validateMacAddress(macAddress)) {
@@ -33,7 +33,7 @@ class DeviceRepository {
 
       final deviceData = {
         'mac_address': macAddress,
-        'device_type_id': deviceTypeId,
+        'device_type_slug': deviceTypeSlug,
         'unit_id': unitId,
         'firmware_version': firmwareVersion,
         'firmware_id': firmwareId,
@@ -58,15 +58,20 @@ class DeviceRepository {
   /// Create or update a device (upsert by MAC address)
   ///
   /// This is useful when a device reports in and we don't know if it already exists.
+  /// For factory provisioning, also set factoryProvisionedAt, factoryProvisionedBy, and status.
   Future<Device> upsertDevice({
     required String macAddress,
-    required String deviceTypeId,
+    required String deviceTypeSlug,
     String? unitId,
     String? firmwareVersion,
     String? firmwareId,
+    DateTime? factoryProvisionedAt,
+    String? factoryProvisionedBy,
+    Map<String, dynamic>? factoryAttributes,
+    String? status,
   }) async {
     try {
-      AppLogger.info('Upserting device with MAC: $macAddress');
+      AppLogger.info('Upserting device with MAC: $macAddress, type: $deviceTypeSlug');
 
       if (!Device.validateMacAddress(macAddress)) {
         throw ArgumentError('Invalid MAC address format: $macAddress');
@@ -74,10 +79,16 @@ class DeviceRepository {
 
       final deviceData = {
         'mac_address': macAddress,
-        'device_type_id': deviceTypeId,
+        'device_type_slug': deviceTypeSlug,
         if (unitId != null) 'unit_id': unitId,
         if (firmwareVersion != null) 'firmware_version': firmwareVersion,
         if (firmwareId != null) 'firmware_id': firmwareId,
+        if (factoryProvisionedAt != null)
+          'factory_provisioned_at': factoryProvisionedAt.toIso8601String(),
+        if (factoryProvisionedBy != null)
+          'factory_provisioned_by': factoryProvisionedBy,
+        if (factoryAttributes != null) 'factory_attributes': factoryAttributes,
+        if (status != null) 'status': status,
       };
 
       final response = await _supabase
@@ -162,21 +173,21 @@ class DeviceRepository {
     }
   }
 
-  /// Get all devices of a specific device type
-  Future<List<Device>> getDevicesByType(String deviceTypeId) async {
+  /// Get all devices of a specific device type (by slug)
+  Future<List<Device>> getDevicesByType(String deviceTypeSlug) async {
     try {
-      AppLogger.info('Fetching devices by type: $deviceTypeId');
+      AppLogger.info('Fetching devices by type: $deviceTypeSlug');
 
       final response = await _supabase
           .from('devices')
           .select()
-          .eq('device_type_id', deviceTypeId)
+          .eq('device_type_slug', deviceTypeSlug)
           .order('created_at', ascending: false);
 
       final devices =
           (response as List).map((json) => Device.fromJson(json)).toList();
 
-      AppLogger.info('Found ${devices.length} devices of type $deviceTypeId');
+      AppLogger.info('Found ${devices.length} devices of type $deviceTypeSlug');
       return devices;
     } catch (error, stackTrace) {
       AppLogger.error('Failed to fetch devices by type', error, stackTrace);

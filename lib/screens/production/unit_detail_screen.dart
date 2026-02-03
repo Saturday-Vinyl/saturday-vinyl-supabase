@@ -6,9 +6,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
 import 'package:saturday_app/config/theme.dart';
 import 'package:saturday_app/models/production_step.dart';
-import 'package:saturday_app/models/production_unit.dart';
+import 'package:saturday_app/models/unit.dart';
 import 'package:saturday_app/models/unit_step_completion.dart';
-import 'package:saturday_app/providers/production_unit_provider.dart';
+import 'package:saturday_app/providers/unit_provider.dart';
 import 'package:saturday_app/providers/product_provider.dart';
 import 'package:saturday_app/providers/unit_timer_provider.dart';
 import 'package:saturday_app/models/step_type.dart';
@@ -103,8 +103,8 @@ class _UnitDetailScreenState extends ConsumerState<UnitDetailScreen> {
                 // QR Code
                 Center(
                   child: QRCodeDisplay(
-                    qrCodeUrl: unit.qrCodeUrl,
-                    unitId: unit.unitId,
+                    qrCodeUrl: unit.qrCodeUrl ?? '',
+                    unitId: unit.serialNumber ?? 'Unassigned',
                     size: 200,
                     onRegenerate: _isRegeneratingQR
                         ? null
@@ -130,30 +130,18 @@ class _UnitDetailScreenState extends ConsumerState<UnitDetailScreen> {
                         const Divider(height: 24),
                         _buildInfoRow(
                           context,
-                          'Unit ID',
-                          unit.unitId,
+                          'Serial Number',
+                          unit.serialNumber ?? 'Unassigned',
                         ),
                         _buildInfoRow(
                           context,
                           'Status',
                           unit.isCompleted
                               ? 'Complete'
-                              : unit.isInProgress()
+                              : unit.isInProduction
                                   ? 'In Progress'
                                   : 'Not Started',
                         ),
-                        if (unit.shopifyOrderNumber != null)
-                          _buildInfoRow(
-                            context,
-                            'Order',
-                            unit.shopifyOrderNumber!,
-                          ),
-                        if (unit.customerName != null)
-                          _buildInfoRow(
-                            context,
-                            'Customer',
-                            unit.customerName!,
-                          ),
                         _buildInfoRow(
                           context,
                           'Created',
@@ -398,7 +386,7 @@ class _UnitDetailScreenState extends ConsumerState<UnitDetailScreen> {
 
   Future<void> _regenerateQRCode(
     BuildContext context,
-    ProductionUnit unit,
+    Unit unit,
   ) async {
     // Show confirmation dialog
     final confirmed = await showDialog<bool>(
@@ -432,11 +420,11 @@ class _UnitDetailScreenState extends ConsumerState<UnitDetailScreen> {
       final qrService = QRService();
       final supabase = SupabaseService.instance.client;
 
-      AppLogger.info('Regenerating QR code for unit: ${unit.uuid}');
+      AppLogger.info('Regenerating QR code for unit: ${unit.id}');
 
-      // Generate new branded QR code
+      // Generate new branded QR code (using id as the QR code data)
       final qrImageData = await qrService.generateQRCode(
-        unit.uuid,
+        unit.id,
         size: 512,
         embedLogo: true,
       );
@@ -444,7 +432,7 @@ class _UnitDetailScreenState extends ConsumerState<UnitDetailScreen> {
       AppLogger.info('QR code generated, size: ${qrImageData.length} bytes');
 
       // Upload to Supabase storage (remove old file first if it exists)
-      final filePath = 'qr-codes/${unit.uuid}.png';
+      final filePath = 'qr-codes/${unit.id}.png';
 
       try {
         // Try to remove existing file
@@ -508,8 +496,17 @@ class _UnitDetailScreenState extends ConsumerState<UnitDetailScreen> {
         return;
       }
 
+      if (unit.productId == null || unit.variantId == null) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Unit missing product/variant info')),
+          );
+        }
+        return;
+      }
+
       // Get product and variant info
-      final productAsync = ref.read(productProvider(unit.productId));
+      final productAsync = ref.read(productProvider(unit.productId!));
       final product = productAsync.value;
 
       if (product == null) {
@@ -521,7 +518,7 @@ class _UnitDetailScreenState extends ConsumerState<UnitDetailScreen> {
         return;
       }
 
-      final variantAsync = ref.read(variantProvider(unit.variantId));
+      final variantAsync = ref.read(variantProvider(unit.variantId!));
       final variant = variantAsync.value;
 
       if (variant == null) {
@@ -536,14 +533,17 @@ class _UnitDetailScreenState extends ConsumerState<UnitDetailScreen> {
       // Download QR code image
       Uint8List? qrImageData;
       try {
-        final response = await http.get(Uri.parse(unit.qrCodeUrl));
-        if (response.statusCode == 200) {
-          qrImageData = response.bodyBytes;
-        } else {
-          // If download fails, generate QR code
+        if (unit.qrCodeUrl != null) {
+          final response = await http.get(Uri.parse(unit.qrCodeUrl!));
+          if (response.statusCode == 200) {
+            qrImageData = response.bodyBytes;
+          }
+        }
+        // If download fails or no URL, generate QR code
+        if (qrImageData == null) {
           final qrService = QRService();
           qrImageData = await qrService.generateQRCode(
-            unit.uuid,
+            unit.id,
             size: 200,
           );
         }
@@ -552,7 +552,7 @@ class _UnitDetailScreenState extends ConsumerState<UnitDetailScreen> {
         // Generate QR code as fallback
         final qrService = QRService();
         qrImageData = await qrService.generateQRCode(
-          unit.uuid,
+          unit.id,
           size: 200,
         );
       }
@@ -733,11 +733,11 @@ class _UnitDetailScreenState extends ConsumerState<UnitDetailScreen> {
     }
 
     // Show normal completion dialog for non-firmware steps
-    final updatedUnit = await showDialog<ProductionUnit>(
+    final updatedUnit = await showDialog<Unit>(
       context: context,
       builder: (context) => CompleteStepScreen(
         unitId: unit.id,
-        unitName: unit.unitId,
+        unitName: unit.serialNumber ?? 'Unit',
         step: step,
       ),
     );

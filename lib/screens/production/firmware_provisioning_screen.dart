@@ -2,14 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:saturday_app/models/firmware_version.dart';
 import 'package:saturday_app/models/production_step.dart';
-import 'package:saturday_app/models/production_unit.dart';
-import 'package:saturday_app/providers/service_mode_provider.dart';
-import 'package:saturday_app/screens/service_mode/service_mode_screen.dart';
+import 'package:saturday_app/models/unit.dart';
+import 'package:saturday_app/screens/device_communication/device_communication_screen.dart';
 
 /// Screen for performing firmware provisioning on a production unit.
-/// This screen now redirects to the global Service Mode screen with context.
+/// This screen redirects to the Device Communication screen.
 class FirmwareProvisioningScreen extends ConsumerStatefulWidget {
-  final ProductionUnit unit;
+  final Unit unit;
   final ProductionStep step;
   final FirmwareVersion firmware;
 
@@ -30,23 +29,18 @@ class _FirmwareProvisioningScreenState
   @override
   void initState() {
     super.initState();
-    // Redirect to Service Mode screen after the first frame
+    // Redirect to Device Communication screen after the first frame
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _navigateToServiceMode();
+      _navigateToDeviceCommunication();
     });
   }
 
-  void _navigateToServiceMode() {
-    // Navigate to Service Mode screen with production unit context
+  void _navigateToDeviceCommunication() {
+    // Navigate to Device Communication screen
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(
-        builder: (context) => ServiceModeScreen(
-          args: ServiceModeArgs(
-            unit: widget.unit,
-            step: widget.step,
-          ),
-        ),
+        builder: (context) => const DeviceCommunicationScreen(),
       ),
     );
   }
@@ -64,7 +58,7 @@ class _FirmwareProvisioningScreenState
           children: [
             CircularProgressIndicator(),
             SizedBox(height: 16),
-            Text('Redirecting to Service Mode...'),
+            Text('Redirecting to Device Communication...'),
           ],
         ),
       ),

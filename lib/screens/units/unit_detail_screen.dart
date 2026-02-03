@@ -5,7 +5,9 @@ import 'package:saturday_app/config/theme.dart';
 import 'package:saturday_app/models/device.dart';
 import 'package:saturday_app/models/unit.dart';
 import 'package:saturday_app/providers/device_provider.dart';
+import 'package:saturday_app/providers/remote_monitor_provider.dart';
 import 'package:saturday_app/providers/unit_provider.dart';
+import 'package:saturday_app/widgets/remote_monitor/remote_monitor_section.dart';
 
 /// Screen showing unit details and its associated devices
 class UnitDetailScreen extends ConsumerWidget {
@@ -81,6 +83,8 @@ class UnitDetailScreen extends ConsumerWidget {
                 _buildProvisioningSection(context, unit),
                 const SizedBox(height: 24),
                 _buildDevicesSection(context, devicesAsync),
+                // Remote Monitor section (only for devices with websocket capability)
+                _buildRemoteMonitorSection(context, ref, devicesAsync),
                 if (unit.consumerAttributes.isNotEmpty) ...[
                   const SizedBox(height: 24),
                   _buildAttributesSection(context, unit),
@@ -532,6 +536,43 @@ class UnitDetailScreen extends ConsumerWidget {
           fontWeight: FontWeight.w500,
         ),
       ),
+    );
+  }
+
+  Widget _buildRemoteMonitorSection(
+    BuildContext context,
+    WidgetRef ref,
+    AsyncValue<List<Device>> devicesAsync,
+  ) {
+    return devicesAsync.when(
+      data: (devices) {
+        if (devices.isEmpty) return const SizedBox.shrink();
+
+        // Check which devices have websocket capability (for command sending)
+        final devicesWithWebsocketAsync =
+            ref.watch(unitDevicesWithWebsocketProvider(unitId));
+
+        return devicesWithWebsocketAsync.when(
+          data: (devicesWithWebsocket) {
+            // Show Remote Monitor for all devices (heartbeats are read-only)
+            // Commands are only available for devices with websocket capability
+            return Column(
+              children: [
+                const SizedBox(height: 24),
+                RemoteMonitorSection(
+                  unitId: unitId,
+                  devices: devices,
+                  commandableDevices: devicesWithWebsocket,
+                ),
+              ],
+            );
+          },
+          loading: () => const SizedBox.shrink(),
+          error: (_, __) => const SizedBox.shrink(),
+        );
+      },
+      loading: () => const SizedBox.shrink(),
+      error: (_, __) => const SizedBox.shrink(),
     );
   }
 

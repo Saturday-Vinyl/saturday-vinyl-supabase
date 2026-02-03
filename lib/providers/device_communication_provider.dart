@@ -7,6 +7,7 @@ import 'package:saturday_app/models/device_communication_state.dart';
 import 'package:saturday_app/models/unit.dart';
 import 'package:saturday_app/models/usb_monitor_state.dart';
 import 'package:saturday_app/providers/auth_provider.dart';
+import 'package:saturday_app/providers/device_provider.dart';
 import 'package:saturday_app/providers/unit_provider.dart';
 import 'package:saturday_app/services/device_communication_service.dart';
 import 'package:saturday_app/services/usb_monitor_service.dart';
@@ -323,9 +324,10 @@ class DeviceCommunicationNotifier
           }
         }
 
-        state = state.copyWith(associatedUnit: unit);
+        state = state.copyWith(associatedUnit: unit, unitNotFoundInDb: false);
         _addLog('[INFO] Found unit: ${unit.displayName} (status: ${unit.status.name})');
       } else {
+        state = state.copyWith(unitNotFoundInDb: true);
         _addLog('[WARN] Unit $serialNumber not found in database');
       }
     } catch (e) {
@@ -413,6 +415,26 @@ class DeviceCommunicationNotifier
       if (response.isSuccess) {
         // Refresh status to get updated device info
         await refreshStatus();
+
+        // Create or update device record in database
+        try {
+          final deviceManagement = _ref.read(deviceManagementProvider);
+          final currentUser = await _ref.read(currentUserProvider.future);
+
+          await deviceManagement.upsertDevice(
+            macAddress: state.connectedDevice!.macAddress,
+            deviceTypeSlug: state.connectedDevice!.deviceType,
+            unitId: unit.id,
+            firmwareVersion: state.connectedDevice!.firmwareVersion,
+            factoryProvisionedAt: DateTime.now(),
+            factoryProvisionedBy: currentUser?.id,
+            status: 'factory_provisioned',
+          );
+          _addLog('[INFO] Device record created/updated in database');
+        } catch (e) {
+          _addLog('[WARN] Failed to create device record: $e');
+          // Don't fail provisioning - device record is for tracking
+        }
 
         state = state.copyWith(
           phase: DeviceCommunicationPhase.connected,

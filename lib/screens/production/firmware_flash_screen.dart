@@ -4,18 +4,18 @@ import 'package:saturday_app/config/theme.dart';
 import 'package:saturday_app/models/device_type.dart';
 import 'package:saturday_app/models/product.dart';
 import 'package:saturday_app/models/product_variant.dart';
-import 'package:saturday_app/models/production_unit.dart';
+import 'package:saturday_app/models/unit.dart';
 import 'package:saturday_app/providers/auth_provider.dart';
 import 'package:saturday_app/providers/device_type_provider.dart';
 import 'package:saturday_app/providers/product_provider.dart';
-import 'package:saturday_app/providers/production_unit_provider.dart';
+import 'package:saturday_app/providers/unit_provider.dart';
 import 'package:saturday_app/services/file_launcher_service.dart';
 import 'package:saturday_app/utils/app_logger.dart';
 import 'package:saturday_app/widgets/firmware/firmware_selector.dart';
 
 /// Screen for flashing firmware to devices during production
 class FirmwareFlashScreen extends ConsumerStatefulWidget {
-  final ProductionUnit unit;
+  final Unit unit;
   final String? stepId; // Optional production step ID to mark complete
 
   const FirmwareFlashScreen({
@@ -59,7 +59,7 @@ class _FirmwareFlashScreenState extends ConsumerState<FirmwareFlashScreen> {
   Future<void> _loadRecommendedFirmware() async {
     try {
       final firmwareMap = await ref
-          .read(productionUnitRepositoryProvider)
+          .read(unitRepositoryProvider)
           .getFirmwareForUnit(widget.unit.id);
 
       if (mounted) {
@@ -90,7 +90,7 @@ class _FirmwareFlashScreenState extends ConsumerState<FirmwareFlashScreen> {
     try {
       setState(() => _isLoading = true);
 
-      final repository = ref.read(productionUnitRepositoryProvider);
+      final repository = ref.read(unitRepositoryProvider);
       final firmwareMap = await repository.getFirmwareForUnit(widget.unit.id);
       final firmware = firmwareMap.values.firstWhere(
         (f) => f.id == firmwareId,
@@ -141,7 +141,7 @@ class _FirmwareFlashScreenState extends ConsumerState<FirmwareFlashScreen> {
         throw Exception('User not authenticated');
       }
 
-      final repository = ref.read(productionUnitRepositoryProvider);
+      final repository = ref.read(unitRepositoryProvider);
 
       // Record each firmware installation
       // Only mark the step as complete after the last firmware installation
@@ -201,9 +201,19 @@ class _FirmwareFlashScreenState extends ConsumerState<FirmwareFlashScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Check if unit has product and variant assigned
+    if (widget.unit.productId == null || widget.unit.variantId == null) {
+      return Scaffold(
+        appBar: AppBar(
+          title: const Text('Flash Firmware'),
+        ),
+        body: _buildErrorCard(context, 'Unit has no product or variant assigned'),
+      );
+    }
+
     // Get product and variant for this unit
-    final productAsync = ref.watch(productProvider(widget.unit.productId));
-    final variantAsync = ref.watch(variantProvider(widget.unit.variantId));
+    final productAsync = ref.watch(productProvider(widget.unit.productId!));
+    final variantAsync = ref.watch(variantProvider(widget.unit.variantId!));
     final deviceTypesAsync = ref.watch(deviceTypesProvider);
 
     return Scaffold(
@@ -333,7 +343,7 @@ class _FirmwareFlashScreenState extends ConsumerState<FirmwareFlashScreen> {
                         ),
                   ),
                   const SizedBox(height: 12),
-                  _buildInfoRow('Serial Number', widget.unit.unitId),
+                  _buildInfoRow('Serial Number', widget.unit.serialNumber ?? 'Unassigned'),
                   const SizedBox(height: 8),
                   _buildInfoRow('Product', product.name),
                   const SizedBox(height: 8),

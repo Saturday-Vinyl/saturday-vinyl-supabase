@@ -40,7 +40,7 @@ cp ./shared-docs/templates/claude-commands/*.md ./.claude/commands/
 When the central docs are updated, pull changes into your project:
 
 ```bash
-git subtree pull --prefix=shared-docs shared-docs main --squash
+git subtree pull --prefix=shared-docs shared-docs main --squash -m "Merge shared-docs updates"
 ```
 
 ### Contributing Changes

@@ -21,14 +21,14 @@ class IDGenerator {
       final supabase = SupabaseService.instance.client;
 
       // Query for units with this product code
-      // unit_id format: SV-{PRODUCT_CODE}-{SEQUENCE}
+      // serial_number format: SV-{PRODUCT_CODE}-{SEQUENCE}
       final pattern = 'SV-$productCode-%';
 
       final response = await supabase
-          .from('production_units')
-          .select('unit_id')
-          .ilike('unit_id', pattern)
-          .order('unit_id', ascending: false)
+          .from('units')
+          .select('serial_number')
+          .ilike('serial_number', pattern)
+          .order('serial_number', ascending: false)
           .limit(1);
 
       if (response.isEmpty) {
@@ -36,12 +36,12 @@ class IDGenerator {
         return 1;
       }
 
-      // Extract sequence number from the last unit ID
-      final lastUnitId = response.first['unit_id'] as String;
-      final parts = lastUnitId.split('-');
+      // Extract sequence number from the last serial number
+      final lastSerialNumber = response.first['serial_number'] as String;
+      final parts = lastSerialNumber.split('-');
 
       if (parts.length != 3) {
-        AppLogger.warning('Invalid unit ID format: $lastUnitId, starting at 1');
+        AppLogger.warning('Invalid serial number format: $lastSerialNumber, starting at 1');
         return 1;
       }
 

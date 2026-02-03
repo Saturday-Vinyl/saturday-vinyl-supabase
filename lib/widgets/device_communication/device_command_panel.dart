@@ -5,6 +5,7 @@ import 'package:saturday_app/models/capability.dart';
 import 'package:saturday_app/models/connected_device.dart';
 import 'package:saturday_app/models/device_communication_state.dart';
 import 'package:saturday_app/models/device_type.dart';
+import 'package:saturday_app/models/firmware.dart';
 import 'package:saturday_app/providers/capability_provider.dart';
 import 'package:saturday_app/providers/device_communication_provider.dart';
 import 'package:saturday_app/providers/device_type_provider.dart';
@@ -31,9 +32,12 @@ class DeviceCommandPanel extends ConsumerStatefulWidget {
   ConsumerState<DeviceCommandPanel> createState() => _DeviceCommandPanelState();
 }
 
+enum _FirmwareChannel { production, development }
+
 class _DeviceCommandPanelState extends ConsumerState<DeviceCommandPanel> {
   bool _isExecuting = false;
   String? _lastTestResult;
+  _FirmwareChannel _selectedChannel = _FirmwareChannel.production;
 
   @override
   Widget build(BuildContext context) {
@@ -205,114 +209,187 @@ class _DeviceCommandPanelState extends ConsumerState<DeviceCommandPanel> {
   }
 
   Widget _buildOtaSection(DeviceType deviceType) {
-    final firmwareAsync = ref.watch(
+    final prodFirmwareAsync = ref.watch(
       latestReleasedFirmwareProvider(deviceType.id),
     );
+    final devFirmwareAsync = ref.watch(
+      latestDevFirmwareProvider(deviceType.id),
+    );
 
-    return firmwareAsync.when(
-      data: (latestFirmware) {
-        if (latestFirmware == null) {
-          return _buildSection(
-            title: 'OTA Update',
-            icon: Icons.system_update,
-            child: Text(
-              'No production firmware available for this device type.',
-              style: TextStyle(color: Colors.grey[600], fontSize: 13),
-            ),
-          );
-        }
+    final isDev = _selectedChannel == _FirmwareChannel.development;
+    final firmwareAsync = isDev ? devFirmwareAsync : prodFirmwareAsync;
 
-        final currentVersion = widget.device.firmwareVersion;
-        final latestVersion = latestFirmware.version;
-        final isUpToDate = currentVersion == latestVersion;
-
-        return _buildSection(
-          title: 'OTA Update',
-          icon: Icons.system_update,
-          iconColor: isUpToDate ? SaturdayColors.success : SaturdayColors.warning,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  _buildVersionChip('Current', currentVersion,
-                    isUpToDate ? SaturdayColors.success : Colors.grey),
-                  const SizedBox(width: 8),
-                  const Icon(Icons.arrow_forward, size: 16),
-                  const SizedBox(width: 8),
-                  _buildVersionChip('Latest', latestVersion, SaturdayColors.info),
-                ],
+    return _buildSection(
+      title: 'OTA Update',
+      icon: Icons.system_update,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Channel selector
+          SegmentedButton<_FirmwareChannel>(
+            segments: const [
+              ButtonSegment(
+                value: _FirmwareChannel.production,
+                label: Text('Production'),
+                icon: Icon(Icons.verified, size: 16),
               ),
-              const SizedBox(height: 12),
-              if (isUpToDate)
-                Row(
-                  children: [
-                    Icon(Icons.check_circle,
-                      color: SaturdayColors.success, size: 18),
-                    const SizedBox(width: 8),
-                    const Text('Device is up to date'),
-                  ],
-                )
-              else ...[
-                if (latestFirmware.isCritical)
-                  Container(
-                    padding: const EdgeInsets.all(8),
-                    margin: const EdgeInsets.only(bottom: 8),
-                    decoration: BoxDecoration(
-                      color: SaturdayColors.error.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(4),
-                      border: Border.all(color: SaturdayColors.error),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(Icons.priority_high,
-                          color: SaturdayColors.error, size: 18),
-                        const SizedBox(width: 8),
-                        const Expanded(
-                          child: Text(
-                            'Critical update available!',
-                            style: TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                if (latestFirmware.releaseNotes != null)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
-                    child: Text(
-                      latestFirmware.releaseNotes!,
-                      style: TextStyle(color: Colors.grey[600], fontSize: 12),
-                      maxLines: 3,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ElevatedButton.icon(
-                  onPressed: widget.state.phase.canSendCommands && !_isExecuting
-                      ? () => _startOtaUpdate(latestFirmware)
-                      : null,
-                  icon: const Icon(Icons.download, size: 18),
-                  label: Text('Update to v$latestVersion'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: SaturdayColors.primaryDark,
-                    foregroundColor: Colors.white,
+              ButtonSegment(
+                value: _FirmwareChannel.development,
+                label: Text('Development'),
+                icon: Icon(Icons.science, size: 16),
+              ),
+            ],
+            selected: {_selectedChannel},
+            onSelectionChanged: (selection) {
+              setState(() => _selectedChannel = selection.first);
+            },
+            style: ButtonStyle(
+              visualDensity: VisualDensity.compact,
+              textStyle: WidgetStatePropertyAll(
+                Theme.of(context).textTheme.bodySmall,
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // Firmware details
+          firmwareAsync.when(
+            data: (firmware) => _buildFirmwareDetails(firmware, isDev),
+            loading: () => const Center(child: CircularProgressIndicator()),
+            error: (e, _) => Text('Error loading firmware: $e'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFirmwareDetails(Firmware? firmware, bool isDev) {
+    if (firmware == null) {
+      return Text(
+        isDev
+            ? 'No development firmware available for this device type.'
+            : 'No production firmware available for this device type.',
+        style: TextStyle(color: Colors.grey[600], fontSize: 13),
+      );
+    }
+
+    final currentVersion = widget.device.firmwareVersion;
+    final targetVersion = firmware.version;
+    final isUpToDate = currentVersion == targetVersion;
+    final channelColor = isDev ? SaturdayColors.warning : SaturdayColors.info;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Dev firmware warning
+        if (isDev)
+          Container(
+            padding: const EdgeInsets.all(8),
+            margin: const EdgeInsets.only(bottom: 8),
+            decoration: BoxDecoration(
+              color: SaturdayColors.warning.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(color: SaturdayColors.warning),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.warning_amber,
+                  color: SaturdayColors.warning, size: 18),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    'Development firmware - not released for production',
+                    style: TextStyle(fontSize: 12),
                   ),
                 ),
               ],
-            ],
+            ),
           ),
-        );
-      },
-      loading: () => _buildSection(
-        title: 'OTA Update',
-        icon: Icons.system_update,
-        child: const Center(child: CircularProgressIndicator()),
-      ),
-      error: (e, _) => _buildSection(
-        title: 'OTA Update',
-        icon: Icons.system_update,
-        child: Text('Error loading firmware: $e'),
-      ),
+
+        // Version comparison
+        Row(
+          children: [
+            _buildVersionChip('Current', currentVersion,
+              isUpToDate ? SaturdayColors.success : Colors.grey),
+            const SizedBox(width: 8),
+            const Icon(Icons.arrow_forward, size: 16),
+            const SizedBox(width: 8),
+            _buildVersionChip(
+              isDev ? 'Dev' : 'Latest',
+              targetVersion,
+              channelColor,
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+
+        if (isUpToDate)
+          Row(
+            children: [
+              Icon(Icons.check_circle,
+                color: SaturdayColors.success, size: 18),
+              const SizedBox(width: 8),
+              Text(isDev
+                ? 'Device is running this dev version'
+                : 'Device is up to date'),
+            ],
+          )
+        else ...[
+          // Critical update banner (production only)
+          if (!isDev && firmware.isCritical)
+            Container(
+              padding: const EdgeInsets.all(8),
+              margin: const EdgeInsets.only(bottom: 8),
+              decoration: BoxDecoration(
+                color: SaturdayColors.error.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(4),
+                border: Border.all(color: SaturdayColors.error),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.priority_high,
+                    color: SaturdayColors.error, size: 18),
+                  const SizedBox(width: 8),
+                  const Expanded(
+                    child: Text(
+                      'Critical update available!',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+          // Release notes
+          if (firmware.releaseNotes != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(
+                firmware.releaseNotes!,
+                style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                maxLines: 3,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+
+          // Update button
+          ElevatedButton.icon(
+            onPressed: widget.state.phase.canSendCommands && !_isExecuting
+                ? () => _startOtaUpdate(firmware)
+                : null,
+            icon: const Icon(Icons.download, size: 18),
+            label: Text(isDev
+                ? 'Flash dev v$targetVersion'
+                : 'Update to v$targetVersion'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: isDev
+                  ? SaturdayColors.warning
+                  : SaturdayColors.primaryDark,
+              foregroundColor: Colors.white,
+            ),
+          ),
+        ],
+      ],
     );
   }
 
@@ -557,7 +634,7 @@ class _DeviceCommandPanelState extends ConsumerState<DeviceCommandPanel> {
     }
   }
 
-  Future<void> _startOtaUpdate(dynamic firmware) async {
+  Future<void> _startOtaUpdate(Firmware firmware) async {
     // TODO: Implement OTA update
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(

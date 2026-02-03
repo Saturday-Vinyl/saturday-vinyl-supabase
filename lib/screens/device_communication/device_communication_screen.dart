@@ -7,7 +7,8 @@ import 'package:saturday_app/models/connected_device.dart';
 import 'package:saturday_app/models/device_communication_state.dart';
 import 'package:saturday_app/providers/device_communication_provider.dart';
 import 'package:saturday_app/widgets/device_communication/device_command_panel.dart';
-import 'package:saturday_app/widgets/service_mode/log_display.dart';
+import 'package:saturday_app/widgets/device_communication/unit_selection_dialog.dart';
+import 'package:saturday_app/widgets/common/log_display.dart';
 
 /// Screen for communicating with a connected Saturday device.
 ///
@@ -128,13 +129,22 @@ class _DeviceCommunicationScreenState
                   // Device info card
                   if (state.connectedDevice != null) ...[
                     const SizedBox(height: 16),
-                    _DeviceInfoCard(device: state.connectedDevice!),
+                    _DeviceInfoCard(
+                      device: state.connectedDevice!,
+                      unitNotFoundInDb: state.unitNotFoundInDb,
+                    ),
                   ],
 
-                  // Unit context card
+                  // Unit context card (with provision button if device is unprovisioned)
                   if (state.associatedUnit != null) ...[
                     const SizedBox(height: 16),
-                    _UnitContextCard(unit: state.associatedUnit!),
+                    _UnitContextCard(
+                      unit: state.associatedUnit!,
+                      showProvisionButton: state.isUnprovisioned,
+                      onProvision: state.isUnprovisioned
+                          ? () => _startFactoryProvision(notifier, state.associatedUnit!)
+                          : null,
+                    ),
                   ] else if (state.isUnprovisioned) ...[
                     const SizedBox(height: 16),
                     _UnprovisionedCard(
@@ -381,13 +391,98 @@ class _DeviceCommunicationScreenState
 
   Future<void> _showUnitSelectionDialog(
       DeviceCommunicationNotifier notifier) async {
-    // TODO: Implement unit selection dialog for provisioning
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Unit selection not yet implemented'),
-        backgroundColor: SaturdayColors.warning,
+    final state = ref.read(deviceCommunicationStateProvider);
+    final connectedDevice = state.connectedDevice;
+
+    if (connectedDevice == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No device connected'),
+          backgroundColor: SaturdayColors.error,
+        ),
+      );
+      return;
+    }
+
+    // Get device type info
+    final deviceTypeSlug = connectedDevice.deviceType;
+    final deviceTypeName = _formatDeviceType(deviceTypeSlug);
+
+    // Show the unit selection dialog
+    final selectedUnit = await UnitSelectionDialog.show(
+      context: context,
+      deviceTypeSlug: deviceTypeSlug,
+      deviceTypeName: deviceTypeName,
+    );
+
+    if (selectedUnit != null) {
+      // Set the selected unit for provisioning
+      notifier.setUnitForProvisioning(selectedUnit);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Selected unit: ${selectedUnit.serialNumber}'),
+            backgroundColor: SaturdayColors.success,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _startFactoryProvision(
+      DeviceCommunicationNotifier notifier, dynamic unit) async {
+    // Confirm before provisioning
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Factory Provision'),
+        content: Text(
+          'This will provision the device with serial number:\n\n'
+          '${unit.serialNumber}\n\n'
+          'The device will be associated with this unit. Continue?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: SaturdayColors.primaryDark,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Provision'),
+          ),
+        ],
       ),
     );
+
+    if (confirmed == true) {
+      // factoryProvision uses state.associatedUnit which is already set
+      final success = await notifier.factoryProvision();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(success
+                ? 'Device provisioned successfully!'
+                : 'Provisioning failed. Check logs for details.'),
+            backgroundColor: success ? SaturdayColors.success : SaturdayColors.error,
+          ),
+        );
+      }
+    }
+  }
+
+  String _formatDeviceType(String deviceType) {
+    return deviceType
+        .split('-')
+        .map((word) => word.isNotEmpty
+            ? '${word[0].toUpperCase()}${word.substring(1)}'
+            : '')
+        .join(' ');
   }
 
   void _copyLogsToClipboard(List<String> logLines) {
@@ -618,8 +713,12 @@ class _ManualPortSelectorState extends State<_ManualPortSelector> {
 
 class _DeviceInfoCard extends StatelessWidget {
   final ConnectedDevice device;
+  final bool unitNotFoundInDb;
 
-  const _DeviceInfoCard({required this.device});
+  const _DeviceInfoCard({
+    required this.device,
+    this.unitNotFoundInDb = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -693,7 +792,39 @@ class _DeviceInfoCard extends StatelessWidget {
             if (device.serialNumber != null)
               _buildInfoRow(context, 'Serial Number', device.serialNumber!,
                   Icons.qr_code,
-                  valueColor: SaturdayColors.success),
+                  valueColor: unitNotFoundInDb ? SaturdayColors.error : SaturdayColors.success),
+
+            // Warning if unit not found in database
+            if (unitNotFoundInDb && device.serialNumber != null) ...[
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: SaturdayColors.error.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: SaturdayColors.error.withValues(alpha: 0.3)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.warning_amber_rounded,
+                      size: 20,
+                      color: SaturdayColors.error,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Unit ${device.serialNumber} not found in database. It may have been deleted.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: SaturdayColors.error,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
 
             // System info from status data
             if (device.uptimeSec != null || device.freeHeap != null) ...[
@@ -825,8 +956,14 @@ class _DeviceInfoCard extends StatelessWidget {
 
 class _UnitContextCard extends StatelessWidget {
   final dynamic unit; // Unit type
+  final bool showProvisionButton;
+  final VoidCallback? onProvision;
 
-  const _UnitContextCard({required this.unit});
+  const _UnitContextCard({
+    required this.unit,
+    this.showProvisionButton = false,
+    this.onProvision,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -838,14 +975,21 @@ class _UnitContextCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                const Icon(Icons.inventory_2, size: 20,
-                    color: SaturdayColors.success),
+                Icon(
+                  showProvisionButton ? Icons.inventory_2 : Icons.check_circle,
+                  size: 20,
+                  color: showProvisionButton
+                      ? SaturdayColors.warning
+                      : SaturdayColors.success,
+                ),
                 const SizedBox(width: 8),
-                Text(
-                  'Unit Context',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
+                Expanded(
+                  child: Text(
+                    showProvisionButton ? 'Ready to Provision' : 'Unit Context',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                  ),
                 ),
               ],
             ),
@@ -865,6 +1009,22 @@ class _UnitContextCard extends StatelessWidget {
                 fontSize: 13,
               ),
             ),
+            if (showProvisionButton && onProvision != null) ...[
+              const SizedBox(height: 16),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: onProvision,
+                  icon: const Icon(Icons.flash_on),
+                  label: const Text('Factory Provision'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: SaturdayColors.primaryDark,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
       ),

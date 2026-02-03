@@ -1,7 +1,7 @@
 # Saturday Device Command Protocol
 
-**Version:** 1.2.3
-**Last Updated:** 2026-01-27
+**Version:** 1.2.4
+**Last Updated:** 2026-01-30
 **Audience:** Saturday Admin App developers, Firmware engineers, Consumer App developers
 
 ---
@@ -20,12 +20,13 @@
    - [consumer_reset](#consumer_reset)
    - [factory_reset](#factory_reset)
 6. [Heartbeat Protocol](#heartbeat-protocol)
-7. [Capability Model](#capability-model)
-8. [Attribute Schema Reference](#attribute-schema-reference)
-9. [Error Codes](#error-codes)
-10. [Migration from Service Mode Protocol](#migration-from-service-mode-protocol)
-11. [Implementation Reference](#implementation-reference)
-12. [Version History](#version-history)
+7. [Command Acknowledgement Protocol](#command-acknowledgement-protocol)
+8. [Capability Model](#capability-model)
+9. [Attribute Schema Reference](#attribute-schema-reference)
+10. [Error Codes](#error-codes)
+11. [Migration from Service Mode Protocol](#migration-from-service-mode-protocol)
+12. [Implementation Reference](#implementation-reference)
+13. [Version History](#version-history)
 
 ---
 
@@ -80,13 +81,16 @@ For remote device management via cloud WebSocket.
 2. Database Trigger → pg_notify to Supabase Realtime
 3. Supabase Realtime → Broadcast to device:{mac_address} channel
 4. Device receives command via WebSocket
-5. Device executes command
-6. Device → PATCH device_commands with status/result via REST API
+5. Device sends command_ack heartbeat (acknowledges receipt)
+6. Device executes command
+7. Device sends command_result heartbeat (reports completion/failure)
 ```
 
 **Status Reporting:**
 - Device sends heartbeats via REST POST to `device_heartbeats` table
-- Device updates command status via PATCH to `device_commands`
+- Device acknowledges commands via `command_ack` heartbeat type
+- Device reports command results via `command_result` heartbeat type
+- Database trigger automatically updates `device_commands.status` from heartbeats
 - Device updates `devices.last_seen_at` on each heartbeat
 
 ---
@@ -470,7 +474,40 @@ All devices must include these fields in every heartbeat, regardless of capabili
 | `min_free_heap` | integer | Minimum free heap since boot (detects memory leaks) | `esp_get_minimum_free_heap_size()` |
 | `largest_free_block` | integer | Largest contiguous free block in bytes (detects fragmentation) | `heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)` |
 
-Additional capability-specific fields (e.g., `wifi_rssi`, `rfid_tag_count`) are added based on device capabilities.
+Additional capability-specific fields are added based on device capabilities. Field names should be descriptive and avoid conflicts with standard fields.
+
+### Known Device-Specific Heartbeat Fields
+
+Devices may include the following capability-specific fields in their heartbeats. Not all fields apply to all devices — include only what the hardware supports.
+
+#### Power / Battery
+
+| Field | Type | Description | Source |
+|-------|------|-------------|--------|
+| `battery_level` | integer | Battery state of charge (0-100%) | Fuel gauge IC (e.g., BQ27441) |
+| `battery_charging` | boolean | Whether the battery is currently charging | Fuel gauge current direction |
+
+#### Environmental Sensors
+
+| Field | Type | Description | Source |
+|-------|------|-------------|--------|
+| `temperature_c` | float | Ambient temperature in Celsius | SHT40 or equivalent |
+| `humidity_pct` | float | Relative humidity percentage | SHT40 or equivalent |
+
+#### Connectivity
+
+| Field | Type | Description | Source |
+|-------|------|-------------|--------|
+| `wifi_rssi` | integer | WiFi signal strength in dBm | WiFi driver |
+| `thread_rloc16` | string | Thread routing locator (mesh address) | Thread stack |
+
+#### Application-Specific
+
+| Field | Type | Description | Source |
+|-------|------|-------------|--------|
+| `rfid_tag_count` | integer | Number of RFID tags currently detected | RFID reader |
+
+> **Adding new fields:** When introducing new device-specific heartbeat fields, add them to the appropriate category above and follow the naming convention: `capability_metric` (e.g., `battery_level`, `temperature_c`). Use SI units where applicable and include the unit in the field name suffix (`_c`, `_pct`, `_mv`, `_ma`).
 
 ### Heartbeat Frequency
 
@@ -524,6 +561,193 @@ When a relay forwards a heartbeat, it adds relay identification fields:
 4. The relay POSTs the complete payload to the cloud
 
 The originating device's fields (`mac_address`, `unit_id`, etc.) remain unchanged - the relay only adds relay identification.
+
+---
+
+## Command Acknowledgement Protocol
+
+When devices receive commands via WebSocket, they must acknowledge receipt and report results using specialized heartbeat types. This provides a robust two-way communication channel that mirrors the serial monitor experience.
+
+### Heartbeat Types
+
+The `type` field in heartbeats indicates the purpose:
+
+| Type | Description |
+|------|-------------|
+| `status` | Regular telemetry heartbeat (default) |
+| `command_ack` | Acknowledges receipt of a command |
+| `command_result` | Reports command completion or failure |
+
+### Command Acknowledgement Flow
+
+```
+1. Device receives command via WebSocket (device:{mac_address} channel)
+2. Device immediately sends command_ack heartbeat
+3. Device executes the command
+4. Device sends command_result heartbeat with outcome
+```
+
+### Acknowledgement Heartbeat Format
+
+When acknowledging a command, include the `type` and `command_id` fields:
+
+```json
+{
+  "mac_address": "AA:BB:CC:DD:EE:FF",
+  "unit_id": "SV-CRT-000001",
+  "device_type": "crate",
+  "firmware_version": "1.2.0",
+  "uptime_sec": 123456,
+  "free_heap": 245760,
+  "min_free_heap": 180224,
+  "largest_free_block": 114688,
+  "type": "command_ack",
+  "command_id": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+**Required Fields for Ack:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | string | Must be `"command_ack"` |
+| `command_id` | uuid | The `id` field from the received command |
+
+All standard heartbeat fields should also be included.
+
+### Result Heartbeat Format
+
+After command execution, send a result heartbeat:
+
+```json
+{
+  "mac_address": "AA:BB:CC:DD:EE:FF",
+  "unit_id": "SV-CRT-000001",
+  "device_type": "crate",
+  "firmware_version": "1.2.0",
+  "uptime_sec": 123460,
+  "free_heap": 245760,
+  "min_free_heap": 180224,
+  "largest_free_block": 114688,
+  "type": "command_result",
+  "command_id": "550e8400-e29b-41d4-a716-446655440000",
+  "heartbeat_data": {
+    "status": "completed",
+    "result": {
+      "device_type": "crate",
+      "firmware_version": "1.2.0",
+      "mac_address": "AA:BB:CC:DD:EE:FF"
+    }
+  }
+}
+```
+
+**For failed commands:**
+
+```json
+{
+  "mac_address": "AA:BB:CC:DD:EE:FF",
+  "unit_id": "SV-CRT-000001",
+  "device_type": "crate",
+  "firmware_version": "1.2.0",
+  "uptime_sec": 123460,
+  "free_heap": 245760,
+  "min_free_heap": 180224,
+  "largest_free_block": 114688,
+  "type": "command_result",
+  "command_id": "550e8400-e29b-41d4-a716-446655440000",
+  "heartbeat_data": {
+    "status": "failed",
+    "error_message": "WiFi connection timed out"
+  }
+}
+```
+
+**Result Heartbeat Fields:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | string | Must be `"command_result"` |
+| `command_id` | uuid | The `id` field from the received command |
+| `heartbeat_data.status` | string | `"completed"` or `"failed"` |
+| `heartbeat_data.result` | object | Command result data (for successful commands) |
+| `heartbeat_data.error_message` | string | Error description (for failed commands) |
+
+### Database Status Updates
+
+The cloud automatically updates `device_commands.status` based on heartbeat type:
+
+| Heartbeat Type | Sets device_commands.status to |
+|----------------|--------------------------------|
+| `command_ack` | `acknowledged` |
+| `command_result` with `status: "completed"` | `completed` |
+| `command_result` with `status: "failed"` | `failed` |
+
+This is handled by a database trigger, so devices only need to POST heartbeats - no PATCH requests are required.
+
+### ESP-IDF Implementation Example
+
+```c
+// Send command acknowledgement
+void send_command_ack(const char *command_id) {
+    cJSON *heartbeat = create_standard_heartbeat();
+    cJSON_AddStringToObject(heartbeat, "type", "command_ack");
+    cJSON_AddStringToObject(heartbeat, "command_id", command_id);
+
+    char *json_str = cJSON_PrintUnformatted(heartbeat);
+    post_to_supabase("/rest/v1/device_heartbeats", json_str);
+
+    cJSON_free(json_str);
+    cJSON_Delete(heartbeat);
+}
+
+// Send command result
+void send_command_result(const char *command_id, bool success,
+                         cJSON *result, const char *error_message) {
+    cJSON *heartbeat = create_standard_heartbeat();
+    cJSON_AddStringToObject(heartbeat, "type", "command_result");
+    cJSON_AddStringToObject(heartbeat, "command_id", command_id);
+
+    cJSON *data = cJSON_CreateObject();
+    cJSON_AddStringToObject(data, "status", success ? "completed" : "failed");
+
+    if (success && result) {
+        cJSON_AddItemToObject(data, "result", cJSON_Duplicate(result, true));
+    }
+    if (!success && error_message) {
+        cJSON_AddStringToObject(data, "error_message", error_message);
+    }
+
+    cJSON_AddItemToObject(heartbeat, "heartbeat_data", data);
+
+    char *json_str = cJSON_PrintUnformatted(heartbeat);
+    post_to_supabase("/rest/v1/device_heartbeats", json_str);
+
+    cJSON_free(json_str);
+    cJSON_Delete(heartbeat);
+}
+
+// Example command handler
+void handle_websocket_command(const char *json_str) {
+    cJSON *cmd = cJSON_Parse(json_str);
+    const char *cmd_id = cJSON_GetStringValue(cJSON_GetObjectItem(cmd, "id"));
+    const char *cmd_name = cJSON_GetStringValue(cJSON_GetObjectItem(cmd, "cmd"));
+
+    // Immediately acknowledge receipt
+    send_command_ack(cmd_id);
+
+    // Execute command
+    cJSON *result = cJSON_CreateObject();
+    bool success = execute_command(cmd_name, cJSON_GetObjectItem(cmd, "params"), result);
+
+    // Report result
+    send_command_result(cmd_id, success, result,
+                        success ? NULL : "Command execution failed");
+
+    cJSON_Delete(result);
+    cJSON_Delete(cmd);
+}
+```
 
 ---
 
@@ -1204,6 +1428,7 @@ Key components:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.2.4 | 2026-01-30 | Added Command Acknowledgement Protocol section; devices must send `command_ack` and `command_result` heartbeat types when receiving commands via WebSocket |
 | 1.2.3 | 2026-01-27 | Added Relayed Heartbeats section documenting `relay_device_type` and `relay_instance_id` fields for devices without direct cloud access |
 | 1.2.2 | 2026-01-27 | Changed `uptime_ms` to `uptime_sec` (seconds instead of milliseconds); added `unit_id` and `device_type` to standard heartbeat fields |
 | 1.2.1 | 2026-01-26 | Added standard heartbeat fields section with required memory health fields (`min_free_heap`, `largest_free_block`) |
