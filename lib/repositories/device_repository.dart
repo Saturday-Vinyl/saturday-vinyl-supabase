@@ -2,6 +2,10 @@ import 'package:saturday_consumer_app/models/device.dart';
 import 'package:saturday_consumer_app/repositories/base_repository.dart';
 
 /// Repository for device-related database operations.
+///
+/// **DEPRECATED:** This repository uses the legacy `consumer_devices` table.
+/// Use [UnitRepository] instead for the new unified `units` + `devices` schema.
+@Deprecated('Use UnitRepository instead for the new unified schema')
 class DeviceRepository extends BaseRepository {
   static const _tableName = 'consumer_devices';
 

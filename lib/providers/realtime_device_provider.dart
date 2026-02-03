@@ -8,8 +8,9 @@ import 'package:saturday_consumer_app/providers/supabase_provider.dart';
 import 'package:saturday_consumer_app/services/notification_service.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-/// Table name for devices.
-const _tableName = 'consumer_devices';
+/// Table names for the unified device architecture.
+const _unitsTable = 'units';
+const _devicesTable = 'devices';
 
 /// How often to re-evaluate device connectivity status based on heartbeat staleness.
 const _stalenessCheckInterval = Duration(minutes: 1);
@@ -91,14 +92,26 @@ class RealtimeDeviceState {
 }
 
 /// StateNotifier for managing realtime device state.
+///
+/// Subscribes to both `units` and `devices` tables for the unified
+/// device architecture. Units represent product ownership while devices
+/// represent hardware instances with telemetry.
 class RealtimeDeviceNotifier extends StateNotifier<RealtimeDeviceState> {
   RealtimeDeviceNotifier(this._ref) : super(const RealtimeDeviceState()) {
     _initialize();
   }
 
   final Ref _ref;
-  RealtimeChannel? _channel;
+  RealtimeChannel? _unitsChannel;
+  RealtimeChannel? _devicesChannel;
   Timer? _stalenessCheckTimer;
+
+  /// In-memory cache of unit data (keyed by unit ID).
+  final Map<String, Map<String, dynamic>> _unitsCache = {};
+
+  /// In-memory cache of device data (keyed by unit ID, not device ID).
+  /// We key by unit ID because that's how we merge units + devices.
+  final Map<String, Map<String, dynamic>> _devicesCache = {};
 
   /// Track which devices we've already sent offline notifications for,
   /// to avoid duplicate notifications.
@@ -112,11 +125,12 @@ class RealtimeDeviceNotifier extends StateNotifier<RealtimeDeviceState> {
       return;
     }
 
-    // First fetch all devices
+    // First fetch all devices (uses JOIN query)
     await _fetchDevices(userId);
 
-    // Then subscribe to realtime changes
-    _subscribeToDevices(userId);
+    // Then subscribe to realtime changes on both tables
+    _subscribeToUnits(userId);
+    _subscribeToDevices();
 
     // Start periodic staleness checks for heartbeat-based offline detection
     _startStalenessCheckTimer();
@@ -161,11 +175,46 @@ class RealtimeDeviceNotifier extends StateNotifier<RealtimeDeviceState> {
     state = state.copyWith(lastUpdated: DateTime.now());
   }
 
-  /// Fetch all devices for the user.
+  /// Fetch all devices for the user using the unified units + devices schema.
   Future<void> _fetchDevices(String userId) async {
     try {
-      final deviceRepo = _ref.read(deviceRepositoryProvider);
-      final devices = await deviceRepo.getUserDevices(userId);
+      final unitRepo = _ref.read(unitRepositoryProvider);
+      final devices = await unitRepo.getUserDevices(userId);
+
+      // Populate caches from the initial fetch for merging with realtime updates
+      _unitsCache.clear();
+      _devicesCache.clear();
+
+      for (final device in devices) {
+        // Store unit data in cache
+        // Note: We store the raw status string that fromJoinedJson expects
+        // New unit_status enum: 'in_production', 'inventory', 'assigned', 'claimed'
+        final statusString = device.status == DeviceStatus.online
+            ? 'claimed'
+            : device.status == DeviceStatus.setupRequired
+                ? 'assigned'
+                : 'inventory';
+        _unitsCache[device.id] = {
+          'id': device.id,
+          'serial_number': device.serialNumber,
+          'consumer_user_id': device.userId,
+          'consumer_name': device.name,
+          'status': statusString,
+          'created_at': device.createdAt.toIso8601String(),
+        };
+
+        // Store device data if available (keyed by unit ID)
+        if (device.macAddress != null) {
+          _devicesCache[device.id] = {
+            'unit_id': device.id,
+            'mac_address': device.macAddress,
+            'firmware_version': device.firmwareVersion,
+            'last_seen_at': device.lastSeenAt?.toIso8601String(),
+            'latest_telemetry': device.telemetry?.toJson(),
+            'status': device.isEffectivelyOnline ? 'online' : 'offline',
+          };
+        }
+      }
 
       state = state.copyWith(
         devices: devices,
@@ -181,121 +230,246 @@ class RealtimeDeviceNotifier extends StateNotifier<RealtimeDeviceState> {
     }
   }
 
-  /// Subscribe to realtime device changes.
-  void _subscribeToDevices(String userId) {
+  /// Subscribe to realtime changes on the units table.
+  ///
+  /// Units are filtered by user_id to only receive changes for the current user's devices.
+  void _subscribeToUnits(String userId) {
     final client = _ref.read(supabaseClientProvider);
 
-    _channel = client
-        .channel('devices_$userId')
+    _unitsChannel = client
+        .channel('units_$userId')
         .onPostgresChanges(
           event: PostgresChangeEvent.all,
           schema: 'public',
-          table: _tableName,
+          table: _unitsTable,
           filter: PostgresChangeFilter(
             type: PostgresChangeFilterType.eq,
-            column: 'user_id',
+            column: 'consumer_user_id',
             value: userId,
           ),
           callback: (payload) {
-            _handleRealtimePayload(payload);
+            _handleUnitsPayload(payload);
           },
         )
         .subscribe();
   }
 
-  /// Handle incoming realtime payloads.
-  void _handleRealtimePayload(PostgresChangePayload payload) {
+  /// Subscribe to realtime changes on the devices table.
+  ///
+  /// We subscribe to all device changes and filter in-memory based on
+  /// whether we have a matching unit in our cache. This is necessary because
+  /// devices don't have a direct user_id column.
+  void _subscribeToDevices() {
+    final client = _ref.read(supabaseClientProvider);
+
+    _devicesChannel = client
+        .channel('devices_all')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.all,
+          schema: 'public',
+          table: _devicesTable,
+          callback: (payload) {
+            _handleDevicesPayload(payload);
+          },
+        )
+        .subscribe();
+  }
+
+  /// Handle incoming realtime payloads from the units table.
+  void _handleUnitsPayload(PostgresChangePayload payload) {
     switch (payload.eventType) {
       case PostgresChangeEvent.insert:
-        _handleInsert(payload.newRecord);
+        _handleUnitInsert(payload.newRecord);
         break;
       case PostgresChangeEvent.update:
-        _handleUpdate(payload.newRecord, payload.oldRecord);
+        _handleUnitUpdate(payload.newRecord, payload.oldRecord);
         break;
       case PostgresChangeEvent.delete:
-        _handleDelete(payload.oldRecord);
+        _handleUnitDelete(payload.oldRecord);
         break;
       default:
         break;
     }
   }
 
-  /// Handle a new device being inserted.
-  void _handleInsert(Map<String, dynamic> record) {
-    final device = Device.fromJson(record);
-    final devices = [...state.devices, device];
+  /// Handle incoming realtime payloads from the devices table.
+  void _handleDevicesPayload(PostgresChangePayload payload) {
+    final record = payload.eventType == PostgresChangeEvent.delete
+        ? payload.oldRecord
+        : payload.newRecord;
 
-    state = state.copyWith(
-      devices: devices,
-      lastUpdated: DateTime.now(),
-    );
+    // Find the unit_id for this device
+    final unitId = record['unit_id'] as String?;
+    if (unitId == null) return;
+
+    // Only process if we have this unit in our cache (i.e., it belongs to this user)
+    if (!_unitsCache.containsKey(unitId)) return;
+
+    switch (payload.eventType) {
+      case PostgresChangeEvent.insert:
+      case PostgresChangeEvent.update:
+        _handleDeviceUpdate(unitId, payload.newRecord, payload.oldRecord);
+        break;
+      case PostgresChangeEvent.delete:
+        _handleDeviceDelete(unitId);
+        break;
+      default:
+        break;
+    }
   }
 
-  /// Handle an existing device being updated.
-  void _handleUpdate(
+  /// Handle a new unit being claimed by the user.
+  void _handleUnitInsert(Map<String, dynamic> record) {
+    final unitId = record['id'] as String?;
+    if (unitId == null) return;
+
+    // Add to cache
+    _unitsCache[unitId] = record;
+
+    // Build merged device and add to state
+    _rebuildDeviceState();
+  }
+
+  /// Handle an existing unit being updated.
+  void _handleUnitUpdate(
     Map<String, dynamic> newRecord,
     Map<String, dynamic> oldRecord,
   ) {
-    final updatedDevice = Device.fromJson(newRecord);
-    final devices = state.devices.map((device) {
-      if (device.id == updatedDevice.id) {
-        return updatedDevice;
+    final unitId = newRecord['id'] as String?;
+    if (unitId == null) return;
+
+    // Update cache
+    _unitsCache[unitId] = newRecord;
+
+    // Rebuild state
+    _rebuildDeviceState();
+
+    // Check for notifications
+    _checkForUnitNotifications(oldRecord, newRecord);
+  }
+
+  /// Handle a unit being unclaimed (deleted from user's perspective).
+  void _handleUnitDelete(Map<String, dynamic> record) {
+    final unitId = record['id'] as String?;
+    if (unitId == null) return;
+
+    // Remove from caches
+    _unitsCache.remove(unitId);
+    _devicesCache.remove(unitId);
+
+    // Rebuild state
+    _rebuildDeviceState();
+  }
+
+  /// Handle device data update (telemetry, status, etc.).
+  void _handleDeviceUpdate(
+    String unitId,
+    Map<String, dynamic> newRecord,
+    Map<String, dynamic> oldRecord,
+  ) {
+    // Update cache (keyed by unit_id)
+    _devicesCache[unitId] = newRecord;
+
+    // Rebuild state
+    _rebuildDeviceState();
+
+    // Check for notifications (battery, status changes)
+    _checkForDeviceNotifications(unitId, oldRecord, newRecord);
+  }
+
+  /// Handle device being unlinked from unit.
+  void _handleDeviceDelete(String unitId) {
+    // Remove from cache
+    _devicesCache.remove(unitId);
+
+    // Rebuild state
+    _rebuildDeviceState();
+  }
+
+  /// Rebuild the device state from the cached units + devices data.
+  void _rebuildDeviceState() {
+    final devices = <Device>[];
+
+    for (final unitEntry in _unitsCache.entries) {
+      final unitId = unitEntry.key;
+      final unitData = unitEntry.value;
+
+      // Get linked device data if available
+      final deviceData = _devicesCache[unitId];
+
+      // Build merged JSON structure expected by Device.fromJoinedJson
+      final mergedJson = <String, dynamic>{
+        ...unitData,
+        'devices': deviceData != null ? [deviceData] : [],
+      };
+
+      try {
+        devices.add(Device.fromJoinedJson(mergedJson));
+      } catch (e) {
+        // Skip malformed data
       }
-      return device;
-    }).toList();
-
-    state = state.copyWith(
-      devices: devices,
-      lastUpdated: DateTime.now(),
-    );
-
-    // If device received a heartbeat (lastSeenAt updated), it's back online
-    // Clear it from the notified set so we can notify again if it goes offline
-    if (updatedDevice.isEffectivelyOnline) {
-      _notifiedOfflineDevices.remove(updatedDevice.id);
     }
 
-    // Check for status/battery changes and trigger notifications
-    _checkForNotifications(oldRecord, newRecord);
-  }
-
-  /// Handle a device being deleted.
-  void _handleDelete(Map<String, dynamic> record) {
-    final deletedId = record['id'] as String?;
-    if (deletedId == null) return;
-
-    final devices =
-        state.devices.where((device) => device.id != deletedId).toList();
+    // Sort by created_at (newest first)
+    devices.sort((a, b) {
+      final aTime = _unitsCache[a.id]?['created_at'] as String?;
+      final bTime = _unitsCache[b.id]?['created_at'] as String?;
+      if (aTime == null && bTime == null) return 0;
+      if (aTime == null) return 1;
+      if (bTime == null) return -1;
+      return bTime.compareTo(aTime);
+    });
 
     state = state.copyWith(
       devices: devices,
       lastUpdated: DateTime.now(),
     );
+
+    // Check if any devices came back online
+    for (final device in devices) {
+      if (device.isEffectivelyOnline) {
+        _notifiedOfflineDevices.remove(device.id);
+      }
+    }
   }
 
-  /// Check if we need to send notifications for device changes.
-  void _checkForNotifications(
+  /// Check if we need to send notifications for unit changes.
+  void _checkForUnitNotifications(
     Map<String, dynamic> oldRecord,
     Map<String, dynamic> newRecord,
   ) {
     final oldStatus = DeviceStatus.fromString(oldRecord['status'] as String? ?? 'offline');
     final newStatus = DeviceStatus.fromString(newRecord['status'] as String? ?? 'offline');
-    final deviceName = newRecord['name'] as String? ?? 'Unknown Device';
-    final deviceId = newRecord['id'] as String? ?? '';
+    final deviceName = newRecord['consumer_name'] as String? ?? 'Unknown Device';
+    final unitId = newRecord['id'] as String? ?? '';
 
-    // Device went offline
+    // Unit status changed to offline
     if (oldStatus == DeviceStatus.online && newStatus == DeviceStatus.offline) {
-      _sendDeviceOfflineNotification(deviceId, deviceName);
+      _sendDeviceOfflineNotification(unitId, deviceName);
     }
+  }
 
-    // Battery level changed to low
-    final oldBattery = oldRecord['battery_level'] as int?;
-    final newBattery = newRecord['battery_level'] as int?;
+  /// Check if we need to send notifications for device telemetry changes.
+  void _checkForDeviceNotifications(
+    String unitId,
+    Map<String, dynamic> oldRecord,
+    Map<String, dynamic> newRecord,
+  ) {
+    // Get device name from units cache
+    final unitData = _unitsCache[unitId];
+    final deviceName = unitData?['consumer_name'] as String? ?? 'Unknown Device';
+
+    // Check battery level from latest_telemetry
+    final oldTelemetry = oldRecord['latest_telemetry'] as Map<String, dynamic>?;
+    final newTelemetry = newRecord['latest_telemetry'] as Map<String, dynamic>?;
+
+    final oldBattery = oldTelemetry?['battery_level'] as int?;
+    final newBattery = newTelemetry?['battery_level'] as int?;
 
     if (newBattery != null && newBattery < 20) {
       // Only notify if it just dropped below 20%
       if (oldBattery == null || oldBattery >= 20) {
-        _sendLowBatteryNotification(deviceId, deviceName, newBattery);
+        _sendLowBatteryNotification(unitId, deviceName, newBattery);
       }
     }
   }
@@ -341,7 +515,8 @@ class RealtimeDeviceNotifier extends StateNotifier<RealtimeDeviceState> {
   @override
   void dispose() {
     _stalenessCheckTimer?.cancel();
-    _channel?.unsubscribe();
+    _unitsChannel?.unsubscribe();
+    _devicesChannel?.unsubscribe();
     super.dispose();
   }
 }

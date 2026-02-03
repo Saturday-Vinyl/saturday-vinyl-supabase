@@ -22,8 +22,19 @@ final tagRepositoryProvider = Provider<TagRepository>((ref) {
 });
 
 /// Provider for DeviceRepository.
+///
+/// **DEPRECATED:** Use [unitRepositoryProvider] instead for the new unified schema.
+@Deprecated('Use unitRepositoryProvider instead')
 final deviceRepositoryProvider = Provider<DeviceRepository>((ref) {
+  // ignore: deprecated_member_use_from_same_package
   return DeviceRepository();
+});
+
+/// Provider for UnitRepository.
+///
+/// This repository provides access to the unified `units` + `devices` schema.
+final unitRepositoryProvider = Provider<UnitRepository>((ref) {
+  return UnitRepository();
 });
 
 /// Provider for ListeningHistoryRepository.

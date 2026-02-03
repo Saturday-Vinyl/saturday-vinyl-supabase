@@ -436,8 +436,8 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
     }
 
     try {
-      final deviceRepo = ref.read(deviceRepositoryProvider);
-      await deviceRepo.updateDevice(device.copyWith(name: newName));
+      final unitRepo = ref.read(unitRepositoryProvider);
+      await unitRepo.updateDeviceName(device.id, newName);
       ref.invalidate(deviceByIdProvider(widget.deviceId));
       ref.invalidate(userDevicesProvider);
       setState(() => _isEditing = false);
@@ -489,8 +489,8 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
 
   Future<void> _removeDevice(WidgetRef ref, Device device) async {
     try {
-      final deviceRepo = ref.read(deviceRepositoryProvider);
-      await deviceRepo.deleteDevice(device.id);
+      final unitRepo = ref.read(unitRepositoryProvider);
+      await unitRepo.unclaimUnit(device.id);
       ref.invalidate(userDevicesProvider);
       if (mounted) {
         context.pop();

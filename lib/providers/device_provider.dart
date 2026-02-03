@@ -4,19 +4,28 @@ import 'package:saturday_consumer_app/providers/auth_provider.dart';
 import 'package:saturday_consumer_app/providers/repository_providers.dart';
 
 /// FutureProvider for all devices owned by the current user.
+///
+/// Uses the new UnitRepository to query joined units + devices data.
 final userDevicesProvider = FutureProvider<List<Device>>((ref) async {
   final userId = ref.watch(currentUserIdProvider);
   if (userId == null) return [];
 
-  final deviceRepo = ref.watch(deviceRepositoryProvider);
-  return deviceRepo.getUserDevices(userId);
+  final unitRepo = ref.watch(unitRepositoryProvider);
+  return unitRepo.getUserDevices(userId);
 });
 
-/// FutureProvider.family for fetching a device by ID.
+/// FutureProvider.family for fetching a device by ID (unit ID).
 final deviceByIdProvider =
     FutureProvider.family<Device?, String>((ref, deviceId) async {
-  final deviceRepo = ref.watch(deviceRepositoryProvider);
-  return deviceRepo.getDevice(deviceId);
+  final unitRepo = ref.watch(unitRepositoryProvider);
+  return unitRepo.getDevice(deviceId);
+});
+
+/// FutureProvider.family for fetching a device by serial number.
+final deviceBySerialProvider =
+    FutureProvider.family<Device?, String>((ref, serialNumber) async {
+  final unitRepo = ref.watch(unitRepositoryProvider);
+  return unitRepo.getDeviceBySerial(serialNumber);
 });
 
 /// Provider for user's hubs only.
@@ -24,8 +33,8 @@ final userHubsProvider = FutureProvider<List<Device>>((ref) async {
   final userId = ref.watch(currentUserIdProvider);
   if (userId == null) return [];
 
-  final deviceRepo = ref.watch(deviceRepositoryProvider);
-  return deviceRepo.getUserHubs(userId);
+  final unitRepo = ref.watch(unitRepositoryProvider);
+  return unitRepo.getUserHubs(userId);
 });
 
 /// Provider for user's crates only.
@@ -33,8 +42,8 @@ final userCratesProvider = FutureProvider<List<Device>>((ref) async {
   final userId = ref.watch(currentUserIdProvider);
   if (userId == null) return [];
 
-  final deviceRepo = ref.watch(deviceRepositoryProvider);
-  return deviceRepo.getUserCrates(userId);
+  final unitRepo = ref.watch(unitRepositoryProvider);
+  return unitRepo.getUserCrates(userId);
 });
 
 /// Provider for the count of user's devices.

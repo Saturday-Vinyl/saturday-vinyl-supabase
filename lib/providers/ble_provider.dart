@@ -24,6 +24,19 @@ class DeviceSetupState {
   /// User-defined name for the device (defaults to production unit name).
   final String? customDeviceName;
 
+  /// WiFi SSID used for provisioning (stored in provision_data).
+  final String? wifiSsid;
+
+  /// Thread dataset used for provisioning (stored in provision_data).
+  final String? threadDataset;
+
+  /// Hub ID used for crate provisioning (to track which hub provided Thread credentials).
+  final String? selectedHubId;
+
+  /// Specific error code from Response characteristic (more detailed than status).
+  /// Added in BLE Provisioning Protocol v1.2.0.
+  final BleErrorCode? errorCode;
+
   const DeviceSetupState({
     this.connectionState = BleConnectionState.disconnected,
     this.discoveredDevices = const [],
@@ -35,6 +48,10 @@ class DeviceSetupState {
     this.isScanning = false,
     this.hasScanCompleted = false,
     this.customDeviceName,
+    this.wifiSsid,
+    this.threadDataset,
+    this.selectedHubId,
+    this.errorCode,
   });
 
   DeviceSetupState copyWith({
@@ -48,6 +65,11 @@ class DeviceSetupState {
     bool? isScanning,
     bool? hasScanCompleted,
     String? customDeviceName,
+    String? wifiSsid,
+    String? threadDataset,
+    String? selectedHubId,
+    BleErrorCode? errorCode,
+    bool clearErrorCode = false,
   }) {
     return DeviceSetupState(
       connectionState: connectionState ?? this.connectionState,
@@ -60,6 +82,10 @@ class DeviceSetupState {
       isScanning: isScanning ?? this.isScanning,
       hasScanCompleted: hasScanCompleted ?? this.hasScanCompleted,
       customDeviceName: customDeviceName ?? this.customDeviceName,
+      wifiSsid: wifiSsid ?? this.wifiSsid,
+      threadDataset: threadDataset ?? this.threadDataset,
+      selectedHubId: selectedHubId ?? this.selectedHubId,
+      errorCode: clearErrorCode ? null : (errorCode ?? this.errorCode),
     );
   }
 
@@ -70,8 +96,8 @@ class DeviceSetupState {
     }
     if (deviceInfo != null) {
       return deviceInfo!.isHub
-          ? 'Saturday Hub ${deviceInfo!.unitId}'
-          : 'Saturday Crate ${deviceInfo!.unitId}';
+          ? 'Saturday Hub ${deviceInfo!.serialNumber}'
+          : 'Saturday Crate ${deviceInfo!.serialNumber}';
     }
     return 'Saturday Device';
   }
@@ -175,13 +201,24 @@ class DeviceSetupNotifier extends StateNotifier<DeviceSetupState> {
     });
 
     _responseSub = _bleService.responseStream.listen((response) {
-      // Handle Wi-Fi scan results
-      if (response['type'] == 'wifi_scan') {
+      final type = response['type'] as String?;
+
+      if (type == 'wifi_scan') {
+        // Handle Wi-Fi scan results
         final networks = (response['networks'] as List?)
                 ?.map((n) => WifiNetwork.fromJson(n as Map<String, dynamic>))
                 .toList() ??
             [];
         state = state.copyWith(wifiNetworks: networks);
+      } else if (type == 'error') {
+        // Handle error responses (BLE Protocol v1.2.0)
+        final code = response['code'] as String? ?? 'UNKNOWN';
+        final errorCode = BleErrorCode.fromCode(code);
+        debugPrint('[BLE Provider] Received error response: $code -> ${errorCode.userMessage}');
+        state = state.copyWith(
+          errorCode: errorCode,
+          errorMessage: errorCode.userMessage,
+        );
       }
     });
   }
@@ -250,8 +287,12 @@ class DeviceSetupNotifier extends StateNotifier<DeviceSetupState> {
 
   /// Select and connect to a discovered device.
   Future<void> selectDevice(DiscoveredDevice device) async {
+    // Stop scanning when user selects a device
+    await _bleService.stopScan();
+
     state = state.copyWith(
       selectedDevice: device,
+      isScanning: false,
       errorMessage: null,
     );
 
@@ -273,7 +314,8 @@ class DeviceSetupNotifier extends StateNotifier<DeviceSetupState> {
     required String ssid,
     required String password,
   }) async {
-    state = state.copyWith(errorMessage: null);
+    // Store the SSID in state for later use in provision_data
+    state = state.copyWith(errorMessage: null, wifiSsid: ssid);
 
     try {
       await _bleService.provisionWifi(ssid: ssid, password: password);
@@ -285,8 +327,16 @@ class DeviceSetupNotifier extends StateNotifier<DeviceSetupState> {
   }
 
   /// Provision with Thread credentials.
-  Future<void> provisionThread({required String threadDataset}) async {
-    state = state.copyWith(errorMessage: null);
+  Future<void> provisionThread({
+    required String threadDataset,
+    String? hubId,
+  }) async {
+    // Store the Thread dataset and hub ID in state for later use in provision_data
+    state = state.copyWith(
+      errorMessage: null,
+      threadDataset: threadDataset,
+      selectedHubId: hubId,
+    );
 
     try {
       await _bleService.provisionThread(threadDataset: threadDataset);
@@ -320,16 +370,56 @@ class DeviceSetupNotifier extends StateNotifier<DeviceSetupState> {
   }
 
   /// Retry the current operation.
+  ///
+  /// Smart retry behavior based on error type:
+  /// - AUTH_FAILED: Keep SSID, clear password (user needs to re-enter)
+  /// - NETWORK_NOT_FOUND: Keep all fields (user may want to edit SSID)
+  /// - Other errors: Keep all fields intact for retry
   Future<void> retry() async {
+    final previousErrorCode = state.errorCode;
+    debugPrint('[BLE Provider] Retry: starting (error was: $previousErrorCode)');
+
+    // Clear error state but preserve provisioning config for retry
+    // Also reset provisioningStatus to ready (hasError checks this)
+    state = state.copyWith(
+      errorMessage: null,
+      clearErrorCode: true,
+      provisioningStatus: BleProvisioningStatus.ready,
+      // Keep wifiSsid for all retry scenarios
+      // Password is in the UI controller, not state, so it persists
+    );
+
+    // If we're connected and have device info, send RESET command to device
+    // to reset its state machine back to READY, then return to configure step
+    if (state.deviceInfo != null && state.selectedDevice != null) {
+      debugPrint('[BLE Provider] Retry: sending RESET command to device');
+      try {
+        await _bleService.resetCredentials();
+        debugPrint('[BLE Provider] Retry: RESET sent, returning to configure step');
+      } catch (e) {
+        debugPrint('[BLE Provider] Retry: RESET failed ($e), reconnecting...');
+        // If RESET fails, try reconnecting
+        await selectDevice(state.selectedDevice!);
+      }
+      return;
+    }
+
+    // Otherwise, reconnect to the device
     if (state.selectedDevice != null) {
+      debugPrint('[BLE Provider] Retry: reconnecting to device');
       await selectDevice(state.selectedDevice!);
     } else {
+      debugPrint('[BLE Provider] Retry: starting scan');
       await startScan();
     }
   }
 
+  /// Check if the last error was an authentication error (wrong password).
+  bool get wasAuthError => state.errorCode?.isAuthError ?? false;
+
   /// Reset the setup flow.
   Future<void> reset() async {
+    await _bleService.stopScan();
     await _bleService.disconnect();
     state = const DeviceSetupState();
   }

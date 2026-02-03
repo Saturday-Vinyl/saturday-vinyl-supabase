@@ -56,30 +56,30 @@ serve(async (req) => {
   const payload = await req.json()
   const record = payload.record
 
-  // 1. Find the user(s) who should receive this notification
-  const { data: device } = await supabase
-    .from('consumer_devices')
-    .select('user_id, name')
-    .eq('id', record.device_id)
+  // 1. Find the unit and its owner
+  const { data: unit } = await supabase
+    .from('units')
+    .select('id, consumer_user_id, consumer_name')
+    .eq('id', record.unit_id)
     .single()
 
-  if (!device) return new Response(JSON.stringify({ skipped: true }))
+  if (!unit) return new Response(JSON.stringify({ skipped: true }))
 
   // 2. Get the user's push tokens
   const { data: tokens } = await supabase
     .from('push_notification_tokens')
     .select('*')
-    .eq('user_id', device.user_id)
+    .eq('user_id', unit.consumer_user_id)
     .eq('is_active', true)
 
   // 3. Send push notification via FCM
   for (const token of tokens || []) {
     await sendFirebasePush(token, {
-      title: `Alert: ${device.name}`,
+      title: `Alert: ${unit.consumer_name}`,
       body: record.message,
       data: {
         type: 'device_alert',  // <-- This identifies the notification type
-        device_id: record.device_id,
+        device_id: unit.id,    // unit.id is the app's device identifier
       }
     })
   }
@@ -275,82 +275,75 @@ The provider automatically syncs changes to the server.
 
 Device status notifications rely on heartbeat data to determine whether a device is online or offline. This section explains the architecture.
 
+### Unified Device Architecture
+
+The device management uses a unified architecture with the following tables:
+
+- **`units`** - Product units owned by consumers (serial_number, consumer_user_id, consumer_name)
+- **`devices`** - Hardware instances identified by MAC address (telemetry, last_seen_at)
+- **`device_heartbeats`** - Raw heartbeat data keyed by MAC address
+
 ### Heartbeat Data Flow
 
 ```
-Device → HTTP POST → Supabase device_heartbeats table
+Device → HTTP POST → device_heartbeats table (keyed by MAC)
                            ↓
               Postgres Trigger (on INSERT)
                            ↓
-              consumer_devices.last_seen_at updated
+              devices.last_seen_at + latest_telemetry updated
                            ↓
-              check-device-status cron job queries consumer_devices
+              check-device-status cron job queries devices table
                            ↓
               Push notification sent if device is stale/recovered
 ```
 
-### device_heartbeats Table
+### devices.latest_telemetry Format
 
-The `device_heartbeats` table stores raw heartbeat data from all Saturday devices:
+The telemetry format is **flattened** (not capability-scoped). Example from a live hub:
 
-```sql
-CREATE TABLE device_heartbeats (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    device_serial TEXT NOT NULL,      -- e.g., 'SV-HUB-00001'
-    device_type TEXT NOT NULL,        -- 'hub', 'crate'
-
-    -- Relay tracking (for Thread devices)
-    relay_type TEXT,                  -- 'hub', 'ios_app', 'android_app', NULL (direct)
-    relay_serial TEXT,                -- Serial of relay hub
-    relay_instance_id TEXT,           -- App instance ID if relayed via mobile
-
-    -- Device metrics
-    firmware_version TEXT,
-    battery_level INTEGER,
-    battery_charging BOOLEAN,
-    wifi_rssi INTEGER,
-    thread_rssi INTEGER,
-    uptime_sec INTEGER,
-    free_heap INTEGER,
-    events_queued INTEGER,
-
-    device_timestamp TIMESTAMPTZ NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+```json
+{
+  "unit_id": "SV-HUB-00001",
+  "device_type": "hub-prototype",
+  "battery_level": null,
+  "battery_charging": null,
+  "wifi_rssi": -66,
+  "thread_rssi": null,
+  "uptime_sec": 5522,
+  "free_heap": 57052,
+  "min_free_heap": 2692,
+  "largest_free_block": 31744
+}
 ```
 
-**Relay Tracking:** Non-WiFi devices (e.g., Thread-connected crates) send heartbeats through a relay:
-- Hub relay: `relay_type='hub'`, `relay_serial='SV-HUB-00001'`
-- Mobile app relay: `relay_type='ios_app'`, `relay_instance_id='abc123'`
-- Direct WiFi: `relay_type=NULL`
+### Automatic Sync to devices Table
 
-### Automatic Sync to consumer_devices
-
-A database trigger automatically updates `consumer_devices.last_seen_at` whenever a heartbeat is inserted:
+A database trigger automatically updates `devices.last_seen_at` and `devices.latest_telemetry` whenever a heartbeat is inserted:
 
 ```sql
-CREATE TRIGGER device_heartbeat_sync_consumer_device
+CREATE TRIGGER device_heartbeat_sync_device
 AFTER INSERT ON device_heartbeats
 FOR EACH ROW
-EXECUTE FUNCTION sync_heartbeat_to_consumer_device();
+EXECUTE FUNCTION sync_heartbeat_to_device();
 ```
 
 The trigger also:
-- Updates `battery_level` and `firmware_version` if present in the heartbeat
+- Updates `latest_telemetry` with the full flattened telemetry object
 - Sets `status='online'` if the device was marked offline
 
 ### Determining Device Presence
 
 **Server-side (Edge Functions):**
-The `check-device-status` function queries `consumer_devices.last_seen_at` directly:
+The `check-device-status` function queries `devices.last_seen_at` via JOIN:
 
 ```typescript
-// Find devices offline for 10+ minutes
-const { data: offlineDevices } = await supabase
-  .from('consumer_devices')
-  .select('id, user_id, name, device_type, ...')
-  .lt('last_seen_at', offlineThreshold)
-  .neq('status', 'offline')
+// Find claimed units with offline devices (no heartbeat for 10+ minutes)
+const { data: offlineUnits } = await supabase
+  .from('units')
+  .select('id, consumer_user_id, consumer_name, serial_number, status, devices!inner(last_seen_at, status, latest_telemetry)')
+  .not('consumer_user_id', 'is', null)
+  .lt('devices.last_seen_at', offlineThreshold)
+  .neq('devices.status', 'offline')
 ```
 
 **Client-side (Flutter):**
@@ -368,7 +361,7 @@ bool get isEffectivelyOnline {
 final onlineCount = devices.where((d) => d.isEffectivelyOnline).length;
 ```
 
-**Important:** Do not rely on `consumer_devices.status` alone. This field can become stale. Always use `isEffectivelyOnline` in the Flutter app or check `last_seen_at` directly in Edge Functions.
+**Important:** Do not rely on `status` fields alone. These can become stale. Always use `isEffectivelyOnline` in the Flutter app or check `last_seen_at` directly in Edge Functions.
 
 ## Scheduled Edge Functions (pg_cron Setup)
 

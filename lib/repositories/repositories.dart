@@ -9,4 +9,5 @@ export 'invitation_repository.dart';
 export 'library_repository.dart';
 export 'listening_history_repository.dart';
 export 'tag_repository.dart';
+export 'unit_repository.dart';
 export 'user_repository.dart';

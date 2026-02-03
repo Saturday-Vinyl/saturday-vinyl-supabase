@@ -44,6 +44,38 @@ class SaturdayBleUuids {
   static const int serviceShort = 0x5356;
 }
 
+/// Error codes from the Response characteristic (JSON).
+///
+/// These provide more specific error information than Status byte alone.
+/// Added in BLE Provisioning Protocol v1.2.0.
+enum BleErrorCode {
+  authFailed('AUTH_FAILED', 'Incorrect password. Please check and try again.'),
+  networkNotFound(
+      'NETWORK_NOT_FOUND',
+      'Network not found. Make sure the network name is correct and you\'re in range.'),
+  timeout('TIMEOUT', 'Connection timed out. Make sure you\'re near your router.'),
+  wifiFailed('WIFI_FAILED', 'Could not connect to Wi-Fi. Please try again.'),
+  storageFailed('STORAGE_ERROR', 'Failed to store credentials. Please try again.'),
+  unknown('UNKNOWN', 'An unexpected error occurred.');
+
+  final String code;
+  final String userMessage;
+  const BleErrorCode(this.code, this.userMessage);
+
+  static BleErrorCode fromCode(String code) {
+    return BleErrorCode.values.firstWhere(
+      (e) => e.code == code,
+      orElse: () => BleErrorCode.unknown,
+    );
+  }
+
+  /// Whether this error is related to authentication (wrong password).
+  bool get isAuthError => this == BleErrorCode.authFailed;
+
+  /// Whether this error is related to network discovery.
+  bool get isNetworkError => this == BleErrorCode.networkNotFound;
+}
+
 /// Status codes from the device.
 enum BleProvisioningStatus {
   idle(0x00),
@@ -121,9 +153,20 @@ enum BleCommand {
 }
 
 /// Device information from the Device Info characteristic.
+///
+/// Supports both BLE protocol v1.0 (unit_id) and v1.1+ (serial_number, mac_address).
 class BleDeviceInfo {
   final String deviceType;
-  final String unitId;
+
+  /// Device serial number (e.g., SV-HUB-000001).
+  ///
+  /// In protocol v1.0 this was called `unit_id`, in v1.1+ it's `serial_number`.
+  /// The getter [serialNumber] provides access to this field.
+  final String serialNumber;
+
+  /// MAC address of the device hardware (added in protocol v1.1).
+  final String? macAddress;
+
   final String firmwareVersion;
   final String protocolVersion;
   final List<String> capabilities;
@@ -133,7 +176,8 @@ class BleDeviceInfo {
 
   const BleDeviceInfo({
     required this.deviceType,
-    required this.unitId,
+    required this.serialNumber,
+    this.macAddress,
     required this.firmwareVersion,
     required this.protocolVersion,
     required this.capabilities,
@@ -143,9 +187,15 @@ class BleDeviceInfo {
   });
 
   factory BleDeviceInfo.fromJson(Map<String, dynamic> json) {
+    // Support both v1.0 (unit_id) and v1.1+ (serial_number) field names
+    final serialNumber = json['serial_number'] as String? ??
+        json['unit_id'] as String? ??
+        '';
+
     return BleDeviceInfo(
       deviceType: json['device_type'] as String? ?? 'unknown',
-      unitId: json['unit_id'] as String? ?? '',
+      serialNumber: serialNumber,
+      macAddress: json['mac_address'] as String?,
       firmwareVersion: json['firmware_version'] as String? ?? '0.0.0',
       protocolVersion: json['protocol_version'] as String? ?? '1.0',
       capabilities: (json['capabilities'] as List<dynamic>?)
@@ -157,6 +207,12 @@ class BleDeviceInfo {
       hasThread: json['has_thread'] as bool? ?? false,
     );
   }
+
+  /// Legacy getter for backwards compatibility.
+  ///
+  /// Prefer using [serialNumber] for new code.
+  @Deprecated('Use serialNumber instead')
+  String get unitId => serialNumber;
 
   bool get isHub => deviceType == 'hub';
   bool get isCrate => deviceType == 'crate';
