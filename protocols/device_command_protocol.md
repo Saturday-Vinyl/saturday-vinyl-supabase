@@ -474,7 +474,40 @@ All devices must include these fields in every heartbeat, regardless of capabili
 | `min_free_heap` | integer | Minimum free heap since boot (detects memory leaks) | `esp_get_minimum_free_heap_size()` |
 | `largest_free_block` | integer | Largest contiguous free block in bytes (detects fragmentation) | `heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)` |
 
-Additional capability-specific fields (e.g., `wifi_rssi`, `rfid_tag_count`) are added based on device capabilities.
+Additional capability-specific fields are added based on device capabilities. Field names should be descriptive and avoid conflicts with standard fields.
+
+### Known Device-Specific Heartbeat Fields
+
+Devices may include the following capability-specific fields in their heartbeats. Not all fields apply to all devices — include only what the hardware supports.
+
+#### Power / Battery
+
+| Field | Type | Description | Source |
+|-------|------|-------------|--------|
+| `battery_level` | integer | Battery state of charge (0-100%) | Fuel gauge IC (e.g., BQ27441) |
+| `battery_charging` | boolean | Whether the battery is currently charging | Fuel gauge current direction |
+
+#### Environmental Sensors
+
+| Field | Type | Description | Source |
+|-------|------|-------------|--------|
+| `temperature_c` | float | Ambient temperature in Celsius | SHT40 or equivalent |
+| `humidity_pct` | float | Relative humidity percentage | SHT40 or equivalent |
+
+#### Connectivity
+
+| Field | Type | Description | Source |
+|-------|------|-------------|--------|
+| `wifi_rssi` | integer | WiFi signal strength in dBm | WiFi driver |
+| `thread_rloc16` | string | Thread routing locator (mesh address) | Thread stack |
+
+#### Application-Specific
+
+| Field | Type | Description | Source |
+|-------|------|-------------|--------|
+| `rfid_tag_count` | integer | Number of RFID tags currently detected | RFID reader |
+
+> **Adding new fields:** When introducing new device-specific heartbeat fields, add them to the appropriate category above and follow the naming convention: `capability_metric` (e.g., `battery_level`, `temperature_c`). Use SI units where applicable and include the unit in the field name suffix (`_c`, `_pct`, `_mv`, `_ma`).
 
 ### Heartbeat Frequency
 
