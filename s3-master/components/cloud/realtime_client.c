@@ -12,12 +12,15 @@
 #include "supabase_client.h"
 #include "ota_manager.h"
 #include "crate_ota.h"
+#include "app_config.h"
+#include "wifi_manager.h"
 #include "esp_log.h"
 #include "esp_event.h"
 #include "esp_timer.h"
 #include "esp_websocket_client.h"
 #include "esp_crt_bundle.h"
 #include "esp_mac.h"
+#include "esp_heap_caps.h"
 #include "cJSON.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -58,6 +61,10 @@ ESP_EVENT_DEFINE_BASE(REALTIME_EVENTS);
 #define EVENT_UPDATE_AVAILABLE      "update_available"
 #define EVENT_COMMAND               "command"
 #define EVENT_CONFIG_UPDATE         "config_update"
+
+/* Command acknowledgement heartbeat buffer size
+ * Must fit all standard heartbeat fields plus command-specific fields */
+#define MAX_CMD_HEARTBEAT_SIZE      1024
 
 /*******************************************************************************
  * Module State
@@ -116,6 +123,10 @@ static void send_phoenix_heartbeat(void *arg);
 static void reconnect_timer_callback(void *arg);
 static esp_err_t build_websocket_url(char *url, size_t max_len);
 static void get_mac_address_dashed(char *mac_str, size_t len);
+static void get_mac_address_colon(char *mac_str, size_t len);
+static esp_err_t send_command_ack_heartbeat(const char *command_id);
+static esp_err_t send_command_result_heartbeat(const char *command_id, bool success,
+                                                const cJSON *result, const char *error_message);
 
 /*******************************************************************************
  * MAC Address Helper
@@ -136,6 +147,225 @@ static void get_mac_address_dashed(char *mac_str, size_t len)
     } else {
         strncpy(mac_str, "00-00-00-00-00-00", len);
     }
+}
+
+/**
+ * @brief Get MAC address formatted with colons for heartbeat payloads
+ *
+ * Per Device Command Protocol v1.2.4, heartbeats use mac_address with colons
+ * (e.g., "AA:BB:CC:DD:EE:FF") as the primary device identifier.
+ */
+static void get_mac_address_colon(char *mac_str, size_t len)
+{
+    uint8_t mac[6];
+    if (esp_read_mac(mac, ESP_MAC_WIFI_STA) == ESP_OK && len >= 18) {
+        snprintf(mac_str, len, "%02X:%02X:%02X:%02X:%02X:%02X",
+                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    } else {
+        strncpy(mac_str, "00:00:00:00:00:00", len);
+    }
+}
+
+/*******************************************************************************
+ * Command Acknowledgement Protocol (v1.2.4)
+ *
+ * Per Device Command Protocol v1.2.4, command acknowledgements are sent as
+ * heartbeats to the device_heartbeats table with special type fields:
+ * - type: "command_ack" - Immediately on command receipt
+ * - type: "command_result" - After command execution completes
+ *
+ * A database trigger automatically updates device_commands.status based on
+ * these heartbeat types.
+ ******************************************************************************/
+
+/**
+ * @brief Build standard heartbeat fields into a cJSON object
+ *
+ * Adds all required fields per Device Command Protocol v1.2.4:
+ * - mac_address, unit_id, device_type, firmware_version
+ * - uptime_sec, free_heap, min_free_heap, largest_free_block
+ * - wifi_rssi (capability field)
+ */
+static void build_standard_heartbeat_fields(cJSON *heartbeat)
+{
+    /* MAC address as primary identifier */
+    char mac_str[18];
+    get_mac_address_colon(mac_str, sizeof(mac_str));
+    cJSON_AddStringToObject(heartbeat, "mac_address", mac_str);
+
+    /* Unit ID (serial number) from Supabase config */
+    char unit_id[SUPABASE_UNIT_ID_MAX_LEN] = "";
+    supabase_get_unit_id(unit_id, sizeof(unit_id));
+    cJSON_AddStringToObject(heartbeat, "unit_id", unit_id);
+
+    /* Device type and firmware version from compile-time constants */
+    cJSON_AddStringToObject(heartbeat, "device_type", DEVICE_TYPE);
+    cJSON_AddStringToObject(heartbeat, "firmware_version", FW_VERSION_STRING);
+
+    /* System metrics */
+    uint32_t uptime_sec = (uint32_t)(esp_timer_get_time() / 1000000);
+    uint32_t free_heap = (uint32_t)esp_get_free_heap_size();
+    uint32_t min_free_heap = (uint32_t)esp_get_minimum_free_heap_size();
+    uint32_t largest_free_block = (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+
+    cJSON_AddNumberToObject(heartbeat, "uptime_sec", uptime_sec);
+    cJSON_AddNumberToObject(heartbeat, "free_heap", free_heap);
+    cJSON_AddNumberToObject(heartbeat, "min_free_heap", min_free_heap);
+    cJSON_AddNumberToObject(heartbeat, "largest_free_block", largest_free_block);
+
+    /* WiFi capability heartbeat field */
+    int8_t wifi_rssi = 0;
+    wifi_manager_status_t wifi_status;
+    if (wifi_get_status(&wifi_status) == ESP_OK) {
+        wifi_rssi = wifi_status.rssi;
+    }
+    cJSON_AddNumberToObject(heartbeat, "wifi_rssi", wifi_rssi);
+}
+
+/**
+ * @brief Send command acknowledgement heartbeat
+ *
+ * Per Device Command Protocol v1.2.4, devices must immediately send a
+ * command_ack heartbeat when they receive a command via WebSocket.
+ * This heartbeat includes all standard fields plus:
+ * - type: "command_ack"
+ * - command_id: UUID of the received command
+ *
+ * @param command_id UUID of the command being acknowledged
+ * @return ESP_OK on success, error code otherwise
+ */
+static esp_err_t send_command_ack_heartbeat(const char *command_id)
+{
+    if (command_id == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    ESP_LOGI(TAG, "Sending command_ack heartbeat for %s", command_id);
+
+    cJSON *heartbeat = cJSON_CreateObject();
+    if (heartbeat == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
+
+    /* Add all standard heartbeat fields */
+    build_standard_heartbeat_fields(heartbeat);
+
+    /* Add command acknowledgement fields */
+    cJSON_AddStringToObject(heartbeat, "type", "command_ack");
+    cJSON_AddStringToObject(heartbeat, "command_id", command_id);
+
+    char *json_str = cJSON_PrintUnformatted(heartbeat);
+    cJSON_Delete(heartbeat);
+
+    if (json_str == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
+
+    ESP_LOGD(TAG, "command_ack payload: %s", json_str);
+
+    supabase_response_t response;
+    esp_err_t err = supabase_post("device_heartbeats", json_str, &response, 10000);
+    free(json_str);
+
+    if (err == ESP_OK && response.status_code >= 200 && response.status_code < 300) {
+        ESP_LOGI(TAG, "command_ack heartbeat sent successfully");
+        supabase_response_free(&response);
+        return ESP_OK;
+    }
+
+    if (err == ESP_OK) {
+        ESP_LOGW(TAG, "command_ack POST failed with status %d", response.status_code);
+        err = ESP_FAIL;
+    } else {
+        ESP_LOGW(TAG, "command_ack POST failed: %s", esp_err_to_name(err));
+    }
+    supabase_response_free(&response);
+    return err;
+}
+
+/**
+ * @brief Send command result heartbeat
+ *
+ * Per Device Command Protocol v1.2.4, devices must send a command_result
+ * heartbeat after command execution completes. This heartbeat includes
+ * all standard fields plus:
+ * - type: "command_result"
+ * - command_id: UUID of the command
+ * - heartbeat_data: Object containing:
+ *   - status: "completed" or "failed"
+ *   - result: Command result data (for successful commands)
+ *   - error_message: Error description (for failed commands)
+ *
+ * @param command_id UUID of the command
+ * @param success true if command completed successfully
+ * @param result Optional result data (cJSON object, only for success)
+ * @param error_message Optional error message (only for failure)
+ * @return ESP_OK on success, error code otherwise
+ */
+static esp_err_t send_command_result_heartbeat(const char *command_id, bool success,
+                                                const cJSON *result, const char *error_message)
+{
+    if (command_id == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    ESP_LOGI(TAG, "Sending command_result heartbeat for %s: %s",
+             command_id, success ? "completed" : "failed");
+
+    cJSON *heartbeat = cJSON_CreateObject();
+    if (heartbeat == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
+
+    /* Add all standard heartbeat fields */
+    build_standard_heartbeat_fields(heartbeat);
+
+    /* Add command result fields */
+    cJSON_AddStringToObject(heartbeat, "type", "command_result");
+    cJSON_AddStringToObject(heartbeat, "command_id", command_id);
+
+    /* Build heartbeat_data object */
+    cJSON *heartbeat_data = cJSON_AddObjectToObject(heartbeat, "heartbeat_data");
+    cJSON_AddStringToObject(heartbeat_data, "status", success ? "completed" : "failed");
+
+    if (success && result != NULL) {
+        cJSON *result_copy = cJSON_Duplicate(result, true);
+        if (result_copy != NULL) {
+            cJSON_AddItemToObject(heartbeat_data, "result", result_copy);
+        }
+    }
+
+    if (!success && error_message != NULL) {
+        cJSON_AddStringToObject(heartbeat_data, "error_message", error_message);
+    }
+
+    char *json_str = cJSON_PrintUnformatted(heartbeat);
+    cJSON_Delete(heartbeat);
+
+    if (json_str == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
+
+    ESP_LOGD(TAG, "command_result payload: %s", json_str);
+
+    supabase_response_t response;
+    esp_err_t err = supabase_post("device_heartbeats", json_str, &response, 10000);
+    free(json_str);
+
+    if (err == ESP_OK && response.status_code >= 200 && response.status_code < 300) {
+        ESP_LOGI(TAG, "command_result heartbeat sent successfully");
+        supabase_response_free(&response);
+        return ESP_OK;
+    }
+
+    if (err == ESP_OK) {
+        ESP_LOGW(TAG, "command_result POST failed with status %d", response.status_code);
+        err = ESP_FAIL;
+    } else {
+        ESP_LOGW(TAG, "command_result POST failed: %s", esp_err_to_name(err));
+    }
+    supabase_response_free(&response);
+    return err;
 }
 
 /*******************************************************************************
@@ -445,45 +675,34 @@ esp_err_t realtime_client_ack_command(const char *command_id, const char *status
         return ESP_ERR_INVALID_ARG;
     }
 
-    ESP_LOGI(TAG, "ACK command %s: status=%s", command_id, status);
-
-    /* Build JSON body */
-    cJSON *body = cJSON_CreateObject();
-    if (body == NULL) {
-        return ESP_ERR_NO_MEM;
-    }
-
-    cJSON_AddStringToObject(body, "status", status);
-
-    if (result_json != NULL) {
-        cJSON *result = cJSON_Parse(result_json);
-        if (result != NULL) {
-            cJSON_AddItemToObject(body, "result", result);
+    /*
+     * Per Device Command Protocol v1.2.4, command acknowledgements are sent as
+     * heartbeats to device_heartbeats table (not PATCH to device_commands).
+     *
+     * Status mapping:
+     * - "acknowledged" -> Send command_ack heartbeat
+     * - "completed"    -> Send command_result heartbeat with success
+     * - "failed"       -> Send command_result heartbeat with failure
+     */
+    if (strcmp(status, "acknowledged") == 0) {
+        return send_command_ack_heartbeat(command_id);
+    } else if (strcmp(status, "completed") == 0) {
+        cJSON *result = NULL;
+        if (result_json != NULL) {
+            result = cJSON_Parse(result_json);
         }
-    }
-
-    char *json_str = cJSON_PrintUnformatted(body);
-    cJSON_Delete(body);
-
-    if (json_str == NULL) {
-        return ESP_ERR_NO_MEM;
-    }
-
-    char table[128];
-    snprintf(table, sizeof(table), "device_commands?id=eq.%s", command_id);
-
-    supabase_response_t response;
-    esp_err_t err = supabase_post(table, json_str, &response, 10000);
-    free(json_str);
-
-    if (err == ESP_OK && response.status_code >= 200 && response.status_code < 300) {
-        ESP_LOGI(TAG, "Command ACK sent successfully");
+        esp_err_t err = send_command_result_heartbeat(command_id, true, result, NULL);
+        if (result != NULL) {
+            cJSON_Delete(result);
+        }
+        return err;
+    } else if (strcmp(status, "failed") == 0) {
+        /* For failed status, result_json is treated as error message */
+        return send_command_result_heartbeat(command_id, false, NULL, result_json);
     } else {
-        ESP_LOGW(TAG, "Failed to send command ACK: %d", response.status_code);
+        ESP_LOGW(TAG, "Unknown ack status: %s", status);
+        return ESP_ERR_INVALID_ARG;
     }
-
-    supabase_response_free(&response);
-    return err;
 }
 
 /*******************************************************************************
@@ -1103,9 +1322,25 @@ static void handle_update_available(const cJSON *payload, const char *request_id
     }
 }
 
+/**
+ * @brief Handle a device command received via WebSocket
+ *
+ * Per Device Command Protocol v1.2.4, the command flow is:
+ * 1. Device receives command via WebSocket (device:{mac_address} channel)
+ * 2. Device immediately sends command_ack heartbeat
+ * 3. Device executes command
+ * 4. Device sends command_result heartbeat with outcome
+ *
+ * Known commands (handled internally):
+ * - reboot: Restarts the device
+ * - check_update: Triggers OTA update check
+ * - get_status: Returns device status (TODO)
+ *
+ * Unknown commands are posted to the event loop for application handling.
+ */
 static void handle_command(const cJSON *payload)
 {
-    ESP_LOGI(TAG, "Command received");
+    ESP_LOGI(TAG, "Command received via WebSocket");
 
     xSemaphoreTake(s_rt.mutex, portMAX_DELAY);
     s_rt.stats.commands_received++;
@@ -1133,31 +1368,83 @@ static void handle_command(const cJSON *payload)
 
     ESP_LOGI(TAG, "Command: %s (id=%s)", event.command, event.command_id);
 
-    /* Post event to event loop */
+    /* Post event to event loop for any listeners */
     esp_event_post(REALTIME_EVENTS, REALTIME_EVENT_COMMAND,
                    &event, sizeof(event), pdMS_TO_TICKS(100));
 
-    /* Acknowledge receipt */
+    /*
+     * Step 1: Immediately send command_ack heartbeat (per protocol v1.2.4)
+     * This acknowledges receipt before we start executing.
+     */
     if (event.command_id[0] != '\0') {
-        realtime_client_ack_command(event.command_id, "acknowledged", NULL);
+        send_command_ack_heartbeat(event.command_id);
     }
 
-    /* Handle known commands */
+    /*
+     * Step 2: Execute command and send command_result heartbeat
+     * Built-in commands are handled here; unknown commands rely on
+     * application event handlers to call realtime_client_ack_command().
+     */
     if (strcmp(event.command, "reboot") == 0) {
         ESP_LOGW(TAG, "Reboot command received - rebooting in 2 seconds");
+
+        /* Build result data */
+        cJSON *result = cJSON_CreateObject();
+        cJSON_AddStringToObject(result, "action", "reboot_scheduled");
+        cJSON_AddNumberToObject(result, "delay_ms", 2000);
+
         if (event.command_id[0] != '\0') {
-            realtime_client_ack_command(event.command_id, "completed", NULL);
+            send_command_result_heartbeat(event.command_id, true, result, NULL);
         }
+        cJSON_Delete(result);
+
         vTaskDelay(pdMS_TO_TICKS(2000));
         esp_restart();
+
     } else if (strcmp(event.command, "check_update") == 0) {
         ESP_LOGI(TAG, "Check update command received");
+
+        /* Trigger OTA check - this runs asynchronously */
         ota_manager_check_update(NULL);
+
+        /* Build result data */
+        cJSON *result = cJSON_CreateObject();
+        cJSON_AddStringToObject(result, "action", "update_check_started");
+
         if (event.command_id[0] != '\0') {
-            realtime_client_ack_command(event.command_id, "completed", NULL);
+            send_command_result_heartbeat(event.command_id, true, result, NULL);
         }
+        cJSON_Delete(result);
+
+    } else if (strcmp(event.command, "get_status") == 0) {
+        ESP_LOGI(TAG, "Get status command received");
+
+        /* Build status result */
+        cJSON *result = cJSON_CreateObject();
+        cJSON_AddStringToObject(result, "device_type", DEVICE_TYPE);
+        cJSON_AddStringToObject(result, "firmware_version", FW_VERSION_STRING);
+
+        char mac_str[18];
+        get_mac_address_colon(mac_str, sizeof(mac_str));
+        cJSON_AddStringToObject(result, "mac_address", mac_str);
+
+        uint32_t uptime_sec = (uint32_t)(esp_timer_get_time() / 1000000);
+        cJSON_AddNumberToObject(result, "uptime_sec", uptime_sec);
+        cJSON_AddNumberToObject(result, "free_heap", esp_get_free_heap_size());
+
+        if (event.command_id[0] != '\0') {
+            send_command_result_heartbeat(event.command_id, true, result, NULL);
+        }
+        cJSON_Delete(result);
+
+    } else {
+        /*
+         * Unknown command - posted to event loop above.
+         * Application handlers should call realtime_client_ack_command()
+         * with "completed" or "failed" status when done.
+         */
+        ESP_LOGD(TAG, "Unknown command '%s' - delegated to event handlers", event.command);
     }
-    /* Other commands are handled by application via event loop */
 }
 
 static void handle_config_update(const cJSON *payload)
