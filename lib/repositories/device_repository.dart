@@ -67,7 +67,7 @@ class DeviceRepository {
     String? firmwareId,
     DateTime? factoryProvisionedAt,
     String? factoryProvisionedBy,
-    Map<String, dynamic>? factoryAttributes,
+    Map<String, dynamic>? provisionData,
     String? status,
   }) async {
     try {
@@ -87,7 +87,7 @@ class DeviceRepository {
           'factory_provisioned_at': factoryProvisionedAt.toIso8601String(),
         if (factoryProvisionedBy != null)
           'factory_provisioned_by': factoryProvisionedBy,
-        if (factoryAttributes != null) 'factory_attributes': factoryAttributes,
+        if (provisionData != null) 'provision_data': provisionData,
         if (status != null) 'status': status,
       };
 
@@ -253,7 +253,7 @@ class DeviceRepository {
   Future<Device> markFactoryProvisioned({
     required String deviceId,
     required String userId,
-    Map<String, dynamic>? factoryAttributes,
+    Map<String, dynamic>? provisionData,
   }) async {
     try {
       AppLogger.info('Marking device as factory provisioned: $deviceId');
@@ -262,7 +262,7 @@ class DeviceRepository {
         'status': DeviceStatus.provisioned.databaseValue,
         'factory_provisioned_at': DateTime.now().toIso8601String(),
         'factory_provisioned_by': userId,
-        if (factoryAttributes != null) 'factory_attributes': factoryAttributes,
+        if (provisionData != null) 'provision_data': provisionData,
       };
 
       final response = await _supabase
@@ -282,27 +282,66 @@ class DeviceRepository {
     }
   }
 
-  /// Update factory attributes for a device
-  Future<Device> updateFactoryAttributes({
+  /// Update provision data for a device (full replace)
+  Future<Device> updateProvisionData({
     required String deviceId,
-    required Map<String, dynamic> attributes,
+    required Map<String, dynamic> provisionData,
   }) async {
     try {
-      AppLogger.info('Updating factory attributes for device: $deviceId');
+      AppLogger.info('Updating provision data for device: $deviceId');
 
       final response = await _supabase
           .from('devices')
-          .update({'factory_attributes': attributes})
+          .update({'provision_data': provisionData})
           .eq('id', deviceId)
           .select()
           .single();
 
       final device = Device.fromJson(response);
-      AppLogger.info('Factory attributes updated');
+      AppLogger.info('Provision data updated');
       return device;
     } catch (error, stackTrace) {
       AppLogger.error(
-          'Failed to update factory attributes', error, stackTrace);
+          'Failed to update provision data', error, stackTrace);
+      rethrow;
+    }
+  }
+
+  /// Merge new keys into existing provision data (read-merge-write)
+  Future<Device> mergeProvisionData({
+    required String deviceId,
+    required Map<String, dynamic> newData,
+  }) async {
+    try {
+      AppLogger.info('Merging provision data for device: $deviceId');
+
+      // Read current provision data
+      final current = await _supabase
+          .from('devices')
+          .select('provision_data')
+          .eq('id', deviceId)
+          .single();
+
+      final existing = current['provision_data'] != null
+          ? Map<String, dynamic>.from(current['provision_data'] as Map)
+          : <String, dynamic>{};
+
+      // Merge new data on top of existing
+      final merged = {...existing, ...newData};
+
+      final response = await _supabase
+          .from('devices')
+          .update({'provision_data': merged})
+          .eq('id', deviceId)
+          .select()
+          .single();
+
+      final device = Device.fromJson(response);
+      AppLogger.info('Provision data merged');
+      return device;
+    } catch (error, stackTrace) {
+      AppLogger.error(
+          'Failed to merge provision data', error, stackTrace);
       rethrow;
     }
   }

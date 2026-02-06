@@ -7,7 +7,9 @@ import 'package:saturday_app/models/device_communication_state.dart';
 import 'package:saturday_app/models/unit.dart';
 import 'package:saturday_app/models/usb_monitor_state.dart';
 import 'package:saturday_app/providers/auth_provider.dart';
+import 'package:saturday_app/providers/capability_provider.dart';
 import 'package:saturday_app/providers/device_provider.dart';
+import 'package:saturday_app/providers/device_type_provider.dart';
 import 'package:saturday_app/providers/unit_provider.dart';
 import 'package:saturday_app/services/device_communication_service.dart';
 import 'package:saturday_app/services/usb_monitor_service.dart';
@@ -296,34 +298,9 @@ class DeviceCommunicationNotifier
   Future<void> _lookupUnit(String serialNumber) async {
     try {
       final unitRepository = _ref.read(unitRepositoryProvider);
-      final foundUnit = await unitRepository.getUnitBySerialNumber(serialNumber);
+      final unit = await unitRepository.getUnitBySerialNumber(serialNumber);
 
-      if (foundUnit != null) {
-        var unit = foundUnit;
-
-        // Check if database status is out of sync with device
-        // Device has a serial number, so it's provisioned - but database might say 'unprovisioned'
-        if (unit.status == UnitStatus.unprovisioned) {
-          _addLog('[INFO] Device is provisioned but database shows unprovisioned - syncing status...');
-
-          try {
-            // Get current user to record who triggered the sync
-            final currentUser = await _ref.read(currentUserProvider.future);
-            final userId = currentUser?.id ?? 'system';
-
-            // Update unit status to match device reality
-            final unitManagement = _ref.read(unitManagementProvider);
-            unit = await unitManagement.markFactoryProvisioned(
-              unitId: unit.id,
-              userId: userId,
-            );
-            _addLog('[INFO] Database status synced to factory_provisioned');
-          } catch (e) {
-            _addLog('[WARN] Could not sync status to database: $e');
-            // Continue with the original unit data
-          }
-        }
-
+      if (unit != null) {
         state = state.copyWith(associatedUnit: unit, unitNotFoundInDb: false);
         _addLog('[INFO] Found unit: ${unit.displayName} (status: ${unit.status.name})');
       } else {
@@ -416,6 +393,44 @@ class DeviceCommunicationNotifier
         // Refresh status to get updated device info
         await refreshStatus();
 
+        // Validate response data against expected factory_output schema
+        // This MUST pass before we consider provisioning successful
+        final validationResult = await _validateFactoryOutput(
+          deviceTypeSlug: state.connectedDevice!.deviceType,
+          responseData: response.data,
+        );
+
+        if (!validationResult.isValid) {
+          _addLog('[ERROR] Factory output validation failed');
+          for (final field in validationResult.missingRequired) {
+            _addLog('[ERROR] Missing required field: $field');
+          }
+          for (final field in validationResult.missingOptional) {
+            _addLog('[WARN] Missing optional field: $field');
+          }
+
+          state = state.copyWith(
+            phase: DeviceCommunicationPhase.error,
+            errorMessage:
+                'Device response missing required fields: ${validationResult.missingRequired.join(', ')}',
+            clearCurrentCommand: true,
+          );
+          return false;
+        }
+
+        _addLog('[INFO] Factory output validated: all required fields present');
+        if (validationResult.missingOptional.isNotEmpty) {
+          _addLog(
+              '[WARN] Missing optional fields: ${validationResult.missingOptional.join(', ')}');
+        }
+
+        // Build provision data from device response ONLY (not input params)
+        // The firmware JSON schema defines what the device returns in factory_output
+        final provisionData = Map<String, dynamic>.from(response.data);
+        // Remove serial_number and name - tracked in units table, not provision_data
+        provisionData.remove('serial_number');
+        provisionData.remove('name');
+
         // Create or update device record in database
         try {
           final deviceManagement = _ref.read(deviceManagementProvider);
@@ -428,9 +443,11 @@ class DeviceCommunicationNotifier
             firmwareVersion: state.connectedDevice!.firmwareVersion,
             factoryProvisionedAt: DateTime.now(),
             factoryProvisionedBy: currentUser?.id,
+            provisionData: provisionData,
             status: 'factory_provisioned',
           );
           _addLog('[INFO] Device record created/updated in database');
+          _addLog('[INFO] Provision data stored: ${provisionData.keys.join(', ')}');
         } catch (e) {
           _addLog('[WARN] Failed to create device record: $e');
           // Don't fail provisioning - device record is for tracking
@@ -459,6 +476,64 @@ class DeviceCommunicationNotifier
         clearCurrentCommand: true,
       );
       return false;
+    }
+  }
+
+  /// Validate factory_provision response data against expected factory_output schemas.
+  ///
+  /// Looks up the device type's capabilities and checks that all expected
+  /// properties from factory_output schemas are present in the response.
+  /// Returns a validation result indicating success/failure and any missing fields.
+  Future<_FactoryOutputValidationResult> _validateFactoryOutput({
+    required String deviceTypeSlug,
+    required Map<String, dynamic> responseData,
+  }) async {
+    try {
+      // Look up device type to get its ID
+      final capabilityRepo = _ref.read(capabilityRepositoryProvider);
+      final deviceTypeRepo = _ref.read(deviceTypeRepositoryProvider);
+
+      final deviceType = await deviceTypeRepo.getBySlug(deviceTypeSlug);
+      final capabilities =
+          await capabilityRepo.getCapabilitiesForDeviceType(deviceType.id);
+
+      final missingRequired = <String>[];
+      final missingOptional = <String>[];
+
+      for (final cap in capabilities) {
+        if (!cap.hasFactoryOutput) continue;
+
+        final schema = cap.factoryOutputSchema;
+        final properties = schema['properties'] as Map<String, dynamic>?;
+        if (properties == null) continue;
+
+        final requiredFields =
+            (schema['required'] as List?)?.cast<String>() ?? [];
+
+        for (final key in properties.keys) {
+          if (!responseData.containsKey(key)) {
+            if (requiredFields.contains(key)) {
+              missingRequired.add('${cap.name}.$key');
+            } else {
+              missingOptional.add('${cap.name}.$key');
+            }
+          }
+        }
+      }
+
+      return _FactoryOutputValidationResult(
+        missingRequired: missingRequired,
+        missingOptional: missingOptional,
+      );
+    } catch (e) {
+      _addLog('[WARN] Could not validate factory output schema: $e');
+      // If validation fails due to lookup error, allow provisioning to continue
+      // but log the issue - we don't want to block provisioning if the admin
+      // app's capability config is incomplete
+      return const _FactoryOutputValidationResult(
+        missingRequired: [],
+        missingOptional: [],
+      );
     }
   }
 
@@ -604,6 +679,24 @@ class DeviceCommunicationNotifier
     _service.disconnect();
     super.dispose();
   }
+}
+
+// ============================================
+// Validation Result Types
+// ============================================
+
+/// Result of validating factory_provision response against expected schemas
+class _FactoryOutputValidationResult {
+  final List<String> missingRequired;
+  final List<String> missingOptional;
+
+  const _FactoryOutputValidationResult({
+    required this.missingRequired,
+    required this.missingOptional,
+  });
+
+  /// Validation passes if no required fields are missing
+  bool get isValid => missingRequired.isEmpty;
 }
 
 // ============================================

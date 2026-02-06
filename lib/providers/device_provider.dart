@@ -104,7 +104,7 @@ class DeviceManagement {
     String? firmwareId,
     DateTime? factoryProvisionedAt,
     String? factoryProvisionedBy,
-    Map<String, dynamic>? factoryAttributes,
+    Map<String, dynamic>? provisionData,
     String? status,
   }) async {
     final repository = ref.read(deviceRepositoryProvider);
@@ -116,7 +116,7 @@ class DeviceManagement {
       firmwareId: firmwareId,
       factoryProvisionedAt: factoryProvisionedAt,
       factoryProvisionedBy: factoryProvisionedBy,
-      factoryAttributes: factoryAttributes,
+      provisionData: provisionData,
       status: status,
     );
 
@@ -134,13 +134,13 @@ class DeviceManagement {
   Future<Device> markFactoryProvisioned({
     required String deviceId,
     required String userId,
-    Map<String, dynamic>? factoryAttributes,
+    Map<String, dynamic>? provisionData,
   }) async {
     final repository = ref.read(deviceRepositoryProvider);
     final device = await repository.markFactoryProvisioned(
       deviceId: deviceId,
       userId: userId,
-      factoryAttributes: factoryAttributes,
+      provisionData: provisionData,
     );
 
     ref.invalidate(deviceByIdProvider(deviceId));
@@ -150,15 +150,30 @@ class DeviceManagement {
     return device;
   }
 
-  /// Update factory attributes
-  Future<Device> updateFactoryAttributes({
+  /// Update provision data (full replace)
+  Future<Device> updateProvisionData({
     required String deviceId,
-    required Map<String, dynamic> attributes,
+    required Map<String, dynamic> provisionData,
   }) async {
     final repository = ref.read(deviceRepositoryProvider);
-    final device = await repository.updateFactoryAttributes(
+    final device = await repository.updateProvisionData(
       deviceId: deviceId,
-      attributes: attributes,
+      provisionData: provisionData,
+    );
+
+    ref.invalidate(deviceByIdProvider(deviceId));
+    return device;
+  }
+
+  /// Merge new keys into existing provision data
+  Future<Device> mergeProvisionData({
+    required String deviceId,
+    required Map<String, dynamic> newData,
+  }) async {
+    final repository = ref.read(deviceRepositoryProvider);
+    final device = await repository.mergeProvisionData(
+      deviceId: deviceId,
+      newData: newData,
     );
 
     ref.invalidate(deviceByIdProvider(deviceId));

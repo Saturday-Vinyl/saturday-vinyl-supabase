@@ -61,7 +61,13 @@ class Device extends Equatable {
   /// Factory provisioning data
   final DateTime? factoryProvisionedAt;
   final String? factoryProvisionedBy;
-  final Map<String, dynamic> factoryAttributes;
+
+  /// Consumer provisioning data
+  final DateTime? consumerProvisionedAt;
+  final String? consumerProvisionedBy;
+
+  /// All provisioning data (factory + consumer merged flat)
+  final Map<String, dynamic> provisionData;
 
   /// Status
   final DeviceStatus status;
@@ -69,8 +75,7 @@ class Device extends Equatable {
   /// Connectivity tracking
   final DateTime? lastSeenAt;
 
-  /// Latest telemetry data from heartbeats (capability-scoped)
-  /// Example: {"power": {"battery_level": 85}, "wifi": {"rssi": -45}}
+  /// Latest telemetry data from heartbeats (flat structure)
   final Map<String, dynamic> latestTelemetry;
 
   /// Timestamps
@@ -86,7 +91,9 @@ class Device extends Equatable {
     this.firmwareId,
     this.factoryProvisionedAt,
     this.factoryProvisionedBy,
-    this.factoryAttributes = const {},
+    this.consumerProvisionedAt,
+    this.consumerProvisionedBy,
+    this.provisionData = const {},
     this.status = DeviceStatus.unprovisioned,
     this.lastSeenAt,
     this.latestTelemetry = const {},
@@ -138,8 +145,12 @@ class Device extends Equatable {
           ? DateTime.parse(json['factory_provisioned_at'] as String)
           : null,
       factoryProvisionedBy: json['factory_provisioned_by'] as String?,
-      factoryAttributes: json['factory_attributes'] != null
-          ? Map<String, dynamic>.from(json['factory_attributes'] as Map)
+      consumerProvisionedAt: json['consumer_provisioned_at'] != null
+          ? DateTime.parse(json['consumer_provisioned_at'] as String)
+          : null,
+      consumerProvisionedBy: json['consumer_provisioned_by'] as String?,
+      provisionData: json['provision_data'] != null
+          ? Map<String, dynamic>.from(json['provision_data'] as Map)
           : {},
       status: DeviceStatusExtension.fromString(json['status'] as String?),
       lastSeenAt: json['last_seen_at'] != null
@@ -166,7 +177,9 @@ class Device extends Equatable {
       'firmware_id': firmwareId,
       'factory_provisioned_at': factoryProvisionedAt?.toIso8601String(),
       'factory_provisioned_by': factoryProvisionedBy,
-      'factory_attributes': factoryAttributes,
+      'consumer_provisioned_at': consumerProvisionedAt?.toIso8601String(),
+      'consumer_provisioned_by': consumerProvisionedBy,
+      'provision_data': provisionData,
       'status': status.databaseValue,
       'last_seen_at': lastSeenAt?.toIso8601String(),
       'latest_telemetry': latestTelemetry,
@@ -183,7 +196,7 @@ class Device extends Equatable {
       'unit_id': unitId,
       'firmware_version': firmwareVersion,
       'firmware_id': firmwareId,
-      'factory_attributes': factoryAttributes,
+      'provision_data': provisionData,
       'status': status.databaseValue,
     };
   }
@@ -198,7 +211,9 @@ class Device extends Equatable {
     String? firmwareId,
     DateTime? factoryProvisionedAt,
     String? factoryProvisionedBy,
-    Map<String, dynamic>? factoryAttributes,
+    DateTime? consumerProvisionedAt,
+    String? consumerProvisionedBy,
+    Map<String, dynamic>? provisionData,
     DeviceStatus? status,
     DateTime? lastSeenAt,
     Map<String, dynamic>? latestTelemetry,
@@ -214,7 +229,9 @@ class Device extends Equatable {
       firmwareId: firmwareId ?? this.firmwareId,
       factoryProvisionedAt: factoryProvisionedAt ?? this.factoryProvisionedAt,
       factoryProvisionedBy: factoryProvisionedBy ?? this.factoryProvisionedBy,
-      factoryAttributes: factoryAttributes ?? this.factoryAttributes,
+      consumerProvisionedAt: consumerProvisionedAt ?? this.consumerProvisionedAt,
+      consumerProvisionedBy: consumerProvisionedBy ?? this.consumerProvisionedBy,
+      provisionData: provisionData ?? this.provisionData,
       status: status ?? this.status,
       lastSeenAt: lastSeenAt ?? this.lastSeenAt,
       latestTelemetry: latestTelemetry ?? this.latestTelemetry,
@@ -233,7 +250,9 @@ class Device extends Equatable {
         firmwareId,
         factoryProvisionedAt,
         factoryProvisionedBy,
-        factoryAttributes,
+        consumerProvisionedAt,
+        consumerProvisionedBy,
+        provisionData,
         status,
         lastSeenAt,
         latestTelemetry,
