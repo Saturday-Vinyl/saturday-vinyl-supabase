@@ -282,9 +282,22 @@ Thread mesh networking for low-power devices. Thread is typically factory-provis
 }
 ```
 
-**consumer_input_schema:** (empty - Thread is not provisioned via BLE)
+**consumer_input_schema:** (empty - Thread credentials are written via the Thread Dataset BLE characteristic 0x0020)
 ```json
 {}
+```
+
+**consumer_output_schema:** (returned after successful BLE provisioning)
+```json
+{
+  "type": "object",
+  "properties": {
+    "thread_network_name": {
+      "type": "string",
+      "description": "Name of the joined Thread network"
+    }
+  }
+}
 ```
 
 **factory_output_schema:**
