@@ -214,8 +214,8 @@ class BleDeviceInfo {
   @Deprecated('Use serialNumber instead')
   String get unitId => serialNumber;
 
-  bool get isHub => deviceType == 'hub';
-  bool get isCrate => deviceType == 'crate';
+  bool get isHub => deviceType.startsWith('hub');
+  bool get isCrate => deviceType.startsWith('crate');
   bool get supportsWifi => capabilities.contains('wifi');
   bool get supportsThread => capabilities.contains('thread');
   bool get isThreadBorderRouter => capabilities.contains('thread_br');
@@ -293,8 +293,8 @@ class DiscoveredDevice {
     );
   }
 
-  bool get isHub => deviceType == 'hub';
-  bool get isCrate => deviceType == 'crate';
+  bool get isHub => deviceType?.startsWith('hub') ?? false;
+  bool get isCrate => deviceType?.startsWith('crate') ?? false;
 }
 
 /// State of the BLE connection.
@@ -426,10 +426,10 @@ class BleService {
       rethrow;
     }
 
-    // Wait for scan to complete
-    debugPrint('[BLE] Waiting for scan timeout...');
-    await Future.delayed(timeout);
-    debugPrint('[BLE] Scan timeout reached, cleaning up');
+    // Wait for scan to complete (resolves on timeout OR explicit stopScan)
+    debugPrint('[BLE] Waiting for scan to finish...');
+    await FlutterBluePlus.isScanning.where((scanning) => !scanning).first;
+    debugPrint('[BLE] Scan finished, cleaning up');
     await subscription.cancel();
 
     if (_connectedDevice == null) {
@@ -451,45 +451,73 @@ class BleService {
     try {
       _connectionStateController.add(BleConnectionState.connecting);
 
+      // Ensure scanning is fully stopped before connecting.
+      // On iOS, CoreBluetooth can fail GATT operations if a scan is still active.
+      await FlutterBluePlus.stopScan();
+      debugPrint('[BLE] Scan stopped before connect');
+
       // Connect to the device
       await discovered.device.connect(timeout: const Duration(seconds: 10));
       _connectedDevice = discovered.device;
-
-      // Listen for disconnection
-      _connectionSubscription = discovered.device.connectionState.listen((state) {
-        if (state == BluetoothConnectionState.disconnected) {
-          _handleDisconnection();
-        }
-      });
+      debugPrint('[BLE] Device connected');
 
       _connectionStateController.add(BleConnectionState.discovering);
 
       // Discover services
       final services = await discovered.device.discoverServices();
 
+      // Log discovered services for debugging
+      debugPrint('[BLE] Discovered ${services.length} services:');
+      for (final s in services) {
+        debugPrint('[BLE]   Service: ${s.uuid} (${s.characteristics.length} characteristics)');
+      }
+
       // Find Saturday provisioning service
+      // Match by full 128-bit UUID or by the 16-bit short UUID (0x5356)
+      final targetUuid = SaturdayBleUuids.service.toLowerCase();
+      const shortUuidExpanded = '00005356-0000-1000-8000-00805f9b34fb';
       final provService = services.firstWhere(
-        (s) => s.uuid.toString().toLowerCase() == SaturdayBleUuids.service.toLowerCase(),
-        orElse: () => throw Exception('Saturday service not found'),
+        (s) {
+          final uuid = s.uuid.toString().toLowerCase();
+          return uuid == targetUuid || uuid == shortUuidExpanded;
+        },
+        orElse: () => throw Exception(
+          'Saturday service not found. Available: ${services.map((s) => s.uuid).join(', ')}',
+        ),
       );
 
       // Store characteristic references
+      debugPrint('[BLE] Found ${provService.characteristics.length} characteristics:');
       for (final char in provService.characteristics) {
         final uuid = char.uuid.toString().toLowerCase();
+        debugPrint('[BLE]   Char: $uuid (properties: ${char.properties})');
         _characteristics[uuid] = char;
       }
 
-      // Read device info
-      await _readDeviceInfo();
-
-      // Subscribe to status notifications
+      // Subscribe to notifications FIRST so we can catch the firmware's
+      // auto-sent status notification (used as fallback for device info).
+      await _subscribeToResponse();
       await _subscribeToStatus();
 
-      // Subscribe to response notifications
-      await _subscribeToResponse();
+      // Read device info (tries GATT read, falls back to status notification)
+      debugPrint('[BLE] Reading device info...');
+      await _readDeviceInfo();
+      debugPrint('[BLE] Device info read successfully: ${_deviceInfo?.serialNumber}');
+
+      // Listen for disconnection AFTER setup is complete.
+      // Setting this up earlier can cause _handleDisconnection() to fire
+      // from a spurious or replayed disconnected event during GATT operations,
+      // which clears _characteristics and _connectedDevice mid-setup.
+      _connectionSubscription = discovered.device.connectionState.listen((state) {
+        if (state == BluetoothConnectionState.disconnected) {
+          _handleDisconnection();
+        }
+      });
 
       _connectionStateController.add(BleConnectionState.ready);
-    } catch (e) {
+    } catch (e, stack) {
+      debugPrint('[BLE] ERROR in connect: $e');
+      debugPrint('[BLE] Stack trace: $stack');
       _connectionStateController.add(BleConnectionState.error);
       await disconnect();
       rethrow;
@@ -591,13 +619,71 @@ class BleService {
   }
 
   Future<void> _readDeviceInfo() async {
+    // Try 1: GATT read from Device Info characteristic
     final infoChar = _characteristics[SaturdayBleUuids.deviceInfo.toLowerCase()];
-    if (infoChar == null) throw Exception('Device info characteristic not found');
+    if (infoChar != null && infoChar.properties.read) {
+      debugPrint('[BLE] Attempting GATT read of Device Info characteristic...');
+      try {
+        final value = await infoChar.read().timeout(
+          const Duration(seconds: 2),
+          onTimeout: () => throw Exception('Device info read timed out'),
+        );
+        debugPrint('[BLE] Device info raw: ${value.length} bytes');
+        final jsonStr = utf8.decode(value);
+        debugPrint('[BLE] Device info JSON: $jsonStr');
+        final json = jsonDecode(jsonStr) as Map<String, dynamic>;
+        _deviceInfo = BleDeviceInfo.fromJson(json);
+        return;
+      } catch (e) {
+        debugPrint('[BLE] Device Info GATT read failed: $e');
+        debugPrint('[BLE] Falling back to status notification...');
+      }
+    }
 
-    final value = await infoChar.read();
-    final jsonStr = utf8.decode(value);
-    final json = jsonDecode(jsonStr) as Map<String, dynamic>;
-    _deviceInfo = BleDeviceInfo.fromJson(json);
+    // Try 2: Wait for the firmware's periodic status notification.
+    // The firmware sends {"type":"status","device_type":"...","unit_id":"...",...}
+    // on the Response characteristic every ~30 seconds.
+    // Also send GET_STATUS command to try to trigger an immediate response.
+    debugPrint('[BLE] Sending GET_STATUS command to request device info...');
+    try {
+      await _sendCommand(BleCommand.getStatus);
+    } catch (e) {
+      debugPrint('[BLE] GET_STATUS command failed: $e');
+    }
+
+    debugPrint('[BLE] Waiting for status notification with device info...');
+    try {
+      final response = await _responseController.stream
+          .where((r) => r['device_type'] != null)
+          .first
+          .timeout(const Duration(seconds: 35));
+
+      debugPrint('[BLE] Received device info from notification: $response');
+
+      // Infer capabilities from available BLE characteristics since the
+      // periodic status notification doesn't include a capabilities array.
+      final hasWifiChar =
+          _characteristics.containsKey(SaturdayBleUuids.wifiSsid.toLowerCase());
+      final hasThreadChar =
+          _characteristics.containsKey(SaturdayBleUuids.threadDataset.toLowerCase());
+
+      final enriched = Map<String, dynamic>.from(response);
+      enriched['capabilities'] ??= [
+        if (hasWifiChar) 'wifi',
+        if (hasThreadChar) 'thread',
+      ];
+      enriched['has_wifi'] ??= hasWifiChar;
+      enriched['has_thread'] ??= hasThreadChar;
+      enriched['needs_provisioning'] ??= true;
+
+      _deviceInfo = BleDeviceInfo.fromJson(enriched);
+    } catch (e) {
+      debugPrint('[BLE] ERROR: Failed to get device info: $e');
+      throw Exception(
+        'Could not read device info: GATT read failed and '
+        'no status notification received within timeout',
+      );
+    }
   }
 
   Future<void> _subscribeToStatus() async {

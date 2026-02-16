@@ -4,9 +4,16 @@ Central repository for Saturday Vinyl technical documentation shared across all 
 
 ## Contents
 
+### Concepts
+- **[Data Model](concepts/data_model.md)** - Core entity relationships (Units, Devices, Products, Device Types, Capabilities, Firmware)
+
 ### Protocols
 - **[BLE Provisioning Protocol](protocols/ble_provisioning_protocol.md)** - BLE GATT interface for mobile app device provisioning
+- **[Device Command Protocol](protocols/device_command_protocol.md)** - Unified command interface for device communication
 - **[Service Mode Protocol](protocols/service_mode_protocol.md)** - USB serial interface for factory provisioning and diagnostics
+
+### Schemas
+- **[Capability Schema](schemas/capability_schema.md)** - Capability definition and attribute schema specification
 
 ### Templates
 - **[Claude Command Templates](templates/claude-commands/)** - Slash command wrappers for Claude Code integration
@@ -40,7 +47,7 @@ cp ./shared-docs/templates/claude-commands/*.md ./.claude/commands/
 When the central docs are updated, pull changes into your project:
 
 ```bash
-git subtree pull --prefix=shared-docs shared-docs main --squash
+git subtree pull --prefix=shared-docs shared-docs main --squash -m "Merge shared-docs updates"
 ```
 
 ### Contributing Changes
@@ -78,10 +85,15 @@ Read @./shared-docs/protocols/ble_provisioning_protocol.md and implement the Sta
 ```
 saturday-vinyl-shared-docs/
 ├── README.md                    # This file
+├── concepts/                    # Architectural concepts
+│   └── data_model.md            # Core entity relationships
 ├── protocols/                   # Protocol specifications
 │   ├── ble_provisioning_protocol.md
+│   ├── device_command_protocol.md
+│   ├── led_status_protocol.md
 │   └── service_mode_protocol.md
-├── guides/                      # (Future) Shared guides
+├── schemas/                     # Schema specifications
+│   └── capability_schema.md
 ├── templates/
 │   └── claude-commands/         # Claude Code command templates
 │       ├── ble-provisioning.md

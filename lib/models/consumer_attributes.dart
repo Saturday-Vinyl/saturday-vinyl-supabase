@@ -129,10 +129,12 @@ class ConsumerAttributes extends Equatable {
 
 /// Consumer provisioning data.
 ///
-/// Stored in the units.provision_data column after
+/// Stored in the devices.provision_data column after
 /// the consumer completes BLE provisioning.
 ///
-/// This uses a flattened JSONB structure (not nested).
+/// This uses a flattened JSONB structure (not nested). Per the Device Command
+/// Protocol, both consumer_input (sent to device) and consumer_output (returned
+/// by device) are merged at the top level.
 class ProvisionData extends Equatable {
   /// WiFi network SSID (for hubs).
   final String? wifiSsid;
@@ -143,15 +145,22 @@ class ProvisionData extends Equatable {
   /// Thread dataset hex string (for crates).
   final String? threadDataset;
 
+  /// Additional data returned from the device after provisioning (consumer_output).
+  /// Merged at the top level of provision_data per the Device Command Protocol.
+  final Map<String, dynamic>? consumerOutput;
+
   const ProvisionData({
     this.wifiSsid,
     this.threadNetworkName,
     this.threadDataset,
+    this.consumerOutput,
   });
 
   /// Creates provision data for a hub with WiFi credentials.
-  const ProvisionData.wifi({required String ssid})
-      : wifiSsid = ssid,
+  const ProvisionData.wifi({
+    required String ssid,
+    this.consumerOutput,
+  })  : wifiSsid = ssid,
         threadNetworkName = null,
         threadDataset = null;
 
@@ -159,6 +168,7 @@ class ProvisionData extends Equatable {
   const ProvisionData.thread({
     required String dataset,
     String? networkName,
+    this.consumerOutput,
   })  : wifiSsid = null,
         threadNetworkName = networkName,
         threadDataset = dataset;
@@ -189,6 +199,9 @@ class ProvisionData extends Equatable {
     if (threadDataset != null) {
       json['thread_dataset'] = threadDataset;
     }
+    if (consumerOutput != null) {
+      json.addAll(consumerOutput!);
+    }
     return json;
   }
 
@@ -196,14 +209,17 @@ class ProvisionData extends Equatable {
     String? wifiSsid,
     String? threadNetworkName,
     String? threadDataset,
+    Map<String, dynamic>? consumerOutput,
   }) {
     return ProvisionData(
       wifiSsid: wifiSsid ?? this.wifiSsid,
       threadNetworkName: threadNetworkName ?? this.threadNetworkName,
       threadDataset: threadDataset ?? this.threadDataset,
+      consumerOutput: consumerOutput ?? this.consumerOutput,
     );
   }
 
   @override
-  List<Object?> get props => [wifiSsid, threadNetworkName, threadDataset];
+  List<Object?> get props =>
+      [wifiSsid, threadNetworkName, threadDataset, consumerOutput];
 }

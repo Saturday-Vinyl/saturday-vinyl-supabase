@@ -182,13 +182,11 @@ POST /rest/v1/device_heartbeats
 
 **Frequency:** Every 30 seconds
 
-### 5. Firmware Manifest
+### 5. Device Capabilities
 
-**Reference:** `shared-docs/schemas/firmware_manifest_schema.md`
+Firmware must implement the `get_capabilities` command to return the device's capability manifest. See the [Device Command Protocol](../protocols/device_command_protocol.md) for the command format and response schema.
 
-The Admin App will export firmware manifests that describe capabilities. Embed this JSON in your firmware project.
-
-**Key additions:**
+**Key fields returned:**
 - `soc_types` - Array of SoC types on this PCB (e.g., `["esp32s3", "esp32h2"]`)
 - `master_soc` - Which SoC has network connectivity
 - `capabilities` - Full capability definitions with attribute schemas
@@ -317,7 +315,7 @@ We will provide test fixtures for:
 - [ ] Add Supabase Realtime client
 - [ ] Implement heartbeat reporting
 - [ ] Update OTA handler for multi-SoC
-- [ ] Generate new firmware manifest from Admin App
+- [ ] Implement `get_capabilities` response with capability manifest
 - [ ] Integration test with Admin App
 
 ---

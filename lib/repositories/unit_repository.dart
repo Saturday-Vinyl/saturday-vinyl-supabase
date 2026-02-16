@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:saturday_consumer_app/models/consumer_attributes.dart';
 import 'package:saturday_consumer_app/models/device.dart';
 import 'package:saturday_consumer_app/repositories/base_repository.dart';
@@ -245,11 +247,13 @@ class UnitRepository extends BaseRepository {
     return hubs.isNotEmpty ? hubs.first : null;
   }
 
-  /// Gets the Thread dataset from a hub's linked device provision data.
+  /// Gets the Thread credentials from a hub's linked device provision data.
   ///
   /// This is used during crate provisioning to get the Thread network
-  /// credentials from a provisioned hub. The provision_data is stored
-  /// on the devices table, not the units table.
+  /// credentials from a provisioned hub. The Hub stores Thread credentials
+  /// in `devices.provision_data.thread_credentials` (set during factory
+  /// provisioning). The returned JSON string is written directly to the
+  /// Crate's Thread Dataset BLE characteristic.
   Future<String?> getHubThreadDataset(String hubUnitId) async {
     // Query the unit with its linked device to get provision_data
     final response = await client
@@ -274,7 +278,13 @@ class UnitRepository extends BaseRepository {
     final data = deviceData['provision_data'] as Map<String, dynamic>?;
     if (data == null) return null;
 
-    // Flattened structure: thread_dataset at top level
-    return data['thread_dataset'] as String?;
+    // Thread credentials are stored under 'thread_credentials' key
+    // (set during factory provisioning of the Hub)
+    final threadCreds = data['thread_credentials'] as Map<String, dynamic>?;
+    if (threadCreds == null) return null;
+
+    // The Crate firmware's consumer_input schema expects the wrapping object:
+    // { "thread_credentials": { "pan_id", "channel", "network_key", ... } }
+    return jsonEncode({'thread_credentials': threadCreds});
   }
 }

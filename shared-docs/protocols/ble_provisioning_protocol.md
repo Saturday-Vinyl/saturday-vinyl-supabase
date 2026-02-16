@@ -1,8 +1,8 @@
 # Saturday Vinyl BLE Provisioning Protocol
 
-**Version:** 1.2.0
+**Version:** 1.3.0
 **Status:** Draft
-**Last Updated:** 2026-01-30
+**Last Updated:** 2026-02-04
 **Audience:** Saturday Vinyl app developers, firmware engineers
 
 > **Note:** This protocol works with the unified device architecture. See
@@ -299,6 +299,28 @@ Write: [0xFF, 0x52, 0x45, 0x53, 0x54]
 | `error` | Error details |
 | `progress` | Operation progress |
 
+**Device-Specific Output Data:**
+
+When provisioning succeeds, the device may include capability-specific output fields
+in a `data` object. The fields in `data` correspond to the capability's
+`consumer_output_schema` (see [Capability Schema](../schemas/capability_schema.md)).
+
+```json
+{
+  "type": "message",
+  "code": "SUCCESS",
+  "message": "Connected",
+  "data": {
+    "thread_network_name": "SaturdayVinyl"
+  }
+}
+```
+
+| Device | `data` Fields | Source |
+|--------|---------------|--------|
+| Hub | `wifi_mac`, `connected`, `ip_address`, `rssi` | wifi `consumer_output_schema` |
+| Crate | `thread_network_name` | thread `consumer_output_schema` |
+
 **Error Response Format:**
 
 When Wi-Fi connection fails, the device sends a specific error code to help the app provide actionable feedback:
@@ -320,6 +342,7 @@ When Wi-Fi connection fails, the device sends a specific error code to help the 
 | `TIMEOUT` | "Connection timed out" | No response after 45 seconds | Check network availability |
 | `WIFI_FAILED` | "Connection failed" | Other WiFi errors | Generic retry |
 | `STORAGE_ERROR` | "Failed to store credentials" | NVS write failed | Retry or factory reset |
+| `THREAD_FAILED` | "Could not join Thread network" | Thread join failed or timed out | Check Hub is powered on, retry |
 
 > **Note:** `AUTH_FAILED` and `NETWORK_NOT_FOUND` errors are reported within 1-2 seconds
 > of the connection attempt, allowing for immediate user feedback. Previously, all errors
@@ -364,21 +387,30 @@ When Wi-Fi connection fails, the device sends a specific error code to help the 
 **Properties:** Write
 **Description:** Thread network operational dataset (for Crates and Thread devices).
 
-**Format:** Binary Thread Operational Dataset TLV format
+**Format:** JSON string (UTF-8)
 
-See [Thread 1.3.0 Specification](https://www.threadgroup.org/) for dataset format.
-
-**Simplified JSON Alternative:**
-For easier integration, devices may accept JSON format:
+The Thread credentials are wrapped in a `thread_credentials` object per the
+[Capability Schema](../schemas/capability_schema.md) `consumer_input_schema`:
 
 ```json
 {
-  "network_name": "SaturdayVinyl",
-  "pan_id": "0x5356",
-  "channel": 15,
-  "network_key": "base64-encoded-key"
+  "thread_credentials": {
+    "network_name": "SaturdayVinyl",
+    "pan_id": 21334,
+    "channel": 15,
+    "network_key": "a1b2c3d4e5f6789012345678abcdef12",
+    "extended_pan_id": "0123456789abcdef"
+  }
 }
 ```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `network_name` | string | Yes | Thread network name (max 16 chars) |
+| `pan_id` | integer | Yes | PAN ID (0-65535) |
+| `channel` | integer | Yes | Radio channel (11-26) |
+| `network_key` | string | Yes | 128-bit network key (32 hex chars) |
+| `extended_pan_id` | string | Yes | 64-bit extended PAN ID (16 hex chars) |
 
 ### User Token (0x0030)
 
@@ -490,11 +522,38 @@ For easier integration, devices may accept JSON format:
        │  5. Write CONNECT command                     │
        │───────────────────────────────────────────────>
        │                       │                       │
-       │                       │  6. Join Thread       │
+       │  6. Status: CONNECTING (0x03)                 │
+       │<──────────────────────────────────────────────│
+       │                       │                       │
+       │  7. Response: {"type":"message",              │
+       │     "code":"CONNECTING",                      │
+       │     "message":"Joining Thread network..."}    │
+       │<──────────────────────────────────────────────│
+       │                       │                       │
+       │                       │  8. Join Thread       │
        │                       │<──────────────────────│
        │                       │                       │
-       │  7. Status: SUCCESS                           │
+       │  9. Status: VERIFYING (0x04)                  │
        │<──────────────────────────────────────────────│
+       │                       │                       │
+       │  10. Response: {"type":"message",             │
+       │      "code":"VERIFYING",                      │
+       │      "message":"Verifying Hub connection..."}│
+       │<──────────────────────────────────────────────│
+       │                       │                       │
+       │      [Crate sends heartbeat to Hub]           │
+       │                       │                       │
+       │  11. Status: SUCCESS (0x05)                   │
+       │<──────────────────────────────────────────────│
+       │                       │                       │
+       │  12. Response: {"type":"message",             │
+       │      "code":"SUCCESS",                        │
+       │      "message":"Connected",                   │
+       │      "data":{"thread_network_name":"..."}}    │
+       │<──────────────────────────────────────────────│
+       │                       │                       │
+       │  13. Disconnect BLE                           │
+       │───────────────────────────────────────────────>
        │                       │                       │
 ```
 
@@ -1032,6 +1091,7 @@ STORAGE_ERROR     = Failed to store credentials in NVS
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.3.0 | 2026-02-04 | Added `data` envelope for device-specific output fields in Response characteristic (references `consumer_output_schema` from Capability Schema). Added detailed Crate provisioning flow with CONNECTING, VERIFYING, and SUCCESS response notifications. Added `THREAD_FAILED` error code for Thread provisioning failures. |
 | 1.2.0 | 2026-01-30 | Added specific WiFi error codes (`AUTH_FAILED`, `NETWORK_NOT_FOUND`) to Response characteristic for immediate error feedback. Auth failures now reported in ~1-2 seconds instead of 45-second timeout. Updated Error Handling section with Response code documentation. |
 | 1.1.0 | 2026-01-24 | Aligned with unified device architecture: renamed `unit_id` to `serial_number`, added `mac_address` to Device Info, added cross-references to Device Command Protocol and Capability Schema |
 | 1.0.0 | 2026-01-05 | Initial protocol specification |

@@ -239,21 +239,30 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
       debugPrint('[DeviceSetup] Unit claimed successfully: ${claimedDevice.id}');
 
       // Step 2: Build provision data based on device type
+      // Per the Device Command Protocol, both consumer_input (sent to device)
+      // and consumer_output (returned by device) are stored in provision_data.
+      final consumerOutput = state.consumerOutput;
       ProvisionData provisionData;
       if (deviceInfo.isHub && state.wifiSsid != null) {
         // For hubs, store the WiFi SSID that was used for provisioning
         // Note: We don't store the password for security reasons
-        provisionData = ProvisionData.wifi(ssid: state.wifiSsid!);
-        debugPrint('[DeviceSetup] Storing WiFi config: SSID=${state.wifiSsid}');
+        provisionData = ProvisionData.wifi(
+          ssid: state.wifiSsid!,
+          consumerOutput: consumerOutput,
+        );
+        debugPrint('[DeviceSetup] Storing WiFi config: SSID=${state.wifiSsid}, '
+            'consumerOutput=$consumerOutput');
       } else if (deviceInfo.isCrate && state.threadDataset != null) {
         // For crates, store the Thread dataset used for provisioning
         provisionData = ProvisionData.thread(
           dataset: state.threadDataset!,
           networkName: 'Saturday Thread Network',
+          consumerOutput: consumerOutput,
         );
-        debugPrint('[DeviceSetup] Storing Thread config from hub ${state.selectedHubId}');
+        debugPrint('[DeviceSetup] Storing Thread config from hub ${state.selectedHubId}, '
+            'consumerOutput=$consumerOutput');
       } else {
-        provisionData = const ProvisionData();
+        provisionData = ProvisionData(consumerOutput: consumerOutput);
       }
 
       // Step 3: Update unit with device name and provisioning data
@@ -311,7 +320,7 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
       if (confirmed != true) return;
     }
 
-    ref.read(deviceSetupProvider.notifier).reset();
+    await ref.read(deviceSetupProvider.notifier).reset();
     if (context.mounted) {
       context.pop();
     }

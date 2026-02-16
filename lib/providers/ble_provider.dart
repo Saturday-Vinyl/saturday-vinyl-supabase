@@ -37,6 +37,10 @@ class DeviceSetupState {
   /// Added in BLE Provisioning Protocol v1.2.0.
   final BleErrorCode? errorCode;
 
+  /// Data returned from the device after successful provisioning (consumer_output).
+  /// Captured from the BLE Response characteristic's `provision_result` message.
+  final Map<String, dynamic>? consumerOutput;
+
   const DeviceSetupState({
     this.connectionState = BleConnectionState.disconnected,
     this.discoveredDevices = const [],
@@ -52,6 +56,7 @@ class DeviceSetupState {
     this.threadDataset,
     this.selectedHubId,
     this.errorCode,
+    this.consumerOutput,
   });
 
   DeviceSetupState copyWith({
@@ -70,6 +75,7 @@ class DeviceSetupState {
     String? selectedHubId,
     BleErrorCode? errorCode,
     bool clearErrorCode = false,
+    Map<String, dynamic>? consumerOutput,
   }) {
     return DeviceSetupState(
       connectionState: connectionState ?? this.connectionState,
@@ -86,6 +92,7 @@ class DeviceSetupState {
       threadDataset: threadDataset ?? this.threadDataset,
       selectedHubId: selectedHubId ?? this.selectedHubId,
       errorCode: clearErrorCode ? null : (errorCode ?? this.errorCode),
+      consumerOutput: consumerOutput ?? this.consumerOutput,
     );
   }
 
@@ -219,6 +226,13 @@ class DeviceSetupNotifier extends StateNotifier<DeviceSetupState> {
           errorCode: errorCode,
           errorMessage: errorCode.userMessage,
         );
+      } else if (type == 'provision_result') {
+        // Capture consumer_output data returned by the device after provisioning
+        final data = response['data'] as Map<String, dynamic>?;
+        if (data != null && data.isNotEmpty) {
+          debugPrint('[BLE Provider] Received consumer_output: $data');
+          state = state.copyWith(consumerOutput: data);
+        }
       }
     });
   }
