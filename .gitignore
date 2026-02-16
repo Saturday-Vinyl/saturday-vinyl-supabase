@@ -1,3 +1,6 @@
+# Supabase CLI local state
+supabase/.temp/
+
 # ESP-IDF build artifacts
 build/
 sdkconfig

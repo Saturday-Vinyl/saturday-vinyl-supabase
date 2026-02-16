@@ -282,9 +282,22 @@ Thread mesh networking for low-power devices. Thread is typically factory-provis
 }
 ```
 
-**consumer_input_schema:** (empty - Thread is not provisioned via BLE)
+**consumer_input_schema:** (empty - Thread credentials are written via the Thread Dataset BLE characteristic 0x0020)
 ```json
 {}
+```
+
+**consumer_output_schema:** (returned after successful BLE provisioning)
+```json
+{
+  "type": "object",
+  "properties": {
+    "thread_network_name": {
+      "type": "string",
+      "description": "Name of the joined Thread network"
+    }
+  }
+}
 ```
 
 **factory_output_schema:**
@@ -711,9 +724,7 @@ The `configuration` field allows per-device-type customization of the capability
 
 ### Embedding Capability Schemas
 
-Firmware can embed capability schemas at compile time or fetch them from the cloud. The recommended approach is to generate a firmware manifest JSON that includes relevant schema information.
-
-See [Firmware Manifest Schema](firmware_manifest_schema.md) for the manifest format.
+Firmware can embed capability schemas at compile time or fetch them from the cloud. The recommended approach is to use the `get_capabilities` command (see the [Device Command Protocol](../protocols/device_command_protocol.md)) to return capability information.
 
 ### Validating Provisioning Data
 

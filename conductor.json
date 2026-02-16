@@ -1,6 +1,6 @@
 {
     "scripts": {
-        "setup": "echo '=== Saturday Vinyl Hub Setup ===' && echo '1. Importing ESP-IDF environment...' && get_idf && echo '2. Detecting UART devices...' && ls -la /dev/cu.usbmodem* /dev/cu.usbserial* 2>/dev/null || echo 'No USB serial devices found - connect your ESP32-C6' && echo '3. Building firmware...' && idf.py build && echo '=== Setup complete! Ready to flash ==='",
+        "setup": "echo '=== Saturday Vinyl Hub Setup ===' && echo '1. Importing ESP-IDF environment...' && get_idf && echo '2. Detecting UART devices...' && ls -la /dev/cu.usbmodem* /dev/cu.usbserial* 2>/dev/null || echo 'No USB serial devices found - connect your ESP32-C6' && echo '3. Building firmware...' && idf.py build && echo '4. Syncing shared-supabase...' && git subtree pull --prefix=shared-supabase shared-supabase main --squash -m \"Merge shared-supabase updates\" && echo '=== Setup complete! Ready to flash ==='",
         "build": "source ~/workspace/esp-idf/export.sh && idf.py build",
         "run": "source ~/workspace/esp-idf/export.sh && idf.py -p $(ls /dev/cu.usbmodem* /dev/cu.usbserial* 2>/dev/null | head -1) flash monitor"
     },
