@@ -36,6 +36,7 @@
 #include "led_manager.h"
 #include "ota_manager.h"
 #include "esp_heap_caps.h"
+#include "h2_comm.h"
 
 /* 2-SoC Architecture: Thread is handled by H2 co-processor.
  * Thread credentials will be retrieved via UART from H2.
@@ -901,6 +902,38 @@ static void handle_factory_provision(cJSON *params)
         snprintf(mac_str, sizeof(mac_str), "%02X:%02X:%02X:%02X:%02X:%02X",
                  mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
         cJSON_AddStringToObject(data, "mac_address", mac_str);
+    }
+
+    /* Thread BR: factory_output - get credentials from H2 co-processor */
+    if (h2_comm_is_connected()) {
+        s3h2_credentials_payload_t h2_creds;
+        esp_err_t thread_err = h2_comm_get_credentials(&h2_creds, 2000);
+        if (thread_err == ESP_OK) {
+            cJSON *thread_data = cJSON_CreateObject();
+            cJSON_AddNumberToObject(thread_data, "pan_id", h2_creds.pan_id);
+            cJSON_AddNumberToObject(thread_data, "channel", h2_creds.channel);
+            cJSON_AddStringToObject(thread_data, "network_name", h2_creds.network_name);
+
+            /* Network key as hex string (32 chars) */
+            char network_key_hex[33];
+            for (int i = 0; i < 16; i++) {
+                snprintf(&network_key_hex[i * 2], 3, "%02x", h2_creds.network_key[i]);
+            }
+            cJSON_AddStringToObject(thread_data, "network_key", network_key_hex);
+
+            /* Extended PAN ID as hex string (16 chars) */
+            char extpanid_hex[17];
+            for (int i = 0; i < 8; i++) {
+                snprintf(&extpanid_hex[i * 2], 3, "%02x", h2_creds.extended_pan_id[i]);
+            }
+            cJSON_AddStringToObject(thread_data, "extended_pan_id", extpanid_hex);
+
+            cJSON_AddItemToObject(data, "thread_credentials", thread_data);
+        } else {
+            ESP_LOGE(TAG, "Failed to get Thread credentials from H2: %s", esp_err_to_name(thread_err));
+        }
+    } else {
+        ESP_LOGW(TAG, "H2 not connected, skipping Thread credentials in factory_provision response");
     }
 
     send_response("ok", "Device provisioned successfully", data);

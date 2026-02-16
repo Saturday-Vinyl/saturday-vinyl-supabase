@@ -611,9 +611,13 @@ static void handle_factory_provision(const char *cmd_id, cJSON *params)
 
 #if defined(CONFIG_OPENTHREAD_ENABLED) && CONFIG_OPENTHREAD_ENABLED
     /* Thread BR: factory_output - generate and return credentials */
-    thread_br_ensure_credentials();
+    esp_err_t thread_err = thread_br_ensure_credentials();
+    if (thread_err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to ensure Thread credentials: %s", esp_err_to_name(thread_err));
+    }
     thread_network_credentials_t thread_creds;
-    if (thread_br_get_credentials(&thread_creds) == ESP_OK) {
+    thread_err = thread_br_get_credentials(&thread_creds);
+    if (thread_err == ESP_OK) {
         cJSON *thread_data = cJSON_CreateObject();
         cJSON_AddNumberToObject(thread_data, "pan_id", thread_creds.pan_id);
         cJSON_AddNumberToObject(thread_data, "channel", thread_creds.channel);
@@ -623,7 +627,13 @@ static void handle_factory_provision(const char *cmd_id, cJSON *params)
         thread_br_get_network_key_hex(network_key_hex, sizeof(network_key_hex));
         cJSON_AddStringToObject(thread_data, "network_key", network_key_hex);
 
+        char extpanid_hex[17];
+        thread_br_get_extpanid_hex(extpanid_hex, sizeof(extpanid_hex));
+        cJSON_AddStringToObject(thread_data, "extended_pan_id", extpanid_hex);
+
         cJSON_AddItemToObject(data, "thread_credentials", thread_data);
+    } else {
+        ESP_LOGE(TAG, "Failed to get Thread credentials: %s", esp_err_to_name(thread_err));
     }
 #endif
 
@@ -689,6 +699,10 @@ static void handle_get_provision_data(const char *cmd_id, cJSON *params)
         char network_key_hex[33];
         thread_br_get_network_key_hex(network_key_hex, sizeof(network_key_hex));
         cJSON_AddStringToObject(thread_data, "network_key", network_key_hex);
+
+        char extpanid_hex[17];
+        thread_br_get_extpanid_hex(extpanid_hex, sizeof(extpanid_hex));
+        cJSON_AddStringToObject(thread_data, "extended_pan_id", extpanid_hex);
 
         cJSON_AddItemToObject(data, "thread_credentials", thread_data);
     }
