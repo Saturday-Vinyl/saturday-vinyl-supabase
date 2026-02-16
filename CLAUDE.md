@@ -19,147 +19,35 @@ The Saturday Admin App is a Flutter application used by employees of Saturday (a
 - **Devices**: ESP32 family (ESP32, ESP32-S3, ESP32-C6, ESP32-H2)
 - **Protocols**: Service Mode (USB serial), BLE Provisioning
 
-## Database Migrations
+## Database Schema (Centralized)
 
-### Naming Convention
+All database migrations and edge functions are managed centrally in `shared-supabase/`. This is a git subtree from [saturday-vinyl-supabase](https://github.com/Saturday-Vinyl/saturday-vinyl-supabase), shared across all Saturday Vinyl projects.
 
-All migrations MUST use timestamp-based naming:
+- **Full schema reference:** `shared-supabase/schema/SCHEMA.md`
+- **All migrations:** `shared-supabase/supabase/migrations/`
+- **Migration conventions & RLS patterns:** `shared-supabase/CLAUDE.md`
+- **Data model concepts:** `shared-docs/concepts/data_model.md`
 
-```
-YYYYMMDDHHMMSS_description.sql
-```
+### CLI Commands
 
-Example: `20260123143000_add_user_preferences.sql`
+```bash
+# List migration status against remote
+supabase migration list --workdir shared-supabase
 
-### Idempotency Requirement
+# Check for schema drift
+supabase db diff --workdir shared-supabase
 
-**All migrations MUST be idempotent** - safe to run multiple times without error or data loss.
+# Dry-run pending migrations
+supabase db push --workdir shared-supabase --dry-run
 
-Required patterns:
-
-```sql
--- Tables: Always use IF NOT EXISTS
-CREATE TABLE IF NOT EXISTS my_table (...);
-
--- Indexes: Always use IF NOT EXISTS
-CREATE INDEX IF NOT EXISTS idx_name ON table(column);
-
--- Policies: Drop before create
-DROP POLICY IF EXISTS "policy_name" ON table;
-CREATE POLICY "policy_name" ON table ...;
-
--- Triggers: Drop before create
-DROP TRIGGER IF EXISTS trigger_name ON table;
-CREATE TRIGGER trigger_name ...;
-
--- Columns: Check existence first
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_name = 'my_table' AND column_name = 'new_column'
-  ) THEN
-    ALTER TABLE my_table ADD COLUMN new_column TYPE;
-  END IF;
-END $$;
-
--- Constraints: Check existence first
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint WHERE conname = 'constraint_name'
-  ) THEN
-    ALTER TABLE my_table ADD CONSTRAINT constraint_name CHECK (...);
-  END IF;
-END $$;
-
--- Enum values: Use exception handling
-DO $$
-BEGIN
-  ALTER TYPE my_enum ADD VALUE 'new_value';
-EXCEPTION
-  WHEN duplicate_object THEN NULL;
-END $$;
+# Create a new migration (use admin_ prefix for this project)
+supabase migration new admin_description --workdir shared-supabase
 ```
 
-### Migration Header
+### Pushing migrations to the central repo
 
-Every migration file should include:
-
-```sql
--- ============================================================================
--- Migration: YYYYMMDDHHMMSS_description.sql
--- Description: Brief description of what this migration does
--- Date: YYYY-MM-DD
--- Idempotent: Yes - safe to run multiple times
--- ============================================================================
-```
-
-### Migration Location
-
-Migrations are stored in: `supabase/migrations/`
-
-### Row Level Security (RLS) Policies
-
-**CRITICAL: User ID Mapping**
-
-This project uses a custom `users` table separate from Supabase's `auth.users`. The tables are linked via:
-
-- `users.auth_user_id` → `auth.users.id` (Supabase auth UUID)
-- `users.id` → Application-level user ID (used for foreign keys in other tables)
-
-When writing RLS policies that check user permissions, **always use `auth_user_id`** to compare against `auth.uid()`:
-
-```sql
--- CORRECT: Use auth_user_id for auth.uid() comparison
-CREATE POLICY "Admins can insert records"
-ON my_table FOR INSERT
-TO authenticated
-WITH CHECK (
-  EXISTS (
-    SELECT 1 FROM users u
-    WHERE u.auth_user_id = auth.uid()  -- ✓ Correct
-    AND u.is_admin = true
-  )
-);
-
--- WRONG: Do NOT use users.id for auth.uid() comparison
-CREATE POLICY "Admins can insert records"
-ON my_table FOR INSERT
-TO authenticated
-WITH CHECK (
-  EXISTS (
-    SELECT 1 FROM users u
-    WHERE u.id = auth.uid()  -- ✗ Wrong - will never match!
-    AND u.is_admin = true
-  )
-);
-```
-
-**Standard RLS Policy Pattern**
-
-For tables that require admin or specific permissions:
-
-```sql
--- Read policy (usually open to all authenticated users)
-CREATE POLICY "Authenticated users can read"
-ON my_table FOR SELECT
-TO authenticated
-USING (true);
-
--- Write policies (check permissions via users table)
-CREATE POLICY "Admins can insert"
-ON my_table FOR INSERT
-TO authenticated
-WITH CHECK (
-  EXISTS (
-    SELECT 1 FROM users u
-    LEFT JOIN user_permissions up ON up.user_id = u.id
-    LEFT JOIN permissions p ON p.id = up.permission_id
-    WHERE u.auth_user_id = auth.uid()
-    AND (u.is_admin = true OR p.name = 'relevant_permission')
-  )
-);
+```bash
+git subtree push --prefix=shared-supabase shared-supabase main
 ```
 
 ## Key Directories
@@ -171,7 +59,8 @@ WITH CHECK (
 - `lib/screens/` - UI screens
 - `lib/services/` - Business logic services
 - `lib/widgets/` - Reusable widgets
-- `supabase/migrations/` - Database migrations
+- `shared-supabase/` - Centralized Supabase migrations and edge functions (git subtree)
+- `shared-docs/` - Cross-project protocols and documentation (git subtree)
 - `.claude/commands/` - Claude Code skill definitions
 
 ## Protocol Documentation

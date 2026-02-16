@@ -1,5 +1,5 @@
 {
   "scripts": {
-    "setup": "ln -s \"$CONDUCTOR_ROOT_PATH/.env\" .env; git subtree pull --prefix=shared-docs shared-docs main --squash -m \"Merge shared-docs updates\""
+    "setup": "ln -s \"$CONDUCTOR_ROOT_PATH/.env\" .env; git subtree pull --prefix=shared-docs shared-docs main --squash -m \"Merge shared-docs updates\"; git subtree pull --prefix=shared-supabase shared-supabase main --squash -m \"Merge shared-supabase updates\""
   }
 }

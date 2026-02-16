@@ -711,9 +711,7 @@ The `configuration` field allows per-device-type customization of the capability
 
 ### Embedding Capability Schemas
 
-Firmware can embed capability schemas at compile time or fetch them from the cloud. The recommended approach is to generate a firmware manifest JSON that includes relevant schema information.
-
-See [Firmware Manifest Schema](firmware_manifest_schema.md) for the manifest format.
+Firmware can embed capability schemas at compile time or fetch them from the cloud. The recommended approach is to use the `get_capabilities` command (see the [Device Command Protocol](../protocols/device_command_protocol.md)) to return capability information.
 
 ### Validating Provisioning Data
 

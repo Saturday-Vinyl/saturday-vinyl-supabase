@@ -22,11 +22,13 @@
 6. [Heartbeat Protocol](#heartbeat-protocol)
 7. [Command Acknowledgement Protocol](#command-acknowledgement-protocol)
 8. [Capability Model](#capability-model)
-9. [Attribute Schema Reference](#attribute-schema-reference)
-10. [Error Codes](#error-codes)
-11. [Migration from Service Mode Protocol](#migration-from-service-mode-protocol)
-12. [Implementation Reference](#implementation-reference)
-13. [Version History](#version-history)
+9. [Firmware JSON Schema](#firmware-json-schema)
+10. [ESP-IDF Implementation Guide](#esp-idf-implementation-guide)
+11. [Attribute Schema Reference](#attribute-schema-reference)
+12. [Error Codes](#error-codes)
+13. [Migration from Service Mode Protocol](#migration-from-service-mode-protocol)
+14. [Implementation Reference](#implementation-reference)
+15. [Version History](#version-history)
 
 ---
 
