@@ -1,109 +1,114 @@
-# Saturday! Admin App
+# Saturday Vinyl Shared Documentation
 
-A Flutter-based administration application for Saturday Vinyl, managing production workflows, RFID tag tracking, and firmware provisioning.
+Central repository for Saturday Vinyl technical documentation shared across all projects.
 
-## Getting Started
+## Contents
 
-### Prerequisites
+### Concepts
+- **[Data Model](concepts/data_model.md)** - Core entity relationships (Units, Devices, Products, Device Types, Capabilities, Firmware)
 
-- Flutter SDK (stable channel)
-- macOS for desktop development
-- Supabase project (see `.env.example` for required configuration)
+### Protocols
+- **[BLE Provisioning Protocol](protocols/ble_provisioning_protocol.md)** - BLE GATT interface for mobile app device provisioning
+- **[Device Command Protocol](protocols/device_command_protocol.md)** - Unified command interface for device communication
+- **[Service Mode Protocol](protocols/service_mode_protocol.md)** - USB serial interface for factory provisioning and diagnostics
 
-### Setup
+### Schemas
+- **[Capability Schema](schemas/capability_schema.md)** - Capability definition and attribute schema specification
 
-1. Copy `.env.example` to `.env` and fill in your credentials
-2. Run `flutter pub get`
-3. Run migrations against your Supabase project (see `supabase/migrations/`)
-4. Run `flutter run -d macos` for desktop
+### Templates
+- **[Claude Command Templates](templates/claude-commands/)** - Slash command wrappers for Claude Code integration
 
-## Architecture
+## Usage
 
-### State Management
+### Adding to a New Project
 
-This app uses **Riverpod** for state management. Key patterns:
-
-- `Provider` for singletons (repositories, services)
-- `FutureProvider` for async data fetching
-- `FutureProvider.family` for parameterized queries
-- `StateNotifierProvider` for complex state with actions
-
-### Project Structure
-
-```
-lib/
-├── config/          # Theme, constants, configuration
-├── models/          # Data models (Equatable classes with fromJson/toJson)
-├── providers/       # Riverpod providers and state notifiers
-├── repositories/    # Supabase database operations
-├── screens/         # Full-page UI screens
-├── services/        # External service integrations (serial, printing, etc.)
-├── utils/           # Utilities and helpers
-└── widgets/         # Reusable UI components
+**Step 1:** Clone this repo locally (one-time, anywhere on your machine):
+```bash
+git clone https://github.com/Saturday-Vinyl/saturday-vinyl-shared-docs.git ~/saturday-vinyl-shared-docs
+chmod +x ~/saturday-vinyl-shared-docs/scripts/setup-shared-docs.sh
 ```
 
-### Key Features
-
-- **Production Tracking**: QR-based unit tracking through production steps
-- **RFID Tag Management**: UHF RFID tag writing and tracking
-- **Firmware Management**: Upload and flash firmware to embedded devices
-- **Label Printing**: Thermal label printing via Niimbot printers
-
-## RFID Tag Rolls
-
-The app supports roll-based RFID tag writing for batch operations. See `prompts/roll_based_rfid_workflow.md` for the full specification.
-
-### Roll Workflow
-
-1. **Create Roll**: Register a new roll with label dimensions and count
-2. **Write Phase**: Write EPCs to tags one at a time using RSSI-based identification
-3. **Print Phase**: Batch print QR labels in roll order via Niimbot printer
-
-### Database Tables
-
-- `rfid_tag_rolls`: Roll metadata (dimensions, status, print progress)
-- `rfid_tags`: Individual tags with optional `roll_id` and `roll_position`
-
-## Hardware Integration
-
-### UHF RFID Module (YRM100)
-
-- Serial connection at 115200 baud
-- See `docs/uhf_rfid_technical.md` for protocol details
-
-### Niimbot Thermal Printer
-
-- Direct serial communication (not OS print drivers)
-- See `lib/services/niimbot/` for implementation
-
-## Development Notes
-
-### Adding New Providers
-
-Follow the pattern in existing provider files:
-
-```dart
-// Repository provider (singleton)
-final myRepositoryProvider = Provider<MyRepository>((ref) {
-  return MyRepository();
-});
-
-// Data provider (auto-refresh on dependencies)
-final myDataProvider = FutureProvider<MyData>((ref) async {
-  final repo = ref.watch(myRepositoryProvider);
-  return await repo.getData();
-});
-
-// Management actions (invalidate caches after mutations)
-final myManagementProvider = Provider((ref) => MyManagement(ref));
+**Step 2:** Run the setup script from your project root:
+```bash
+# From your project directory (e.g., ~/projects/my-saturday-app)
+~/saturday-vinyl-shared-docs/scripts/setup-shared-docs.sh
 ```
 
-### Database Migrations
+**Alternative: Manual setup**
+```bash
+git remote add shared-docs https://github.com/Saturday-Vinyl/saturday-vinyl-shared-docs.git
+git subtree add --prefix=shared-docs shared-docs main --squash
+mkdir -p ./.claude/commands
+cp ./shared-docs/templates/claude-commands/*.md ./.claude/commands/
+```
 
-Migrations are in `supabase/migrations/` with numeric prefixes. Apply them in order to your Supabase project via the SQL editor.
+### Pulling Updates
 
-## Resources
+When the central docs are updated, pull changes into your project:
 
-- [Flutter Documentation](https://docs.flutter.dev/)
-- [Riverpod Documentation](https://riverpod.dev/)
-- [Supabase Documentation](https://supabase.com/docs)
+```bash
+git subtree pull --prefix=shared-docs shared-docs main --squash -m "Merge shared-docs updates"
+```
+
+### Contributing Changes
+
+Edit docs locally in the `./shared-docs/` directory, commit as usual, then push upstream:
+
+```bash
+# 1. Edit the doc
+vim ./shared-docs/protocols/ble_provisioning_protocol.md
+
+# 2. Commit locally
+git add ./shared-docs/
+git commit -m "Update BLE protocol: add new characteristic"
+
+# 3. Push to central repo
+git subtree push --prefix=shared-docs shared-docs main
+```
+
+## Claude Code Integration
+
+After setup, these slash commands are available:
+
+| Command | Description |
+|---------|-------------|
+| `/ble-provisioning` | Load BLE Provisioning Protocol into context |
+| `/service-mode` | Load Service Mode Protocol into context |
+
+You can also reference docs directly in prompts:
+```
+Read @./shared-docs/protocols/ble_provisioning_protocol.md and implement the Status characteristic handler.
+```
+
+## Directory Structure
+
+```
+saturday-vinyl-shared-docs/
+├── README.md                    # This file
+├── concepts/                    # Architectural concepts
+│   └── data_model.md            # Core entity relationships
+├── protocols/                   # Protocol specifications
+│   ├── ble_provisioning_protocol.md
+│   ├── device_command_protocol.md
+│   ├── led_status_protocol.md
+│   └── service_mode_protocol.md
+├── schemas/                     # Schema specifications
+│   └── capability_schema.md
+├── templates/
+│   └── claude-commands/         # Claude Code command templates
+│       ├── ble-provisioning.md
+│       └── service-mode.md
+└── scripts/
+    └── setup-shared-docs.sh     # Project setup script
+```
+
+## Projects Using This
+
+- **sv-hub-firmware** - Saturday Vinyl Hub (ESP32-S3 + ESP32-H2)
+- **saturday-mobile-app** - Consumer mobile app (Flutter)
+- **saturday-admin-app** - Factory/technician desktop app (Flutter)
+- (Future firmware projects)
+
+---
+
+*This repository is proprietary to Saturday Vinyl. Do not distribute externally.*
