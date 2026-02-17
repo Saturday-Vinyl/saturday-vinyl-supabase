@@ -528,7 +528,11 @@ Devices may include the following capability-specific fields in their heartbeats
 
 ### Storage
 
-Heartbeats are stored in the `device_heartbeats` table with automatic cleanup (24-hour retention).
+Heartbeats are stored in the `device_heartbeats` table with automatic cleanup (24-hour retention). The complete telemetry payload is stored as JSONB in the `telemetry` column. Routing fields (`mac_address`, `unit_id`, `device_type`, `type`, `command_id`) are stored as typed columns for indexing.
+
+On each INSERT, a trigger (`sync_heartbeat_to_device_and_unit`) automatically:
+1. Updates `devices.latest_telemetry` and `devices.last_seen_at` (matched by `mac_address`)
+2. Aggregates consumer-facing fields to typed columns on the `units` table (`battery_level`, `is_online`, `wifi_rssi`, `temperature_c`, `humidity_pct`, etc.) matched by `unit_id` → `units.serial_number`
 
 ### Relayed Heartbeats
 

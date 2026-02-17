@@ -35,7 +35,7 @@
     "ip_address",
     "thread",
     "free_heap",
-    "uptime_ms",
+    "uptime_sec",
     "last_tests"
   ],
   "ota_commands": ["check_ota", "start_ota", "get_ota_status"],

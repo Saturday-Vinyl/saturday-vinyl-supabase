@@ -295,11 +295,12 @@ static int format_heartbeat_json(char *buf, size_t buf_len)
         "\"unit_id\":\"%s\","
         "\"device_type\":\"%s\","
         "\"firmware_version\":\"%s\","
+        "\"telemetry\":{"
         "\"uptime_sec\":%lu,"
         "\"free_heap\":%lu,"
         "\"min_free_heap\":%lu,"
         "\"largest_free_block\":%lu,"
-        "\"wifi_rssi\":%d}",
+        "\"wifi_rssi\":%d}}",
         mac_str,
         unit_id,
         DEVICE_TYPE,

@@ -186,7 +186,7 @@ static void get_mac_address_colon(char *mac_str, size_t len)
  * - uptime_sec, free_heap, min_free_heap, largest_free_block
  * - wifi_rssi (capability field)
  */
-static void build_standard_heartbeat_fields(cJSON *heartbeat)
+static cJSON *build_standard_heartbeat_fields(cJSON *heartbeat)
 {
     /* MAC address as primary identifier */
     char mac_str[18];
@@ -202,16 +202,22 @@ static void build_standard_heartbeat_fields(cJSON *heartbeat)
     cJSON_AddStringToObject(heartbeat, "device_type", DEVICE_TYPE);
     cJSON_AddStringToObject(heartbeat, "firmware_version", FW_VERSION_STRING);
 
+    /* Create telemetry sub-object for all measurement fields */
+    cJSON *telemetry = cJSON_AddObjectToObject(heartbeat, "telemetry");
+    if (telemetry == NULL) {
+        return NULL;
+    }
+
     /* System metrics */
     uint32_t uptime_sec = (uint32_t)(esp_timer_get_time() / 1000000);
     uint32_t free_heap = (uint32_t)esp_get_free_heap_size();
     uint32_t min_free_heap = (uint32_t)esp_get_minimum_free_heap_size();
     uint32_t largest_free_block = (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
 
-    cJSON_AddNumberToObject(heartbeat, "uptime_sec", uptime_sec);
-    cJSON_AddNumberToObject(heartbeat, "free_heap", free_heap);
-    cJSON_AddNumberToObject(heartbeat, "min_free_heap", min_free_heap);
-    cJSON_AddNumberToObject(heartbeat, "largest_free_block", largest_free_block);
+    cJSON_AddNumberToObject(telemetry, "uptime_sec", uptime_sec);
+    cJSON_AddNumberToObject(telemetry, "free_heap", free_heap);
+    cJSON_AddNumberToObject(telemetry, "min_free_heap", min_free_heap);
+    cJSON_AddNumberToObject(telemetry, "largest_free_block", largest_free_block);
 
     /* WiFi capability heartbeat field */
     int8_t wifi_rssi = 0;
@@ -219,7 +225,9 @@ static void build_standard_heartbeat_fields(cJSON *heartbeat)
     if (wifi_get_status(&wifi_status) == ESP_OK) {
         wifi_rssi = wifi_status.rssi;
     }
-    cJSON_AddNumberToObject(heartbeat, "wifi_rssi", wifi_rssi);
+    cJSON_AddNumberToObject(telemetry, "wifi_rssi", wifi_rssi);
+
+    return telemetry;
 }
 
 /**
@@ -291,7 +299,7 @@ static esp_err_t send_command_ack_heartbeat(const char *command_id)
  * all standard fields plus:
  * - type: "command_result"
  * - command_id: UUID of the command
- * - heartbeat_data: Object containing:
+ * - telemetry: Object containing standard metrics plus:
  *   - status: "completed" or "failed"
  *   - result: Command result data (for successful commands)
  *   - error_message: Error description (for failed commands)
@@ -317,26 +325,29 @@ static esp_err_t send_command_result_heartbeat(const char *command_id, bool succ
         return ESP_ERR_NO_MEM;
     }
 
-    /* Add all standard heartbeat fields */
-    build_standard_heartbeat_fields(heartbeat);
+    /* Add standard heartbeat fields and get telemetry sub-object */
+    cJSON *telemetry = build_standard_heartbeat_fields(heartbeat);
+    if (telemetry == NULL) {
+        cJSON_Delete(heartbeat);
+        return ESP_ERR_NO_MEM;
+    }
 
     /* Add command result fields */
     cJSON_AddStringToObject(heartbeat, "type", "command_result");
     cJSON_AddStringToObject(heartbeat, "command_id", command_id);
 
-    /* Build heartbeat_data object */
-    cJSON *heartbeat_data = cJSON_AddObjectToObject(heartbeat, "heartbeat_data");
-    cJSON_AddStringToObject(heartbeat_data, "status", success ? "completed" : "failed");
+    /* Add command result data into the telemetry object */
+    cJSON_AddStringToObject(telemetry, "status", success ? "completed" : "failed");
 
     if (success && result != NULL) {
         cJSON *result_copy = cJSON_Duplicate(result, true);
         if (result_copy != NULL) {
-            cJSON_AddItemToObject(heartbeat_data, "result", result_copy);
+            cJSON_AddItemToObject(telemetry, "result", result_copy);
         }
     }
 
     if (!success && error_message != NULL) {
-        cJSON_AddStringToObject(heartbeat_data, "error_message", error_message);
+        cJSON_AddStringToObject(telemetry, "error_message", error_message);
     }
 
     char *json_str = cJSON_PrintUnformatted(heartbeat);
