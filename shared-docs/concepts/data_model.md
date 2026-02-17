@@ -261,16 +261,22 @@ Many Saturday products contain multiple embedded electronic modules:
 
 ### Data Aggregation: Device → Unit
 
-Devices report telemetry via heartbeats. This data must be aggregated to the Unit level for consumer visibility:
+Devices report telemetry via heartbeats. A database trigger (`sync_heartbeat_to_device_and_unit`) automatically aggregates selected fields to the `units` table on each heartbeat:
 
-| Device Reports | Unit Shows |
-|----------------|------------|
-| Device 1: `wifi_rssi: -55` | `online: true` |
-| Device 2: `rfid_tag_count: 3` | `current_records: 3` |
-| Device 1: `temperature_c: 22.5` | `temperature: 22.5°C` |
-| Device 1: `free_heap: 245760` | (not shown to consumer) |
+| Device Reports (heartbeat) | Unit Column Updated | Consumer Sees |
+|----------------------------|--------------------|----|
+| Device 1: `wifi_rssi: -55` | `units.wifi_rssi`, `units.is_online = true` | "Online", signal strength |
+| Device 1: `battery_level: 85` | `units.battery_level`, `units.is_charging` | Battery indicator |
+| Device 1: `temperature_c: 22.5` | `units.temperature_c` | Temperature reading |
+| Device 2: `rfid_tag_count: 3` | (not a unit-level column) | (via separate mechanism) |
+| Device 1: `free_heap: 245760` | `devices.latest_telemetry` only | (not shown to consumer) |
 
-**Key principle:** Consumer-facing attributes belong on the Unit. Device-level telemetry is aggregated/transformed before surfacing to users.
+**Key principles:**
+- Consumer-facing telemetry lives as typed columns on the `units` table
+- The heartbeat trigger uses `COALESCE` so multi-device units work correctly (an RFID reader heartbeat won't null out battery data set by the main controller)
+- `units.last_seen_at` uses `GREATEST(existing, new)` so the most recent heartbeat from ANY device in the unit wins
+- `units.is_online` is set `true` by the trigger and `false` by a 1-minute cron job when `last_seen_at` exceeds the offline threshold
+- Apps subscribe to `units` via Supabase Realtime to get telemetry updates
 
 ### Serial Number Assignment
 
@@ -340,20 +346,35 @@ Admin App                  Device                     Cloud (Supabase)
 ### Heartbeat Data Flow
 
 ```
-Device                          Cloud                      Consumer App
-   │                              │                             │
-   │  POST /device_heartbeats     │                             │
-   │  {mac, unit_id, telemetry}   │                             │
-   │ ─────────────────────────────►                             │
-   │                              │                             │
-   │                              │  (trigger aggregates to     │
-   │                              │   unit-level metrics)       │
-   │                              │                             │
-   │                              │  Realtime: unit_updates     │
-   │                              │ ─────────────────────────────►
-   │                              │                             │
-   │                              │                (shows "Online",
-   │                              │                 temperature, etc.)
+Device                          Cloud (Supabase)               Consumer App
+   │                              │                                  │
+   │  INSERT device_heartbeats    │                                  │
+   │  {mac, unit_id, telemetry}   │                                  │
+   │ ─────────────────────────────►                                  │
+   │                              │                                  │
+   │                     ┌────────┴────────┐                         │
+   │                     │ Trigger fires:  │                         │
+   │                     │ sync_heartbeat_ │                         │
+   │                     │ to_device_and_  │                         │
+   │                     │ unit()          │                         │
+   │                     ├─────────────────┤                         │
+   │                     │ 1. UPDATE       │                         │
+   │                     │    devices      │                         │
+   │                     │    (telemetry,  │                         │
+   │                     │     last_seen)  │                         │
+   │                     │ 2. UPDATE       │                         │
+   │                     │    units        │                         │
+   │                     │    (battery,    │                         │
+   │                     │     is_online,  │                         │
+   │                     │     wifi_rssi,  │                         │
+   │                     │     temp, etc.) │                         │
+   │                     └────────┬────────┘                         │
+   │                              │                                  │
+   │                              │  Realtime: units table change    │
+   │                              │ ──────────────────────────────────►
+   │                              │                                  │
+   │                              │            (shows battery, online │
+   │                              │             status, temp, etc.)  │
 ```
 
 ---
@@ -374,8 +395,16 @@ product_device_types (product_id, device_type_id)
 device_type_capabilities (device_type_id, capability_id, configuration)
 
 -- Instance Layer
-units (id, serial_number, product_id, owner_id, ...)
-devices (id, mac_address, device_type_id, unit_id, provision_data, last_seen_at, ...)
+units (id, serial_number, product_id, consumer_user_id, status,
+       -- Consumer-facing telemetry (updated by heartbeat trigger):
+       last_seen_at, is_online, battery_level, is_charging,
+       wifi_rssi, temperature_c, humidity_pct, firmware_version, ...)
+devices (id, mac_address, device_type_slug, unit_id, provision_data,
+         last_seen_at, latest_telemetry, ...)
+
+-- Telemetry
+device_heartbeats (id, mac_address, unit_id, device_type, type,
+                   command_id, telemetry, created_at)
 ```
 
 ### Key Foreign Keys
@@ -405,7 +434,11 @@ devices (id, mac_address, device_type_id, unit_id, provision_data, last_seen_at,
 
 ### ❌ "Heartbeat data goes directly to the consumer app"
 
-**Correct:** Heartbeats are Device-level telemetry stored in `device_heartbeats`. This data must be aggregated to Unit-level metrics before showing to consumers. Not all device telemetry is consumer-relevant (e.g., `free_heap`, `min_free_heap`).
+**Correct:** Heartbeats are Device-level telemetry stored in `device_heartbeats` as JSONB. A database trigger automatically aggregates selected fields to typed columns on the `units` table (`battery_level`, `is_online`, `wifi_rssi`, `temperature_c`, `humidity_pct`). Consumer apps subscribe to `units` via Supabase Realtime - they never read `device_heartbeats` or `devices` directly. Not all device telemetry is consumer-relevant (e.g., `free_heap`, `min_free_heap` stay on `devices.latest_telemetry` only).
+
+### ❌ "Consumer apps need to subscribe to the devices table"
+
+**Correct:** Consumer apps subscribe to the `units` table only. All consumer-facing telemetry is promoted to typed columns on `units` by the heartbeat trigger. The `devices` table is for admin/engineering use.
 
 ### ❌ "Each Device Type has one firmware file"
 
@@ -418,6 +451,7 @@ devices (id, mac_address, device_type_id, unit_id, provision_data, last_seen_at,
 | Version | Date | Changes |
 |---------|------|---------|
 | 1.0.0 | 2026-02-06 | Initial data model documentation |
+| 1.1.0 | 2026-02-16 | Added unit-level telemetry columns, heartbeat JSONB storage, updated data flow diagram |
 
 ---
 

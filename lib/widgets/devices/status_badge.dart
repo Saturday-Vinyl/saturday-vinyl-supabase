@@ -103,8 +103,6 @@ class ConnectivityStatusBadge extends StatelessWidget {
     switch (connectivityStatus) {
       case ConnectivityStatus.online:
         return SaturdayColors.success;
-      case ConnectivityStatus.uncertain:
-        return SaturdayColors.warning;
       case ConnectivityStatus.offline:
         return SaturdayColors.secondary;
       case ConnectivityStatus.setupRequired:
@@ -116,8 +114,6 @@ class ConnectivityStatusBadge extends StatelessWidget {
     switch (connectivityStatus) {
       case ConnectivityStatus.online:
         return 'Online';
-      case ConnectivityStatus.uncertain:
-        return 'Connecting...';
       case ConnectivityStatus.offline:
         return 'Offline';
       case ConnectivityStatus.setupRequired:
@@ -244,8 +240,6 @@ class ConnectivityStatusChip extends StatelessWidget {
     switch (connectivityStatus) {
       case ConnectivityStatus.online:
         return SaturdayColors.success;
-      case ConnectivityStatus.uncertain:
-        return SaturdayColors.warning;
       case ConnectivityStatus.offline:
         return SaturdayColors.secondary;
       case ConnectivityStatus.setupRequired:
@@ -257,8 +251,6 @@ class ConnectivityStatusChip extends StatelessWidget {
     switch (connectivityStatus) {
       case ConnectivityStatus.online:
         return 'Online';
-      case ConnectivityStatus.uncertain:
-        return 'Connecting...';
       case ConnectivityStatus.offline:
         return 'Offline';
       case ConnectivityStatus.setupRequired:

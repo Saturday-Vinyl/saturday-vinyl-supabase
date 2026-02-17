@@ -1,7 +1,5 @@
 import 'package:equatable/equatable.dart';
 
-import 'hardware_device.dart';
-
 /// Type of Saturday device.
 enum DeviceType {
   hub,
@@ -86,20 +84,15 @@ enum DeviceStatus {
   }
 }
 
-/// Connectivity status derived from heartbeat staleness.
+/// Connectivity status of a device.
 ///
-/// This represents the app's understanding of device connectivity based on
-/// how recently a heartbeat was received, rather than the database status field.
+/// Determined server-side: `is_online` is set true by the heartbeat trigger
+/// and set false by a 1-minute cron job.
 enum ConnectivityStatus {
-  /// Device has sent a heartbeat within the expected interval.
+  /// Device is online (recent heartbeat received).
   online,
 
-  /// Device hasn't sent a heartbeat recently but may still be connected.
-  /// Shown after [Device.maybeOfflineThreshold] without a heartbeat.
-  uncertain,
-
-  /// Device is definitively offline.
-  /// Either explicitly marked offline or no heartbeat for [Device.offlineThreshold].
+  /// Device is offline.
   offline,
 
   /// Device requires initial setup.
@@ -108,18 +101,10 @@ enum ConnectivityStatus {
 
 /// Represents a Saturday device from the user's perspective.
 ///
-/// This is a combined view that joins data from the `units` table (ownership,
-/// naming, provisioning) with the `devices` table (hardware, firmware, telemetry).
-///
-/// For backwards compatibility, this class also supports parsing from the legacy
-/// `consumer_devices` table format.
+/// This is a combined view that reads ownership/naming/provisioning and
+/// telemetry data from the `units` table, with an optional join to `devices`
+/// for hardware-level detail (MAC address, provision data).
 class Device extends Equatable {
-  /// Duration after which a device is considered "maybe offline" if no heartbeat.
-  static const Duration maybeOfflineThreshold = Duration(minutes: 5);
-
-  /// Duration after which a device is definitively considered offline.
-  static const Duration offlineThreshold = Duration(minutes: 10);
-
   // === Identification (from units table) ===
 
   /// Unit ID (primary identifier).
@@ -140,10 +125,12 @@ class Device extends Equatable {
   /// Device status.
   final DeviceStatus status;
 
-  // === Hardware info (from devices table) ===
+  // === Hardware info (from devices join) ===
 
   /// MAC address of the hardware device.
   final String? macAddress;
+
+  // === Telemetry (from units table columns) ===
 
   /// Current firmware version.
   final String? firmwareVersion;
@@ -151,11 +138,23 @@ class Device extends Equatable {
   /// Battery level (0-100), only applicable for battery-powered devices.
   final int? batteryLevel;
 
+  /// Whether the device is currently online (from `units.is_online`).
+  final bool? isOnlineDb;
+
+  /// Whether the device is currently charging.
+  final bool? isCharging;
+
+  /// WiFi signal strength in dBm.
+  final int? wifiRssi;
+
+  /// Temperature in Celsius.
+  final double? temperatureC;
+
+  /// Humidity percentage.
+  final double? humidityPct;
+
   /// When the device was last seen (heartbeat received).
   final DateTime? lastSeenAt;
-
-  /// Full telemetry data from latest heartbeat.
-  final DeviceTelemetry? telemetry;
 
   // === Metadata ===
 
@@ -165,14 +164,6 @@ class Device extends Equatable {
   /// Provision data (WiFi, Thread config) - stored for reference.
   /// Uses flattened structure: { wifi_ssid, thread_dataset, thread_network_name }
   final Map<String, dynamic>? provisionData;
-
-  /// Legacy consumer attributes field (for backwards compatibility).
-  @Deprecated('Use provisionData instead')
-  final Map<String, dynamic>? consumerAttributes;
-
-  /// Legacy settings field (for backwards compatibility).
-  @Deprecated('Use provisionData instead')
-  final Map<String, dynamic>? settings;
 
   const Device({
     required this.id,
@@ -184,97 +175,80 @@ class Device extends Equatable {
     this.firmwareVersion,
     this.status = DeviceStatus.offline,
     this.batteryLevel,
+    this.isOnlineDb,
+    this.isCharging,
+    this.wifiRssi,
+    this.temperatureC,
+    this.humidityPct,
     this.lastSeenAt,
-    this.telemetry,
     required this.createdAt,
     this.provisionData,
-    this.consumerAttributes,
-    this.settings,
   });
 
-  /// Parse from legacy consumer_devices table format.
-  ///
-  /// This is used for backwards compatibility during migration.
+  /// Parse from legacy consumer_devices table or cache format.
   @Deprecated('Use Device.fromJoinedJson for new unified schema')
   factory Device.fromJson(Map<String, dynamic> json) {
     return Device(
       id: json['id'] as String,
-      userId: json['user_id'] as String,
+      userId: json['user_id'] as String? ?? '',
       deviceType: DeviceType.fromString(json['device_type'] as String?),
       name: json['name'] as String? ?? json['device_name'] as String? ?? '',
-      serialNumber: json['serial_number'] as String,
+      serialNumber: json['serial_number'] as String? ?? '',
       firmwareVersion: json['firmware_version'] as String?,
       status: DeviceStatus.fromString(json['status'] as String? ?? 'offline'),
       batteryLevel: json['battery_level'] as int?,
+      isOnlineDb: json['is_online'] as bool?,
       lastSeenAt: json['last_seen_at'] != null
           ? DateTime.parse(json['last_seen_at'] as String)
           : null,
-      createdAt: DateTime.parse(json['created_at'] as String),
-      settings: json['settings'] as Map<String, dynamic>?,
+      createdAt: DateTime.parse(
+          json['created_at'] as String? ?? DateTime.now().toIso8601String()),
     );
   }
 
   /// Parse from joined units + devices query result.
   ///
+  /// Telemetry fields are read directly from the unit row columns.
+  /// The `devices` join is only used for `mac_address` and `provision_data`.
+  ///
   /// Expected query format:
   /// ```sql
-  /// SELECT *, devices!left(*) FROM units WHERE user_id = ?
+  /// SELECT *, devices!left(mac_address, provision_data) FROM units WHERE consumer_user_id = ?
   /// ```
   factory Device.fromJoinedJson(Map<String, dynamic> json) {
-    // Parse the nested devices array (from LEFT JOIN)
+    // Parse the nested devices array (from LEFT JOIN) — only for mac_address & provision_data
     final devicesList = json['devices'] as List<dynamic>?;
     Map<String, dynamic>? deviceData;
     if (devicesList != null && devicesList.isNotEmpty) {
       deviceData = devicesList.first as Map<String, dynamic>?;
     }
 
-    // Extract telemetry from device data
-    DeviceTelemetry? telemetry;
-    int? batteryLevel;
-    if (deviceData != null && deviceData['latest_telemetry'] != null) {
-      telemetry = DeviceTelemetry.fromJson(
-          deviceData['latest_telemetry'] as Map<String, dynamic>);
-      batteryLevel = telemetry.batteryLevel;
-    }
-
-    // Parse serial number
     final serialNumber = json['serial_number'] as String;
-
-    // Derive device type from serial number
     final deviceType = DeviceType.fromSerialNumber(serialNumber);
 
-    // Determine status - prefer device status if provisioned, else unit status
+    // Read telemetry directly from unit row columns
+    final isOnlineDb = json['is_online'] as bool?;
+    final batteryLevel = json['battery_level'] as int?;
+    final isCharging = json['is_charging'] as bool?;
+    final wifiRssi = json['wifi_rssi'] as int?;
+    final temperatureC = (json['temperature_c'] as num?)?.toDouble();
+    final humidityPct = (json['humidity_pct'] as num?)?.toDouble();
+    final firmwareVersion = json['firmware_version'] as String?;
+    final lastSeenAt = json['last_seen_at'] != null
+        ? DateTime.parse(json['last_seen_at'] as String)
+        : null;
+
+    // Determine status from unit_status enum + is_online flag
+    // unit_status: 'in_production', 'inventory', 'assigned', 'claimed'
     DeviceStatus status;
     final unitStatus = json['status'] as String?;
-    final deviceStatus = deviceData?['status'] as String?;
-
-    // New unit_status enum: 'in_production', 'inventory', 'assigned', 'claimed'
-    // 'claimed' means the consumer has fully provisioned the device
-    if (unitStatus == 'claimed' && deviceData != null) {
-      // Unit is provisioned, check hardware device status
-      if (deviceStatus == 'online') {
-        status = DeviceStatus.online;
-      } else if (deviceStatus == 'offline') {
-        status = DeviceStatus.offline;
-      } else {
-        // Fallback to checking lastSeenAt
-        final lastSeenStr = deviceData['last_seen_at'] as String?;
-        if (lastSeenStr != null) {
-          final lastSeen = DateTime.parse(lastSeenStr);
-          final elapsed = DateTime.now().difference(lastSeen);
-          status = elapsed < offlineThreshold
-              ? DeviceStatus.online
-              : DeviceStatus.offline;
-        } else {
-          status = DeviceStatus.offline;
-        }
-      }
+    if (unitStatus == 'claimed') {
+      status = (isOnlineDb == true) ? DeviceStatus.online : DeviceStatus.offline;
     } else {
-      // Unit not fully provisioned (in_production, inventory, or assigned)
       status = DeviceStatus.setupRequired;
     }
 
-    // Extract provision_data from the device (not the unit)
+    // Extract provision_data from the device join
     Map<String, dynamic>? provisionData;
     if (deviceData != null && deviceData['provision_data'] != null) {
       provisionData = deviceData['provision_data'] as Map<String, dynamic>?;
@@ -287,17 +261,17 @@ class Device extends Equatable {
       name: json['consumer_name'] as String? ?? serialNumber,
       serialNumber: serialNumber,
       macAddress: deviceData?['mac_address'] as String?,
-      firmwareVersion: deviceData?['firmware_version'] as String?,
+      firmwareVersion: firmwareVersion,
       status: status,
       batteryLevel: batteryLevel,
-      lastSeenAt: deviceData?['last_seen_at'] != null
-          ? DateTime.parse(deviceData!['last_seen_at'] as String)
-          : null,
-      telemetry: telemetry,
+      isOnlineDb: isOnlineDb,
+      isCharging: isCharging,
+      wifiRssi: wifiRssi,
+      temperatureC: temperatureC,
+      humidityPct: humidityPct,
+      lastSeenAt: lastSeenAt,
       createdAt: DateTime.parse(json['created_at'] as String),
       provisionData: provisionData,
-      // Support legacy consumer_attributes for backwards compatibility
-      consumerAttributes: json['consumer_attributes'] as Map<String, dynamic>?,
     );
   }
 
@@ -312,11 +286,14 @@ class Device extends Equatable {
       'firmware_version': firmwareVersion,
       'status': status.toJsonString(),
       'battery_level': batteryLevel,
+      'is_online': isOnlineDb,
+      'is_charging': isCharging,
+      'wifi_rssi': wifiRssi,
+      'temperature_c': temperatureC,
+      'humidity_pct': humidityPct,
       'last_seen_at': lastSeenAt?.toIso8601String(),
       'created_at': createdAt.toIso8601String(),
       'provision_data': provisionData,
-      'consumer_attributes': consumerAttributes,
-      'settings': settings,
     };
   }
 
@@ -330,12 +307,14 @@ class Device extends Equatable {
     String? firmwareVersion,
     DeviceStatus? status,
     int? batteryLevel,
+    bool? isOnlineDb,
+    bool? isCharging,
+    int? wifiRssi,
+    double? temperatureC,
+    double? humidityPct,
     DateTime? lastSeenAt,
-    DeviceTelemetry? telemetry,
     DateTime? createdAt,
     Map<String, dynamic>? provisionData,
-    Map<String, dynamic>? consumerAttributes,
-    Map<String, dynamic>? settings,
   }) {
     return Device(
       id: id ?? this.id,
@@ -347,12 +326,14 @@ class Device extends Equatable {
       firmwareVersion: firmwareVersion ?? this.firmwareVersion,
       status: status ?? this.status,
       batteryLevel: batteryLevel ?? this.batteryLevel,
+      isOnlineDb: isOnlineDb ?? this.isOnlineDb,
+      isCharging: isCharging ?? this.isCharging,
+      wifiRssi: wifiRssi ?? this.wifiRssi,
+      temperatureC: temperatureC ?? this.temperatureC,
+      humidityPct: humidityPct ?? this.humidityPct,
       lastSeenAt: lastSeenAt ?? this.lastSeenAt,
-      telemetry: telemetry ?? this.telemetry,
       createdAt: createdAt ?? this.createdAt,
       provisionData: provisionData ?? this.provisionData,
-      consumerAttributes: consumerAttributes ?? this.consumerAttributes,
-      settings: settings ?? this.settings,
     );
   }
 
@@ -362,8 +343,8 @@ class Device extends Equatable {
   /// Whether this device is a crate.
   bool get isCrate => deviceType == DeviceType.crate;
 
-  /// Whether this device is currently online.
-  bool get isOnline => status == DeviceStatus.online;
+  /// Whether this device is currently online (from backend `is_online` column).
+  bool get isOnline => isOnlineDb == true;
 
   /// Whether this device requires setup.
   bool get needsSetup => status == DeviceStatus.setupRequired;
@@ -371,73 +352,19 @@ class Device extends Equatable {
   /// Whether this device has a low battery (below 20%).
   bool get isLowBattery => batteryLevel != null && batteryLevel! < 20;
 
-  /// Time since the last heartbeat was received.
-  Duration? get timeSinceLastSeen {
-    if (lastSeenAt == null) return null;
-    return DateTime.now().difference(lastSeenAt!);
-  }
-
-  /// Whether the device's heartbeat is stale (past the maybe-offline threshold).
-  bool get isHeartbeatStale {
-    final elapsed = timeSinceLastSeen;
-    if (elapsed == null) return true; // Never seen = stale
-    return elapsed >= maybeOfflineThreshold;
-  }
-
-  /// Whether the device's heartbeat is critically stale (past the offline threshold).
-  bool get isHeartbeatCriticallyStale {
-    final elapsed = timeSinceLastSeen;
-    if (elapsed == null) return true; // Never seen = critically stale
-    return elapsed >= offlineThreshold;
-  }
-
-  /// The derived connectivity status based on heartbeat staleness.
-  ///
-  /// This should be used for UI display instead of [status] directly, as it
-  /// accounts for devices that may have disconnected without sending an
-  /// explicit offline signal.
+  /// The connectivity status, determined server-side.
   ConnectivityStatus get connectivityStatus {
-    // Setup required takes precedence
     if (status == DeviceStatus.setupRequired) {
       return ConnectivityStatus.setupRequired;
     }
-
-    // If explicitly offline in DB, it's offline
-    if (status == DeviceStatus.offline) {
-      return ConnectivityStatus.offline;
+    if (isOnlineDb == true) {
+      return ConnectivityStatus.online;
     }
-
-    // Device claims to be online - verify with heartbeat
-    if (isHeartbeatCriticallyStale) {
-      return ConnectivityStatus.offline;
-    }
-
-    if (isHeartbeatStale) {
-      return ConnectivityStatus.uncertain;
-    }
-
-    return ConnectivityStatus.online;
+    return ConnectivityStatus.offline;
   }
 
-  /// Whether this device is effectively online based on heartbeat.
-  ///
-  /// Use this instead of [isOnline] when you need to account for
-  /// devices that may have disconnected without sending an offline signal.
-  bool get isEffectivelyOnline =>
-      connectivityStatus == ConnectivityStatus.online;
-
-  /// Whether this device's connectivity is uncertain (maybe offline).
-  bool get isConnectivityUncertain =>
-      connectivityStatus == ConnectivityStatus.uncertain;
-
-  /// WiFi RSSI from telemetry (convenience accessor).
-  int? get wifiRssi => telemetry?.wifiRssi;
-
-  /// Thread RSSI from telemetry (convenience accessor).
-  int? get threadRssi => telemetry?.threadRssi;
-
-  /// Device uptime in seconds from telemetry.
-  int? get uptimeSec => telemetry?.uptimeSec;
+  /// Whether this device is effectively online.
+  bool get isEffectivelyOnline => isOnlineDb == true;
 
   @override
   List<Object?> get props => [
@@ -450,11 +377,13 @@ class Device extends Equatable {
         firmwareVersion,
         status,
         batteryLevel,
+        isOnlineDb,
+        isCharging,
+        wifiRssi,
+        temperatureC,
+        humidityPct,
         lastSeenAt,
-        telemetry,
         createdAt,
         provisionData,
-        consumerAttributes,
-        settings,
       ];
 }

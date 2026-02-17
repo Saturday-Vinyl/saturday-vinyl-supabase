@@ -47,6 +47,10 @@ enum HardwareDeviceStatus {
 ///
 /// This represents the latest telemetry received from a device.
 /// The format is flattened (not capability-scoped).
+///
+/// Consumer apps should read telemetry from the typed columns on the `units`
+/// table instead. This class is retained for `HardwareDevice` parsing.
+@Deprecated('Consumer apps should read telemetry from units table columns')
 class DeviceTelemetry extends Equatable {
   /// Unit identifier reported by the device.
   final String? unitId;

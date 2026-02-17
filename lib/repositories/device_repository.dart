@@ -65,7 +65,6 @@ class DeviceRepository extends BaseRepository {
           'status': device.status.toJsonString(),
           'battery_level': device.batteryLevel,
           'last_seen_at': device.lastSeenAt?.toIso8601String(),
-          'settings': device.settings,
         })
         .eq('id', device.id)
         .select()

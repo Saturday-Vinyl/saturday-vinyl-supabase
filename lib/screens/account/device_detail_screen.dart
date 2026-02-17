@@ -121,8 +121,6 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
     switch (status) {
       case ConnectivityStatus.online:
         return SaturdayColors.success;
-      case ConnectivityStatus.uncertain:
-        return SaturdayColors.warning;
       case ConnectivityStatus.offline:
       case ConnectivityStatus.setupRequired:
         return SaturdayColors.secondary;
@@ -221,8 +219,6 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
     switch (status) {
       case ConnectivityStatus.online:
         return 'Online';
-      case ConnectivityStatus.uncertain:
-        return 'Connecting...';
       case ConnectivityStatus.offline:
         return 'Offline';
       case ConnectivityStatus.setupRequired:

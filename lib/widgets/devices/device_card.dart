@@ -29,7 +29,7 @@ class DeviceCard extends StatelessWidget {
 
   String? get _lastSeenText {
     if (device.lastSeenAt == null) return null;
-    final diff = device.timeSinceLastSeen!;
+    final diff = DateTime.now().difference(device.lastSeenAt!);
 
     if (diff.inMinutes < 1) return 'Just now';
     if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
@@ -42,8 +42,6 @@ class DeviceCard extends StatelessWidget {
     switch (device.connectivityStatus) {
       case ConnectivityStatus.online:
         return SaturdayColors.success.withValues(alpha: 0.1);
-      case ConnectivityStatus.uncertain:
-        return SaturdayColors.warning.withValues(alpha: 0.1);
       case ConnectivityStatus.offline:
       case ConnectivityStatus.setupRequired:
         return SaturdayColors.secondary.withValues(alpha: 0.1);
@@ -54,8 +52,6 @@ class DeviceCard extends StatelessWidget {
     switch (device.connectivityStatus) {
       case ConnectivityStatus.online:
         return SaturdayColors.success;
-      case ConnectivityStatus.uncertain:
-        return SaturdayColors.warning;
       case ConnectivityStatus.offline:
       case ConnectivityStatus.setupRequired:
         return SaturdayColors.secondary;
@@ -160,8 +156,6 @@ class DeviceListTile extends StatelessWidget {
     switch (device.connectivityStatus) {
       case ConnectivityStatus.online:
         return SaturdayColors.success.withValues(alpha: 0.1);
-      case ConnectivityStatus.uncertain:
-        return SaturdayColors.warning.withValues(alpha: 0.1);
       case ConnectivityStatus.offline:
       case ConnectivityStatus.setupRequired:
         return SaturdayColors.secondary.withValues(alpha: 0.1);
@@ -172,8 +166,6 @@ class DeviceListTile extends StatelessWidget {
     switch (device.connectivityStatus) {
       case ConnectivityStatus.online:
         return SaturdayColors.success;
-      case ConnectivityStatus.uncertain:
-        return SaturdayColors.warning;
       case ConnectivityStatus.offline:
       case ConnectivityStatus.setupRequired:
         return SaturdayColors.secondary;

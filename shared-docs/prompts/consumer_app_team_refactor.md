@@ -172,75 +172,55 @@ WHERE u.user_id = :current_user_id;
 ```
 
 **Online/offline status:**
-- Device is "online" if `devices.last_seen_at` is within last 60 seconds
-- Device updates `last_seen_at` via heartbeats
+- `units.is_online` is a boolean column updated automatically
+- Set to `true` by a database trigger on each heartbeat
+- Set to `false` by a cron job when `last_seen_at` exceeds 10 minutes
 
-### 5. Heartbeat Data
+### 5. Unit Telemetry
 
-Heartbeats are now sent by devices to `device_heartbeats` table (keyed by MAC address).
+Consumer-facing telemetry lives directly on the `units` table as typed columns. These are updated automatically by a database trigger when device heartbeats arrive. You never need to query `device_heartbeats` or `devices` directly.
 
-**To get latest heartbeat for a unit:**
-```sql
-SELECT dh.*
-FROM device_heartbeats dh
-JOIN devices d ON d.mac_address = dh.mac_address
-JOIN units u ON u.id = d.unit_id
-WHERE u.serial_number = :serial_number
-ORDER BY dh.received_at DESC
-LIMIT 1;
-```
+**Available telemetry columns on `units`:**
 
-**Heartbeat data structure:**
-```json
-{
-  "mac_address": "AA:BB:CC:DD:EE:FF",
-  "firmware_version": "1.2.0",
-  "heartbeat_data": {
-    "uptime_ms": 123456,
-    "free_heap": 245760,
-    "wifi": {
-      "connected": true,
-      "ssid": "HomeNetwork",
-      "rssi": -55
-    },
-    "rfid": {
-      "last_scan_count": 3
-    },
-    "environment": {
-      "temperature_c": 22.5,
-      "humidity_pct": 48.2
-    }
-  }
-}
-```
+| Column | Type | Description |
+|--------|------|-------------|
+| `last_seen_at` | TIMESTAMPTZ | Most recent heartbeat from any device |
+| `is_online` | BOOLEAN | Whether any device has heartbeated within threshold |
+| `battery_level` | INTEGER | Battery SOC 0-100 (NULL if no battery) |
+| `is_charging` | BOOLEAN | Whether connected to power (NULL if no battery) |
+| `wifi_rssi` | INTEGER | WiFi signal strength in dBm |
+| `temperature_c` | NUMERIC | Ambient temperature in Celsius |
+| `humidity_pct` | NUMERIC | Relative humidity percentage |
+| `firmware_version` | TEXT | Primary device firmware version |
 
 ### 6. Real-time Subscriptions
 
-For live device status updates, subscribe to Supabase Realtime on:
+Subscribe to the `units` table for all telemetry and status updates. This is the only subscription consumer apps need:
 
-**Device status changes:**
 ```javascript
 supabase
-  .channel('device-status')
+  .channel('unit-updates')
   .on(
     'postgres_changes',
-    { event: 'UPDATE', schema: 'public', table: 'devices' },
-    (payload) => handleDeviceUpdate(payload.new)
+    {
+      event: 'UPDATE',
+      schema: 'public',
+      table: 'units',
+      filter: `consumer_user_id=eq.${currentUserId}`
+    },
+    (payload) => {
+      const unit = payload.new
+      // All telemetry is directly on the unit row:
+      // unit.is_online, unit.battery_level, unit.is_charging,
+      // unit.wifi_rssi, unit.temperature_c, unit.humidity_pct,
+      // unit.last_seen_at, unit.firmware_version
+      handleUnitUpdate(unit)
+    }
   )
   .subscribe()
 ```
 
-**Heartbeats:**
-```javascript
-supabase
-  .channel('heartbeats')
-  .on(
-    'postgres_changes',
-    { event: 'INSERT', schema: 'public', table: 'device_heartbeats' },
-    (payload) => handleHeartbeat(payload.new)
-  )
-  .subscribe()
-```
+> **Note:** Do NOT subscribe to `devices` or `device_heartbeats` in the consumer app. The `units` table has everything you need.
 
 ---
 
@@ -251,38 +231,21 @@ supabase
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | UUID | Primary key |
-| `serial_number` | VARCHAR | Device serial number (e.g., SV-HUB-000001) |
+| `serial_number` | VARCHAR | Unit serial number (e.g., SV-HUB-000001) |
 | `product_id` | UUID | Link to products table |
 | `variant_id` | UUID | Link to product_variants table |
-| `user_id` | UUID | **Consumer app writes this** |
-| `consumer_provisioned_at` | TIMESTAMPTZ | **Consumer app writes this** |
-| `device_name` | VARCHAR | **Consumer app writes this** |
-| `consumer_attributes` | JSONB | **Consumer app writes this** |
-| `status` | VARCHAR | unprovisioned → factory_provisioned → user_provisioned |
-
-### devices Table
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | UUID | Primary key |
-| `mac_address` | VARCHAR | Hardware MAC address |
-| `device_type_id` | UUID | Link to device_types table |
-| `unit_id` | UUID | Link to units table |
-| `firmware_version` | VARCHAR | Current firmware version |
-| `firmware_id` | UUID | Link to firmware table |
-| `last_seen_at` | TIMESTAMPTZ | Updated on each heartbeat |
-| `factory_attributes` | JSONB | Factory provisioning data |
-| `status` | VARCHAR | unprovisioned → provisioned → online → offline |
-
-### device_heartbeats Table
-
-| Column | Type | Description |
-|--------|------|-------------|
-| `id` | UUID | Primary key |
-| `mac_address` | VARCHAR | Device MAC address |
-| `firmware_version` | TEXT | Firmware version at heartbeat time |
-| `heartbeat_data` | JSONB | Capability-specific telemetry |
-| `received_at` | TIMESTAMPTZ | When heartbeat was received |
+| `consumer_user_id` | UUID | **Consumer app writes this** (via claim-unit) |
+| `consumer_provisioned_at` | TIMESTAMPTZ | **Set by claim-unit edge function** |
+| `consumer_name` | VARCHAR | **Consumer app writes this** |
+| `status` | unit_status enum | in_production → factory_provisioned → claimed |
+| `last_seen_at` | TIMESTAMPTZ | Most recent heartbeat (auto-updated by trigger) |
+| `is_online` | BOOLEAN | Online status (auto-updated by trigger + cron) |
+| `battery_level` | INTEGER | Battery 0-100 (auto-updated by trigger) |
+| `is_charging` | BOOLEAN | Charging state (auto-updated by trigger) |
+| `wifi_rssi` | INTEGER | WiFi signal dBm (auto-updated by trigger) |
+| `temperature_c` | NUMERIC | Temperature Celsius (auto-updated by trigger) |
+| `humidity_pct` | NUMERIC | Humidity percentage (auto-updated by trigger) |
+| `firmware_version` | TEXT | Primary device firmware (auto-updated by trigger) |
 
 ---
 

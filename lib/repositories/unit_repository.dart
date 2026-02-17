@@ -22,13 +22,7 @@ class UnitRepository extends BaseRepository {
         .select('''
           *,
           devices!left(
-            id,
             mac_address,
-            device_type_slug,
-            firmware_version,
-            status,
-            last_seen_at,
-            latest_telemetry,
             provision_data
           )
         ''')
@@ -47,13 +41,7 @@ class UnitRepository extends BaseRepository {
         .select('''
           *,
           devices!left(
-            id,
             mac_address,
-            device_type_slug,
-            firmware_version,
-            status,
-            last_seen_at,
-            latest_telemetry,
             provision_data
           )
         ''')
@@ -71,13 +59,7 @@ class UnitRepository extends BaseRepository {
         .select('''
           *,
           devices!left(
-            id,
             mac_address,
-            device_type_slug,
-            firmware_version,
-            status,
-            last_seen_at,
-            latest_telemetry,
             provision_data
           )
         ''')
@@ -140,13 +122,7 @@ class UnitRepository extends BaseRepository {
         .select('''
           *,
           devices!left(
-            id,
             mac_address,
-            device_type_slug,
-            firmware_version,
-            status,
-            last_seen_at,
-            latest_telemetry,
             provision_data
           )
         ''')
@@ -183,13 +159,7 @@ class UnitRepository extends BaseRepository {
         .select('''
           *,
           devices!left(
-            id,
             mac_address,
-            device_type_slug,
-            firmware_version,
-            status,
-            last_seen_at,
-            latest_telemetry,
             provision_data
           )
         ''')

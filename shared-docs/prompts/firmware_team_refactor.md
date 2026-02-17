@@ -171,14 +171,24 @@ Example: device:AA-BB-CC-DD-EE-01
 POST /rest/v1/device_heartbeats
 {
   "mac_address": "AA:BB:CC:DD:EE:FF",
+  "unit_id": "SV-HUB-00001",
+  "device_type": "hub",
   "firmware_version": "1.2.0",
-  "heartbeat_data": {
-    "uptime_ms": 123456,
+  "telemetry": {
+    "uptime_sec": 123456,
     "free_heap": 245760,
-    "wifi_rssi": -55
+    "min_free_heap": 200000,
+    "largest_free_block": 180000,
+    "wifi_rssi": -55,
+    "battery_level": 85,
+    "battery_charging": false,
+    "temperature_c": 22.5,
+    "humidity_pct": 45.2
   }
 }
 ```
+
+> **Note:** All telemetry goes in the `telemetry` JSONB field. Routing fields (`mac_address`, `unit_id`, `device_type`, `firmware_version`) remain as top-level columns. Field names use flat capability-prefixed naming (e.g., `wifi_rssi`, not `wifi.rssi`). See the [Device Command Protocol](../protocols/device_command_protocol.md) for the full heartbeat field specification.
 
 **Frequency:** Every 30 seconds
 
@@ -248,15 +258,22 @@ CREATE TABLE device_commands (
 CREATE TABLE device_heartbeats (
   id UUID PRIMARY KEY,
   mac_address VARCHAR(17) NOT NULL,
+  unit_id TEXT,                    -- serial number (e.g., SV-HUB-00001)
+  device_type TEXT NOT NULL,       -- device type slug (e.g., hub, crate)
   firmware_version TEXT,
-  heartbeat_data JSONB,
-  received_at TIMESTAMPTZ
+  type TEXT DEFAULT 'status',      -- 'status', 'command_ack', 'command_result'
+  command_id UUID,                 -- for command_ack/command_result types
+  telemetry JSONB,                 -- all capability-specific telemetry
+  created_at TIMESTAMPTZ
 );
 ```
 
 **Your responsibilities:**
 - POST heartbeat every 30 seconds when connected to cloud
-- Include capability-specific data in `heartbeat_data`
+- Include all capability-specific data in the `telemetry` JSONB field
+- Use flat field names with capability prefixes (e.g., `wifi_rssi`, `battery_level`)
+- For command acknowledgements, set `type` to `command_ack` and include `command_id`
+- For command results, set `type` to `command_result` with `status`, `result`, and `error_message` in `telemetry`
 
 ### devices
 
