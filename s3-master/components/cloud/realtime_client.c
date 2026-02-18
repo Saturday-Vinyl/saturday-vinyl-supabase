@@ -55,7 +55,6 @@ ESP_EVENT_DEFINE_BASE(REALTIME_EVENTS);
 #define PHX_EVENT_CLOSE             "phx_close"
 #define PHX_EVENT_ERROR             "phx_error"
 #define PHX_EVENT_BROADCAST         "broadcast"
-#define PHX_EVENT_POSTGRES_CHANGES  "postgres_changes"
 
 /* Custom event types from server */
 #define EVENT_UPDATE_AVAILABLE      "update_available"
@@ -114,7 +113,6 @@ static void websocket_event_handler(void *handler_args, esp_event_base_t base,
                                     int32_t event_id, void *event_data);
 static void handle_websocket_data(const char *data, int len);
 static void handle_phoenix_message(cJSON *msg);
-static void handle_postgres_changes(const cJSON *payload);
 static void handle_update_available(const cJSON *payload, const char *request_id);
 static void handle_command(const cJSON *payload);
 static void handle_config_update(const cJSON *payload);
@@ -496,17 +494,18 @@ esp_err_t realtime_client_connect(void)
         return ESP_ERR_INVALID_STATE;
     }
 
-    /* Get MAC address for Postgres Changes filter (Device Command Protocol) */
+    /* Get MAC address for broadcast channel (Device Command Protocol) */
     get_mac_address_dashed(s_rt.device_mac, sizeof(s_rt.device_mac));
 
-    /* Build channel topic for Postgres Changes subscription
-     * Format: realtime:{schema}:{table}
-     * The filter is specified in the join payload, not the topic
+    /* Build channel topic for broadcast subscription
+     * Format: realtime:device:{mac_address}
+     * The "realtime:" prefix is required by the Phoenix protocol on the client side.
+     * The DB trigger's realtime.send() uses "device:{mac}" as the topic — Supabase
+     * maps this to the "realtime:device:{mac}" Phoenix channel automatically.
      */
     snprintf(s_rt.channel_topic, sizeof(s_rt.channel_topic),
-             "realtime:public:device_commands");
-    ESP_LOGI(TAG, "Channel topic: %s (filter: device_mac=%s)",
-             s_rt.channel_topic, s_rt.device_mac);
+             "realtime:device:%s", s_rt.device_mac);
+    ESP_LOGI(TAG, "Channel topic: %s", s_rt.channel_topic);
 
     /* Build WebSocket URL */
     char ws_url[MAX_URL_SIZE];
@@ -821,8 +820,7 @@ static esp_err_t build_websocket_url(char *url, size_t max_len)
 
 static void send_phoenix_join(void)
 {
-    ESP_LOGI(TAG, "Joining channel: %s (filter: device_mac=%s)",
-             s_rt.channel_topic, s_rt.device_mac);
+    ESP_LOGI(TAG, "Joining broadcast channel: %s", s_rt.channel_topic);
 
     s_rt.msg_ref++;
     snprintf(s_rt.join_ref, sizeof(s_rt.join_ref), "%lu", (unsigned long)s_rt.msg_ref);
@@ -831,28 +829,11 @@ static void send_phoenix_join(void)
     cJSON_AddStringToObject(msg, "topic", s_rt.channel_topic);
     cJSON_AddStringToObject(msg, "event", PHX_EVENT_JOIN);
 
-    /* Build Postgres Changes subscription payload
-     * This subscribes to INSERT events on device_commands table
-     * filtered by device_mac matching this device's MAC address
-     */
+    /* Broadcast channel join — receives commands via realtime.send() from DB trigger */
     cJSON *payload = cJSON_AddObjectToObject(msg, "payload");
-
-    /* Postgres Changes configuration */
     cJSON *config = cJSON_AddObjectToObject(payload, "config");
-
-    /* Configure postgres_changes subscription */
-    cJSON *postgres_changes = cJSON_AddArrayToObject(config, "postgres_changes");
-    cJSON *change_config = cJSON_CreateObject();
-    cJSON_AddStringToObject(change_config, "event", "INSERT");
-    cJSON_AddStringToObject(change_config, "schema", "public");
-    cJSON_AddStringToObject(change_config, "table", "device_commands");
-
-    /* Filter by device MAC address */
-    char filter[64];
-    snprintf(filter, sizeof(filter), "device_mac=eq.%s", s_rt.device_mac);
-    cJSON_AddStringToObject(change_config, "filter", filter);
-
-    cJSON_AddItemToArray(postgres_changes, change_config);
+    cJSON *broadcast = cJSON_AddObjectToObject(config, "broadcast");
+    cJSON_AddBoolToObject(broadcast, "self", false);
 
     cJSON_AddStringToObject(msg, "ref", s_rt.join_ref);
 
@@ -1024,14 +1005,7 @@ static void handle_phoenix_message(cJSON *msg)
         return;
     }
 
-    /* Handle Postgres Changes events (database INSERT/UPDATE/DELETE) */
-    if (strcmp(event_str, PHX_EVENT_POSTGRES_CHANGES) == 0) {
-        ESP_LOGI(TAG, "Received postgres_changes event");
-        handle_postgres_changes(payload);
-        return;
-    }
-
-    /* Handle broadcast messages on our channel (legacy support) */
+    /* Handle broadcast messages on our device channel */
     if (strcmp(event_str, PHX_EVENT_BROADCAST) == 0 ||
         strcmp(topic_str, s_rt.channel_topic) == 0) {
 
@@ -1065,97 +1039,6 @@ static void handle_phoenix_message(cJSON *msg)
 /*******************************************************************************
  * Event Handlers
  ******************************************************************************/
-
-/**
- * @brief Handle Postgres Changes events from Supabase Realtime
- *
- * Postgres Changes events have this structure:
- * {
- *   "data": {
- *     "type": "INSERT",
- *     "table": "device_commands",
- *     "schema": "public",
- *     "record": {
- *       "id": "uuid",
- *       "device_mac": "AA-BB-CC-DD-EE-FF",
- *       "command": "reboot",
- *       "parameters": {...},
- *       ...
- *     },
- *     "old_record": null
- *   },
- *   "ids": [1]
- * }
- */
-static void handle_postgres_changes(const cJSON *payload)
-{
-    /* Extract the data object */
-    const cJSON *data = cJSON_GetObjectItem(payload, "data");
-    if (!cJSON_IsObject(data)) {
-        ESP_LOGW(TAG, "postgres_changes: missing 'data' object");
-        /* Log payload for debugging */
-        char *payload_str = cJSON_Print(payload);
-        if (payload_str) {
-            ESP_LOGW(TAG, "Payload: %s", payload_str);
-            free(payload_str);
-        }
-        return;
-    }
-
-    /* Get the event type (INSERT, UPDATE, DELETE) */
-    const cJSON *type = cJSON_GetObjectItem(data, "type");
-    const char *type_str = cJSON_IsString(type) ? type->valuestring : "unknown";
-    ESP_LOGI(TAG, "Postgres change: type=%s", type_str);
-
-    /* We only care about INSERT events for new commands */
-    if (strcmp(type_str, "INSERT") != 0) {
-        ESP_LOGD(TAG, "Ignoring non-INSERT event: %s", type_str);
-        return;
-    }
-
-    /* Get the inserted record */
-    const cJSON *record = cJSON_GetObjectItem(data, "record");
-    if (!cJSON_IsObject(record)) {
-        ESP_LOGW(TAG, "postgres_changes: missing 'record' object");
-        return;
-    }
-
-    /* Log the record for debugging */
-    char *record_str = cJSON_Print(record);
-    if (record_str) {
-        ESP_LOGI(TAG, "New command record: %s", record_str);
-        free(record_str);
-    }
-
-    /* Extract command fields from the record
-     * Expected fields: id, device_mac, command, parameters, status, created_at
-     */
-    const cJSON *cmd_id = cJSON_GetObjectItem(record, "id");
-    const cJSON *command = cJSON_GetObjectItem(record, "command");
-    const cJSON *parameters = cJSON_GetObjectItem(record, "parameters");
-
-    /* Build a command payload compatible with handle_command() */
-    cJSON *command_payload = cJSON_CreateObject();
-
-    if (cJSON_IsString(cmd_id)) {
-        cJSON_AddStringToObject(command_payload, "id", cmd_id->valuestring);
-    }
-
-    if (cJSON_IsString(command)) {
-        cJSON_AddStringToObject(command_payload, "command", command->valuestring);
-    }
-
-    /* Parameters could be an object or null */
-    if (cJSON_IsObject(parameters)) {
-        cJSON *params_copy = cJSON_Duplicate(parameters, true);
-        cJSON_AddItemToObject(command_payload, "parameters", params_copy);
-    }
-
-    /* Route to the command handler */
-    handle_command(command_payload);
-
-    cJSON_Delete(command_payload);
-}
 
 static void handle_update_available(const cJSON *payload, const char *request_id)
 {
