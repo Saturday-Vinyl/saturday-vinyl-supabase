@@ -359,6 +359,30 @@ For devices that act as Thread Border Routers, they generate network credentials
         "duration_ms": {"type": "integer"}
       }
     }
+  },
+  {
+    "name": "get_dataset",
+    "display_name": "Get Thread Dataset",
+    "description": "Returns the full active Thread operational dataset for credential comparison between devices. Use this to diagnose join failures by comparing all credential fields between the Border Router and a node stuck in detached state.",
+    "parameters_schema": {
+      "type": "object",
+      "properties": {}
+    },
+    "result_schema": {
+      "type": "object",
+      "properties": {
+        "network_name": {"type": "string", "description": "Thread network name"},
+        "pan_id": {"type": "integer", "description": "16-bit PAN ID"},
+        "channel": {"type": "integer", "description": "Radio channel (11-26)"},
+        "network_key": {"type": "string", "description": "128-bit network key (32 hex chars)"},
+        "extended_pan_id": {"type": "string", "description": "64-bit extended PAN ID (16 hex chars)"},
+        "mesh_local_prefix": {"type": "string", "description": "64-bit mesh-local prefix (16 hex chars)"},
+        "attached": {"type": "boolean", "description": "Whether device is attached to a Thread network"},
+        "role": {"type": "string", "enum": ["disabled", "detached", "attaching", "child", "router", "leader"]},
+        "rloc16": {"type": "integer", "description": "16-bit Router Locator address"},
+        "device_count": {"type": "integer", "description": "Number of devices on the network"}
+      }
+    }
   }
 ]
 ```
