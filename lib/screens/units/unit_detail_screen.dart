@@ -512,14 +512,6 @@ class UnitDetailScreen extends ConsumerWidget {
         color = SaturdayColors.info;
         label = 'Provisioned';
         break;
-      case DeviceStatus.online:
-        color = SaturdayColors.success;
-        label = 'Online';
-        break;
-      case DeviceStatus.offline:
-        color = SaturdayColors.secondaryGrey;
-        label = 'Offline';
-        break;
     }
 
     return Container(

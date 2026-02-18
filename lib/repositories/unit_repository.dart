@@ -406,23 +406,26 @@ class UnitRepository {
 
   /// Get unit list items for dashboard display
   ///
-  /// Fetches from the `units_dashboard` view which joins units with their
-  /// primary device for efficient list rendering. Supports filtering and sorting.
+  /// Queries `units` table directly with a `devices` join for primary device
+  /// engineering data. Supports filtering and sorting.
   Future<List<UnitListItem>> getUnitListItems({UnitFilter? filter}) async {
     try {
       AppLogger.info('Fetching unit list items with filter: $filter');
 
-      // Build query with filters
-      var queryBuilder = _supabase.from('units_dashboard').select();
+      // Build query with device join
+      var queryBuilder = _supabase.from('units').select('''
+        *,
+        devices (id, mac_address, device_type_slug, latest_telemetry)
+      ''');
 
       // Apply status filter
       if (filter?.status != null) {
         queryBuilder = queryBuilder.eq('status', filter!.status!.databaseValue);
       }
 
-      // Apply connected filter
-      if (filter?.isConnected != null) {
-        queryBuilder = queryBuilder.eq('is_connected', filter!.isConnected!);
+      // Apply online filter
+      if (filter?.isOnline != null) {
+        queryBuilder = queryBuilder.eq('is_online', filter!.isOnline!);
       }
 
       // Apply search filter (serial_number or device_name)

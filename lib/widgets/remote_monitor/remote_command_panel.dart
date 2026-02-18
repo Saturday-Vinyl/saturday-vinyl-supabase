@@ -22,7 +22,6 @@ class RemoteCommandPanel extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final monitorState = ref.watch(remoteMonitorProvider(unitId));
-    final isExecuting = monitorState.pendingCommandIds.isNotEmpty;
 
     // Get the primary device for sending commands
     final primaryDevice = devices.isNotEmpty ? devices.first : null;
@@ -42,15 +41,14 @@ class RemoteCommandPanel extends ConsumerWidget {
                   ),
             ),
             const Spacer(),
-            if (isExecuting)
+            if (monitorState.pendingCommandIds.isNotEmpty)
               Row(
                 children: [
-                  SizedBox(
+                  const SizedBox(
                     width: 12,
                     height: 12,
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
-                      color: SaturdayColors.info,
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -74,7 +72,7 @@ class RemoteCommandPanel extends ConsumerWidget {
             _CommandButton(
               label: 'Refresh Status',
               icon: Icons.refresh,
-              onPressed: primaryDevice != null && !isExecuting
+              onPressed: primaryDevice != null
                   ? () => _sendGetStatus(ref, primaryDevice)
                   : null,
             ),
@@ -82,7 +80,7 @@ class RemoteCommandPanel extends ConsumerWidget {
               label: 'Reboot',
               icon: Icons.restart_alt,
               color: Colors.orange,
-              onPressed: primaryDevice != null && !isExecuting
+              onPressed: primaryDevice != null
                   ? () => _showConfirmDialog(
                         context,
                         title: 'Reboot Device',
@@ -96,7 +94,7 @@ class RemoteCommandPanel extends ConsumerWidget {
               label: 'Consumer Reset',
               icon: Icons.person_remove,
               color: Colors.orange,
-              onPressed: primaryDevice != null && !isExecuting
+              onPressed: primaryDevice != null
                   ? () => _showConfirmDialog(
                         context,
                         title: 'Consumer Reset',
@@ -110,7 +108,7 @@ class RemoteCommandPanel extends ConsumerWidget {
               label: 'Factory Reset',
               icon: Icons.warning,
               color: SaturdayColors.error,
-              onPressed: primaryDevice != null && !isExecuting
+              onPressed: primaryDevice != null
                   ? () => _showConfirmDialog(
                         context,
                         title: 'Factory Reset',
@@ -130,7 +128,6 @@ class RemoteCommandPanel extends ConsumerWidget {
           _DeviceTestsSection(
             unitId: unitId,
             device: primaryDevice!,
-            isExecuting: isExecuting,
           ),
         ],
       ],
@@ -199,12 +196,10 @@ class RemoteCommandPanel extends ConsumerWidget {
 class _DeviceTestsSection extends ConsumerWidget {
   final String unitId;
   final Device device;
-  final bool isExecuting;
 
   const _DeviceTestsSection({
     required this.unitId,
     required this.device,
-    required this.isExecuting,
   });
 
   @override
@@ -241,9 +236,7 @@ class _DeviceTestsSection extends ConsumerWidget {
                 return _CommandButton(
                   label: test.displayName,
                   icon: Icons.science,
-                  onPressed: !isExecuting
-                      ? () => _runTest(ref, test)
-                      : null,
+                  onPressed: () => _runTest(ref, test),
                 );
               }).toList(),
             ),

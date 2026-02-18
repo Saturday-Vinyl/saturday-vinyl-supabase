@@ -64,6 +64,16 @@ class Unit extends Equatable {
   /// Status tracks the unit lifecycle
   final UnitStatus status;
 
+  /// Telemetry (synced from primary device by heartbeat trigger)
+  final bool isOnline;
+  final DateTime? lastSeenAt;
+  final int? batteryLevel;
+  final bool? isCharging;
+  final int? wifiRssi;
+  final double? temperatureC;
+  final double? humidityPct;
+  final String? firmwareVersion;
+
   /// Production workflow (backwards compatibility)
   final DateTime? productionStartedAt;
   final DateTime? productionCompletedAt;
@@ -88,6 +98,14 @@ class Unit extends Equatable {
     this.deviceName,
     this.consumerAttributes = const {},
     this.status = UnitStatus.unprovisioned,
+    this.isOnline = false,
+    this.lastSeenAt,
+    this.batteryLevel,
+    this.isCharging,
+    this.wifiRssi,
+    this.temperatureC,
+    this.humidityPct,
+    this.firmwareVersion,
     this.productionStartedAt,
     this.productionCompletedAt,
     this.isCompleted = false,
@@ -139,6 +157,16 @@ class Unit extends Equatable {
           ? Map<String, dynamic>.from(json['consumer_attributes'] as Map)
           : {},
       status: UnitStatusExtension.fromString(json['status'] as String?),
+      isOnline: json['is_online'] as bool? ?? false,
+      lastSeenAt: json['last_seen_at'] != null
+          ? DateTime.parse(json['last_seen_at'] as String)
+          : null,
+      batteryLevel: json['battery_level'] as int?,
+      isCharging: json['is_charging'] as bool?,
+      wifiRssi: json['wifi_rssi'] as int?,
+      temperatureC: (json['temperature_c'] as num?)?.toDouble(),
+      humidityPct: (json['humidity_pct'] as num?)?.toDouble(),
+      firmwareVersion: json['firmware_version'] as String?,
       productionStartedAt: json['production_started_at'] != null
           ? DateTime.parse(json['production_started_at'] as String)
           : null,
@@ -170,6 +198,14 @@ class Unit extends Equatable {
       'device_name': deviceName,
       'consumer_attributes': consumerAttributes,
       'status': status.databaseValue,
+      'is_online': isOnline,
+      'last_seen_at': lastSeenAt?.toIso8601String(),
+      'battery_level': batteryLevel,
+      'is_charging': isCharging,
+      'wifi_rssi': wifiRssi,
+      'temperature_c': temperatureC,
+      'humidity_pct': humidityPct,
+      'firmware_version': firmwareVersion,
       'production_started_at': productionStartedAt?.toIso8601String(),
       'production_completed_at': productionCompletedAt?.toIso8601String(),
       'is_completed': isCompleted,
@@ -208,6 +244,14 @@ class Unit extends Equatable {
     String? deviceName,
     Map<String, dynamic>? consumerAttributes,
     UnitStatus? status,
+    bool? isOnline,
+    DateTime? lastSeenAt,
+    int? batteryLevel,
+    bool? isCharging,
+    int? wifiRssi,
+    double? temperatureC,
+    double? humidityPct,
+    String? firmwareVersion,
     DateTime? productionStartedAt,
     DateTime? productionCompletedAt,
     bool? isCompleted,
@@ -230,6 +274,14 @@ class Unit extends Equatable {
       deviceName: deviceName ?? this.deviceName,
       consumerAttributes: consumerAttributes ?? this.consumerAttributes,
       status: status ?? this.status,
+      isOnline: isOnline ?? this.isOnline,
+      lastSeenAt: lastSeenAt ?? this.lastSeenAt,
+      batteryLevel: batteryLevel ?? this.batteryLevel,
+      isCharging: isCharging ?? this.isCharging,
+      wifiRssi: wifiRssi ?? this.wifiRssi,
+      temperatureC: temperatureC ?? this.temperatureC,
+      humidityPct: humidityPct ?? this.humidityPct,
+      firmwareVersion: firmwareVersion ?? this.firmwareVersion,
       productionStartedAt: productionStartedAt ?? this.productionStartedAt,
       productionCompletedAt:
           productionCompletedAt ?? this.productionCompletedAt,
@@ -255,6 +307,14 @@ class Unit extends Equatable {
         deviceName,
         consumerAttributes,
         status,
+        isOnline,
+        lastSeenAt,
+        batteryLevel,
+        isCharging,
+        wifiRssi,
+        temperatureC,
+        humidityPct,
+        firmwareVersion,
         productionStartedAt,
         productionCompletedAt,
         isCompleted,

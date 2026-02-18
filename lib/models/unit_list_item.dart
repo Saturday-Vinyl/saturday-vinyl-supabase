@@ -3,8 +3,8 @@ import 'package:saturday_app/models/unit.dart';
 
 /// Lightweight model for unit list display in the dashboard
 ///
-/// Combines unit data with primary device telemetry for efficient list rendering.
-/// This model maps to the `units_dashboard` database view.
+/// Combines unit data with primary device engineering telemetry for list rendering.
+/// Queries `units` table directly with a `devices` join.
 class UnitListItem extends Equatable {
   final String id;
   final String? serialNumber;
@@ -20,16 +20,23 @@ class UnitListItem extends Equatable {
   final DateTime createdAt;
   final DateTime? updatedAt;
 
-  // Primary device data
+  // Consumer-facing telemetry (typed columns on units table, synced by trigger)
+  final bool isOnline;
+  final DateTime? lastSeenAt;
+  final int? batteryLevel;
+  final bool? isCharging;
+  final int? wifiRssi;
+  final double? temperatureC;
+  final double? humidityPct;
+  final String? firmwareVersion;
+
+  // Primary device data (from devices join)
   final String? primaryDeviceId;
   final String? primaryDeviceMac;
-  final String? deviceTypeId;
-  final DateTime? lastSeenAt;
-  final String? firmwareVersion;
-  final Map<String, dynamic> latestTelemetry;
+  final String? deviceTypeSlug;
 
-  /// Connected threshold in minutes
-  static const int connectedThresholdMinutes = 5;
+  // Engineering telemetry from primary device (devices.latest_telemetry JSONB)
+  final Map<String, dynamic> deviceTelemetry;
 
   const UnitListItem({
     required this.id,
@@ -45,20 +52,19 @@ class UnitListItem extends Equatable {
     this.isCompleted = false,
     required this.createdAt,
     this.updatedAt,
+    this.isOnline = false,
+    this.lastSeenAt,
+    this.batteryLevel,
+    this.isCharging,
+    this.wifiRssi,
+    this.temperatureC,
+    this.humidityPct,
+    this.firmwareVersion,
     this.primaryDeviceId,
     this.primaryDeviceMac,
-    this.deviceTypeId,
-    this.lastSeenAt,
-    this.firmwareVersion,
-    this.latestTelemetry = const {},
+    this.deviceTypeSlug,
+    this.deviceTelemetry = const {},
   });
-
-  /// Check if the unit's primary device is connected (seen within threshold)
-  bool get isConnected {
-    if (lastSeenAt == null) return false;
-    return DateTime.now().difference(lastSeenAt!).inMinutes <
-        connectedThresholdMinutes;
-  }
 
   /// Get display name (device name or serial number or fallback)
   String get displayName =>
@@ -70,36 +76,20 @@ class UnitListItem extends Equatable {
   /// Check if unit is claimed by a consumer
   bool get isClaimed => userId != null;
 
+  /// Whether any consumer telemetry data is available
+  bool get hasTelemetry =>
+      batteryLevel != null || wifiRssi != null || isOnline;
+
+  /// Get the best available signal strength (WiFi preferred, then Thread)
+  int? get signalStrength => wifiRssi ?? threadRssi;
+
   // ─────────────────────────────────────────────────────────────────────────
-  // Telemetry Accessors (flat JSON schema from heartbeat trigger)
+  // Engineering Telemetry Accessors (from devices.latest_telemetry JSONB)
   // ─────────────────────────────────────────────────────────────────────────
-
-  /// Battery level percentage (0-100)
-  int? get batteryLevel {
-    final value = latestTelemetry['battery_level'];
-    if (value is int) return value;
-    if (value is double) return value.round();
-    return null;
-  }
-
-  /// Whether the battery is currently charging
-  bool? get batteryCharging {
-    final value = latestTelemetry['battery_charging'];
-    if (value is bool) return value;
-    return null;
-  }
-
-  /// WiFi RSSI signal strength (typically -30 to -90 dBm)
-  int? get wifiRssi {
-    final value = latestTelemetry['wifi_rssi'];
-    if (value is int) return value;
-    if (value is double) return value.round();
-    return null;
-  }
 
   /// Thread RSSI signal strength (typically -30 to -90 dBm)
   int? get threadRssi {
-    final value = latestTelemetry['thread_rssi'];
+    final value = deviceTelemetry['thread_rssi'];
     if (value is int) return value;
     if (value is double) return value.round();
     return null;
@@ -107,7 +97,7 @@ class UnitListItem extends Equatable {
 
   /// Device uptime in seconds since boot
   int? get uptimeSec {
-    final value = latestTelemetry['uptime_sec'];
+    final value = deviceTelemetry['uptime_sec'];
     if (value is int) return value;
     if (value is double) return value.round();
     return null;
@@ -115,7 +105,7 @@ class UnitListItem extends Equatable {
 
   /// Current free heap memory in bytes
   int? get freeHeap {
-    final value = latestTelemetry['free_heap'];
+    final value = deviceTelemetry['free_heap'];
     if (value is int) return value;
     if (value is double) return value.round();
     return null;
@@ -123,7 +113,7 @@ class UnitListItem extends Equatable {
 
   /// Minimum free heap since boot (detects memory leaks)
   int? get minFreeHeap {
-    final value = latestTelemetry['min_free_heap'];
+    final value = deviceTelemetry['min_free_heap'];
     if (value is int) return value;
     if (value is double) return value.round();
     return null;
@@ -131,27 +121,31 @@ class UnitListItem extends Equatable {
 
   /// Largest contiguous free block (detects heap fragmentation)
   int? get largestFreeBlock {
-    final value = latestTelemetry['largest_free_block'];
+    final value = deviceTelemetry['largest_free_block'];
     if (value is int) return value;
     if (value is double) return value.round();
     return null;
   }
 
   /// Device type slug from telemetry
-  String? get telemetryDeviceType => latestTelemetry['device_type'] as String?;
+  String? get telemetryDeviceType => deviceTelemetry['device_type'] as String?;
 
-  /// Check if any telemetry data is available
-  bool get hasTelemetry => latestTelemetry.isNotEmpty;
-
-  /// Get the best available signal strength (WiFi preferred, then Thread)
-  int? get signalStrength => wifiRssi ?? threadRssi;
+  /// Check if any engineering telemetry data is available
+  bool get hasDeviceTelemetry => deviceTelemetry.isNotEmpty;
 
   // ─────────────────────────────────────────────────────────────────────────
   // JSON Serialization
   // ─────────────────────────────────────────────────────────────────────────
 
-  /// Create from JSON (maps to units_dashboard view)
+  /// Create from JSON (units table with devices join)
   factory UnitListItem.fromJson(Map<String, dynamic> json) {
+    // Parse primary device from joined devices array
+    Map<String, dynamic>? primaryDevice;
+    if (json['devices'] is List && (json['devices'] as List).isNotEmpty) {
+      primaryDevice =
+          (json['devices'] as List).first as Map<String, dynamic>;
+    }
+
     return UnitListItem(
       id: json['id'] as String,
       serialNumber: json['serial_number'] as String?,
@@ -172,15 +166,25 @@ class UnitListItem extends Equatable {
       updatedAt: json['updated_at'] != null
           ? DateTime.parse(json['updated_at'] as String)
           : null,
-      primaryDeviceId: json['primary_device_id'] as String?,
-      primaryDeviceMac: json['primary_device_mac'] as String?,
-      deviceTypeId: json['device_type_id'] as String?,
+      // Consumer telemetry from typed unit columns
+      isOnline: json['is_online'] as bool? ?? false,
       lastSeenAt: json['last_seen_at'] != null
           ? DateTime.parse(json['last_seen_at'] as String)
           : null,
+      batteryLevel: json['battery_level'] as int?,
+      isCharging: json['is_charging'] as bool?,
+      wifiRssi: json['wifi_rssi'] as int?,
+      temperatureC: (json['temperature_c'] as num?)?.toDouble(),
+      humidityPct: (json['humidity_pct'] as num?)?.toDouble(),
       firmwareVersion: json['firmware_version'] as String?,
-      latestTelemetry: json['latest_telemetry'] != null
-          ? Map<String, dynamic>.from(json['latest_telemetry'] as Map)
+      // Primary device data from join
+      primaryDeviceId: primaryDevice?['id'] as String?,
+      primaryDeviceMac: primaryDevice?['mac_address'] as String?,
+      deviceTypeSlug: primaryDevice?['device_type_slug'] as String?,
+      // Engineering telemetry from device
+      deviceTelemetry: primaryDevice?['latest_telemetry'] != null
+          ? Map<String, dynamic>.from(
+              primaryDevice!['latest_telemetry'] as Map)
           : {},
     );
   }
@@ -201,12 +205,18 @@ class UnitListItem extends Equatable {
       'is_completed': isCompleted,
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt?.toIso8601String(),
+      'is_online': isOnline,
+      'last_seen_at': lastSeenAt?.toIso8601String(),
+      'battery_level': batteryLevel,
+      'is_charging': isCharging,
+      'wifi_rssi': wifiRssi,
+      'temperature_c': temperatureC,
+      'humidity_pct': humidityPct,
+      'firmware_version': firmwareVersion,
       'primary_device_id': primaryDeviceId,
       'primary_device_mac': primaryDeviceMac,
-      'device_type_id': deviceTypeId,
-      'last_seen_at': lastSeenAt?.toIso8601String(),
-      'firmware_version': firmwareVersion,
-      'latest_telemetry': latestTelemetry,
+      'device_type_slug': deviceTypeSlug,
+      'device_telemetry': deviceTelemetry,
     };
   }
 
@@ -225,12 +235,18 @@ class UnitListItem extends Equatable {
     bool? isCompleted,
     DateTime? createdAt,
     DateTime? updatedAt,
+    bool? isOnline,
+    DateTime? lastSeenAt,
+    int? batteryLevel,
+    bool? isCharging,
+    int? wifiRssi,
+    double? temperatureC,
+    double? humidityPct,
+    String? firmwareVersion,
     String? primaryDeviceId,
     String? primaryDeviceMac,
-    String? deviceTypeId,
-    DateTime? lastSeenAt,
-    String? firmwareVersion,
-    Map<String, dynamic>? latestTelemetry,
+    String? deviceTypeSlug,
+    Map<String, dynamic>? deviceTelemetry,
   }) {
     return UnitListItem(
       id: id ?? this.id,
@@ -247,12 +263,18 @@ class UnitListItem extends Equatable {
       isCompleted: isCompleted ?? this.isCompleted,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      isOnline: isOnline ?? this.isOnline,
+      lastSeenAt: lastSeenAt ?? this.lastSeenAt,
+      batteryLevel: batteryLevel ?? this.batteryLevel,
+      isCharging: isCharging ?? this.isCharging,
+      wifiRssi: wifiRssi ?? this.wifiRssi,
+      temperatureC: temperatureC ?? this.temperatureC,
+      humidityPct: humidityPct ?? this.humidityPct,
+      firmwareVersion: firmwareVersion ?? this.firmwareVersion,
       primaryDeviceId: primaryDeviceId ?? this.primaryDeviceId,
       primaryDeviceMac: primaryDeviceMac ?? this.primaryDeviceMac,
-      deviceTypeId: deviceTypeId ?? this.deviceTypeId,
-      lastSeenAt: lastSeenAt ?? this.lastSeenAt,
-      firmwareVersion: firmwareVersion ?? this.firmwareVersion,
-      latestTelemetry: latestTelemetry ?? this.latestTelemetry,
+      deviceTypeSlug: deviceTypeSlug ?? this.deviceTypeSlug,
+      deviceTelemetry: deviceTelemetry ?? this.deviceTelemetry,
     );
   }
 
@@ -271,15 +293,21 @@ class UnitListItem extends Equatable {
         isCompleted,
         createdAt,
         updatedAt,
+        isOnline,
+        lastSeenAt,
+        batteryLevel,
+        isCharging,
+        wifiRssi,
+        temperatureC,
+        humidityPct,
+        firmwareVersion,
         primaryDeviceId,
         primaryDeviceMac,
-        deviceTypeId,
-        lastSeenAt,
-        firmwareVersion,
-        latestTelemetry,
+        deviceTypeSlug,
+        deviceTelemetry,
       ];
 
   @override
   String toString() =>
-      'UnitListItem(id: $id, serialNumber: $serialNumber, isConnected: $isConnected)';
+      'UnitListItem(id: $id, serialNumber: $serialNumber, isOnline: $isOnline)';
 }

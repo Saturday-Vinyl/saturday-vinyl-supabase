@@ -1,11 +1,9 @@
 import 'package:equatable/equatable.dart';
 
-/// Device status enum
+/// Device status enum - tracks provisioning lifecycle
 enum DeviceStatus {
   unprovisioned,
   provisioned,
-  online,
-  offline,
 }
 
 /// Extension to convert DeviceStatus to/from database string
@@ -16,21 +14,15 @@ extension DeviceStatusExtension on DeviceStatus {
         return 'unprovisioned';
       case DeviceStatus.provisioned:
         return 'provisioned';
-      case DeviceStatus.online:
-        return 'online';
-      case DeviceStatus.offline:
-        return 'offline';
     }
   }
 
   static DeviceStatus fromString(String? value) {
     switch (value) {
       case 'provisioned':
+      case 'online': // legacy value, treat as provisioned
+      case 'offline': // legacy value, treat as provisioned
         return DeviceStatus.provisioned;
-      case 'online':
-        return DeviceStatus.online;
-      case 'offline':
-        return DeviceStatus.offline;
       default:
         return DeviceStatus.unprovisioned;
     }
@@ -115,10 +107,7 @@ class Device extends Equatable {
   }
 
   /// Check if device is provisioned
-  bool get isProvisioned =>
-      status == DeviceStatus.provisioned ||
-      status == DeviceStatus.online ||
-      status == DeviceStatus.offline;
+  bool get isProvisioned => status == DeviceStatus.provisioned;
 
   /// Get formatted MAC address (with colons)
   String get formattedMacAddress => macAddress.toUpperCase();

@@ -158,20 +158,20 @@ class UnitFilterSheet extends ConsumerWidget {
       children: [
         _FilterChipOption(
           label: 'All',
-          isSelected: filter.isConnected == null,
-          onSelected: () => notifier.setConnected(null),
+          isSelected: filter.isOnline == null,
+          onSelected: () => notifier.setOnline(null),
         ),
         _FilterChipOption(
-          label: 'Connected',
-          isSelected: filter.isConnected == true,
-          onSelected: () => notifier.setConnected(true),
+          label: 'Online',
+          isSelected: filter.isOnline == true,
+          onSelected: () => notifier.setOnline(true),
           color: SaturdayColors.success,
           icon: Icons.wifi,
         ),
         _FilterChipOption(
-          label: 'Disconnected',
-          isSelected: filter.isConnected == false,
-          onSelected: () => notifier.setConnected(false),
+          label: 'Offline',
+          isSelected: filter.isOnline == false,
+          onSelected: () => notifier.setOnline(false),
           color: SaturdayColors.secondaryGrey,
           icon: Icons.wifi_off,
         ),

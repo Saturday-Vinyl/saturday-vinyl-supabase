@@ -62,21 +62,8 @@ class RemoteLogEntry extends Equatable {
   }
 
   String _formatHeartbeat() {
-    // Show key telemetry fields
-    final buffer = StringBuffer();
-    if (data['firmware_version'] != null) {
-      buffer.write('v${data['firmware_version']} ');
-    }
-    if (data['uptime_sec'] != null) {
-      buffer.write('up:${_formatUptime(data['uptime_sec'] as int)} ');
-    }
-    if (data['free_heap'] != null) {
-      buffer.write('heap:${_formatBytes(data['free_heap'] as int)} ');
-    }
-    if (data['wifi_rssi'] != null) {
-      buffer.write('rssi:${data['wifi_rssi']}dBm');
-    }
-    return buffer.isEmpty ? jsonEncode(data) : buffer.toString().trim();
+    if (data.isEmpty) return '{}';
+    return jsonEncode(data);
   }
 
   String _formatCommandSent() {
@@ -91,29 +78,14 @@ class RemoteLogEntry extends Equatable {
   }
 
   String _formatCommandAck() {
+    if (data.isNotEmpty) return jsonEncode(data);
     return 'ACK: ${command ?? commandId ?? 'unknown'}';
   }
 
   String _formatCommandResult() {
-    final status = data['status'] ?? commandStatus?.databaseValue ?? 'unknown';
-    final buffer = StringBuffer('$status: ${command ?? commandId ?? 'unknown'}');
-    if (data['error_message'] != null) {
-      buffer.write(' - ${data['error_message']}');
-    }
-    return buffer.toString();
-  }
-
-  String _formatUptime(int seconds) {
-    if (seconds < 60) return '${seconds}s';
-    if (seconds < 3600) return '${seconds ~/ 60}m';
-    if (seconds < 86400) return '${seconds ~/ 3600}h';
-    return '${seconds ~/ 86400}d';
-  }
-
-  String _formatBytes(int bytes) {
-    if (bytes < 1024) return '${bytes}B';
-    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)}KB';
-    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)}MB';
+    if (data.isNotEmpty) return jsonEncode(data);
+    final status = commandStatus?.databaseValue ?? 'unknown';
+    return '$status: ${command ?? commandId ?? 'unknown'}';
   }
 
   /// Get prefix indicator for log display
@@ -148,15 +120,19 @@ class RemoteLogEntry extends Equatable {
       entryType = RemoteLogEntryType.heartbeat;
     }
 
+    // Use the telemetry JSONB column (raw device POST payload)
+    final telemetry = json['telemetry'];
+    final Map<String, dynamic> data = telemetry is Map<String, dynamic>
+        ? Map<String, dynamic>.from(telemetry)
+        : {};
+
     return RemoteLogEntry(
       id: json['id'] as String,
       type: entryType,
-      timestamp: DateTime.parse(json['received_at'] as String),
+      timestamp: DateTime.parse(json['created_at'] as String),
       macAddress: json['mac_address'] as String,
       commandId: json['command_id'] as String?,
-      data: json['heartbeat_data'] != null
-          ? Map<String, dynamic>.from(json['heartbeat_data'] as Map)
-          : {},
+      data: data,
     );
   }
 

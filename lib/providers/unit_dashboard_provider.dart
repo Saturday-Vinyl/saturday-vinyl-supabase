@@ -43,11 +43,11 @@ class UnitFilterNotifier extends StateNotifier<UnitFilter> {
     );
   }
 
-  /// Set connected filter
-  void setConnected(bool? isConnected) {
+  /// Set online filter
+  void setOnline(bool? isOnline) {
     state = state.copyWith(
-      isConnected: isConnected,
-      clearConnected: isConnected == null,
+      isOnline: isOnline,
+      clearOnline: isOnline == null,
     );
   }
 
@@ -119,13 +119,13 @@ class UnitRealtimeNotifier extends StateNotifier<Map<String, UnitListItem>> {
 
     AppLogger.info('Starting realtime subscriptions for unit dashboard');
 
-    // Subscribe to device updates (for last_seen_at, telemetry)
+    // Subscribe to device updates (for engineering telemetry)
     _devicesChannel = realtimeService.subscribeToDevices(
       onInsert: _handleDeviceChange,
       onUpdate: _handleDeviceChange,
     );
 
-    // Subscribe to unit updates (for status changes)
+    // Subscribe to unit updates (for status, telemetry, and online state)
     _unitsChannel = realtimeService.subscribeToUnits(
       onInsert: _handleUnitInsert,
       onUpdate: _handleUnitChange,
@@ -152,6 +152,7 @@ class UnitRealtimeNotifier extends StateNotifier<Map<String, UnitListItem>> {
     AppLogger.info('Stopped realtime subscriptions for unit dashboard');
   }
 
+  /// Handle device table changes - updates engineering telemetry only
   void _handleDeviceChange(PostgresChangePayload payload) {
     final deviceData = payload.newRecord;
     final unitId = deviceData['unit_id'] as String?;
@@ -183,24 +184,18 @@ class UnitRealtimeNotifier extends StateNotifier<Map<String, UnitListItem>> {
       return;
     }
 
-    // Update the unit with new device data
-    final lastSeenAt = deviceData['last_seen_at'] != null
-        ? DateTime.parse(deviceData['last_seen_at'] as String)
-        : null;
+    // Update only engineering telemetry from device changes
     final updatedUnit = existingUnit.copyWith(
-      lastSeenAt: lastSeenAt,
-      firmwareVersion: deviceData['firmware_version'] as String?,
-      latestTelemetry: deviceData['latest_telemetry'] != null
+      deviceTelemetry: deviceData['latest_telemetry'] != null
           ? Map<String, dynamic>.from(deviceData['latest_telemetry'] as Map)
           : null,
     );
 
-    // Use Map.from to create a mutable copy, then update with the variable key
     final newState = Map<String, UnitListItem>.from(state);
     newState[unitId] = updatedUnit;
     state = newState;
     AppLogger.info(
-        'Realtime: Updated unit $unitId - lastSeen=$lastSeenAt, isConnected=${updatedUnit.isConnected}');
+        'Realtime: Updated device telemetry for unit $unitId');
   }
 
   void _handleUnitInsert(PostgresChangePayload payload) {
@@ -209,6 +204,7 @@ class UnitRealtimeNotifier extends StateNotifier<Map<String, UnitListItem>> {
     AppLogger.debug('Realtime: New unit inserted, refreshing dashboard');
   }
 
+  /// Handle unit table changes - updates status, consumer telemetry, and online state
   void _handleUnitChange(PostgresChangePayload payload) {
     final unitData = payload.newRecord;
     final unitId = unitData['id'] as String?;
@@ -218,24 +214,36 @@ class UnitRealtimeNotifier extends StateNotifier<Map<String, UnitListItem>> {
     final existingUnit = state[unitId];
     if (existingUnit == null) {
       // Unit not in our current view, might be due to filter
-      // Check if it should now be visible
       ref.invalidate(unitDashboardProvider);
       return;
     }
 
-    // Update unit fields
+    // Parse lastSeenAt
+    final lastSeenAt = unitData['last_seen_at'] != null
+        ? DateTime.parse(unitData['last_seen_at'] as String)
+        : null;
+
+    // Update unit fields including consumer telemetry
     final updatedUnit = existingUnit.copyWith(
       serialNumber: unitData['serial_number'] as String?,
       deviceName: unitData['device_name'] as String?,
       status: UnitStatusExtension.fromString(unitData['status'] as String?),
       userId: unitData['user_id'] as String?,
+      isOnline: unitData['is_online'] as bool?,
+      lastSeenAt: lastSeenAt,
+      batteryLevel: unitData['battery_level'] as int?,
+      isCharging: unitData['is_charging'] as bool?,
+      wifiRssi: unitData['wifi_rssi'] as int?,
+      temperatureC: (unitData['temperature_c'] as num?)?.toDouble(),
+      humidityPct: (unitData['humidity_pct'] as num?)?.toDouble(),
+      firmwareVersion: unitData['firmware_version'] as String?,
     );
 
-    // Use Map.from to create a mutable copy, then update with the variable key
     final newState = Map<String, UnitListItem>.from(state);
     newState[unitId] = updatedUnit;
     state = newState;
-    AppLogger.debug('Realtime: Updated unit $unitId');
+    AppLogger.info(
+        'Realtime: Updated unit $unitId - isOnline=${updatedUnit.isOnline}, lastSeen=$lastSeenAt');
   }
 
   void _handleUnitDelete(PostgresChangePayload payload) {
@@ -269,4 +277,3 @@ class UnitRealtimeNotifier extends StateNotifier<Map<String, UnitListItem>> {
     super.dispose();
   }
 }
-

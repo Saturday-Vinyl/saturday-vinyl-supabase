@@ -48,8 +48,8 @@ class UnitFilter extends Equatable {
   /// Search query (matches serial_number and device_name)
   final String? searchQuery;
 
-  /// Filter by connection status (true = connected only, false = disconnected only, null = all)
-  final bool? isConnected;
+  /// Filter by online status (true = online only, false = offline only, null = all)
+  final bool? isOnline;
 
   /// Sort field
   final UnitSortBy sortBy;
@@ -60,7 +60,7 @@ class UnitFilter extends Equatable {
   const UnitFilter({
     this.status,
     this.searchQuery,
-    this.isConnected,
+    this.isOnline,
     this.sortBy = UnitSortBy.createdAt,
     this.sortAscending = false, // Default: newest first
   });
@@ -72,14 +72,14 @@ class UnitFilter extends Equatable {
   bool get hasActiveFilters =>
       status != null ||
       (searchQuery?.isNotEmpty ?? false) ||
-      isConnected != null;
+      isOnline != null;
 
   /// Get the number of active filters
   int get activeFilterCount {
     int count = 0;
     if (status != null) count++;
     if (searchQuery?.isNotEmpty ?? false) count++;
-    if (isConnected != null) count++;
+    if (isOnline != null) count++;
     return count;
   }
 
@@ -87,17 +87,17 @@ class UnitFilter extends Equatable {
   UnitFilter copyWith({
     UnitStatus? status,
     String? searchQuery,
-    bool? isConnected,
+    bool? isOnline,
     UnitSortBy? sortBy,
     bool? sortAscending,
     bool clearStatus = false,
     bool clearSearch = false,
-    bool clearConnected = false,
+    bool clearOnline = false,
   }) {
     return UnitFilter(
       status: clearStatus ? null : (status ?? this.status),
       searchQuery: clearSearch ? null : (searchQuery ?? this.searchQuery),
-      isConnected: clearConnected ? null : (isConnected ?? this.isConnected),
+      isOnline: clearOnline ? null : (isOnline ?? this.isOnline),
       sortBy: sortBy ?? this.sortBy,
       sortAscending: sortAscending ?? this.sortAscending,
     );
@@ -110,13 +110,13 @@ class UnitFilter extends Equatable {
   List<Object?> get props => [
         status,
         searchQuery,
-        isConnected,
+        isOnline,
         sortBy,
         sortAscending,
       ];
 
   @override
   String toString() {
-    return 'UnitFilter(status: $status, search: $searchQuery, connected: $isConnected, sortBy: $sortBy, asc: $sortAscending)';
+    return 'UnitFilter(status: $status, search: $searchQuery, online: $isOnline, sortBy: $sortBy, asc: $sortAscending)';
   }
 }

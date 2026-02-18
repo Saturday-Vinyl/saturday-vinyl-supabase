@@ -417,7 +417,6 @@ class DeviceRepository {
           .from('devices')
           .update({
             'last_seen_at': DateTime.now().toIso8601String(),
-            'status': DeviceStatus.online.databaseValue,
           })
           .eq('id', deviceId)
           .select()
@@ -443,7 +442,6 @@ class DeviceRepository {
           .from('devices')
           .update({
             'last_seen_at': DateTime.now().toIso8601String(),
-            'status': DeviceStatus.online.databaseValue,
           })
           .eq('mac_address', macAddress)
           .select()

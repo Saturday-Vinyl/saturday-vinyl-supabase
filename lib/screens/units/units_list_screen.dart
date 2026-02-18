@@ -198,17 +198,17 @@ class _UnitsListScreenState extends ConsumerState<UnitsListScreen> {
                 selectedColor: SaturdayColors.info.withValues(alpha: 0.2),
               ),
             ),
-          if (filter.isConnected != null)
+          if (filter.isOnline != null)
             Padding(
               padding: const EdgeInsets.only(right: 8),
               child: FilterChip(
-                label: Text(filter.isConnected! ? 'Connected' : 'Disconnected'),
+                label: Text(filter.isOnline! ? 'Online' : 'Offline'),
                 onSelected: (_) =>
-                    ref.read(unitFilterProvider.notifier).setConnected(null),
+                    ref.read(unitFilterProvider.notifier).setOnline(null),
                 onDeleted: () =>
-                    ref.read(unitFilterProvider.notifier).setConnected(null),
+                    ref.read(unitFilterProvider.notifier).setOnline(null),
                 selected: true,
-                selectedColor: filter.isConnected!
+                selectedColor: filter.isOnline!
                     ? SaturdayColors.success.withValues(alpha: 0.2)
                     : SaturdayColors.secondaryGrey.withValues(alpha: 0.2),
               ),

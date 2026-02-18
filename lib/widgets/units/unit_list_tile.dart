@@ -108,10 +108,10 @@ class UnitListTile extends StatelessWidget {
       height: 10,
       decoration: BoxDecoration(
         shape: BoxShape.circle,
-        color: unit.isConnected
+        color: unit.isOnline
             ? SaturdayColors.success
             : SaturdayColors.secondaryGrey.withValues(alpha: 0.4),
-        boxShadow: unit.isConnected
+        boxShadow: unit.isOnline
             ? [
                 BoxShadow(
                   color: SaturdayColors.success.withValues(alpha: 0.4),
@@ -191,7 +191,7 @@ class UnitListTile extends StatelessWidget {
       children: [
         if (unit.batteryLevel != null)
           _TelemetryBadge(
-            icon: _getBatteryIcon(unit.batteryLevel!, unit.batteryCharging),
+            icon: _getBatteryIcon(unit.batteryLevel!, unit.isCharging),
             value: '${unit.batteryLevel}%',
             color: _getBatteryColor(unit.batteryLevel!),
           ),

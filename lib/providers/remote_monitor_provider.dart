@@ -212,8 +212,8 @@ class RemoteMonitorNotifier extends StateNotifier<RemoteMonitorState> {
           .from('device_heartbeats')
           .select()
           .inFilter('mac_address', macAddresses)
-          .gte('received_at', since.toIso8601String())
-          .order('received_at', ascending: false)
+          .gte('created_at', since.toIso8601String())
+          .order('created_at', ascending: false)
           .limit(100);
 
       final heartbeatEntries = (heartbeatsResponse as List)
