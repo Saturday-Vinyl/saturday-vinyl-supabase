@@ -73,14 +73,27 @@ For factory provisioning and local diagnostics via USB serial connection.
 For remote device management via cloud WebSocket.
 
 **Channel Subscription:**
-- Device subscribes to: `device:{mac_address}` (colons replaced with dashes)
-- Example: `device:AA-BB-CC-DD-EE-01` for MAC `AA:BB:CC:DD:EE:01`
+- Device subscribes to Phoenix topic: `realtime:device:{mac_address}` (colons replaced with dashes)
+- Example: `realtime:device:AA-BB-CC-DD-EE-01` for MAC `AA:BB:CC:DD:EE:01`
+- The `realtime:` prefix is required by the Phoenix protocol on the client side; the DB trigger's `realtime.send()` uses `device:{mac}` as the topic and Supabase maps it to the prefixed Phoenix channel automatically
 - Uses Phoenix protocol over WebSocket
+
+**Delivery Mechanism: Broadcast (via `realtime.send()`)**
+
+Commands are delivered using Supabase Realtime Broadcast rather than Postgres Changes (WAL-based). Broadcast was chosen because:
+
+- **Lower latency** — the database trigger calls `realtime.send()` directly instead of going through WAL parsing and per-client filtering.
+- **No RLS complexity** — broadcast channels authenticate via the API key, avoiding the need for row-level security policies on `device_commands` for each device's anon key.
+- **Clean per-device addressing** — each device subscribes only to its own `device:{mac_address}` topic, rather than a shared table-level channel with server-side row filtering.
+- **Fire-and-forget fits imperative commands** — commands like `reboot` or `run_test` are actions, not data. If the device is offline, the command is likely stale anyway.
+- **Catch-up via REST** — the `device_commands` table still holds pending rows, so devices can poll for missed commands with `status = 'pending'` on reconnect if needed.
+
+Note: `device_commands` is also in the `supabase_realtime` publication for Postgres Changes, but that is used by the admin app to monitor command status updates — not for device delivery.
 
 **Command Flow:**
 ```
 1. Admin App → INSERT into device_commands table
-2. Database Trigger → pg_notify to Supabase Realtime
+2. Database Trigger → realtime.send() to device:{mac_address} channel
 3. Supabase Realtime → Broadcast to device:{mac_address} channel
 4. Device receives command via WebSocket
 5. Device sends command_ack heartbeat (acknowledges receipt)
