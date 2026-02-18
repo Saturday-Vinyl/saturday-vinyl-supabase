@@ -16,9 +16,7 @@
 #include "rfid_protocol.h"
 #include "app_config.h"
 
-/* Note: In 2-SoC architecture, S3 doesn't have OpenThread.
- * Thread management is handled by H2 co-processor.
- * The ifdef guards in send_event/heartbeat will compile to no-ops. */
+/* Thread networking is managed by the H2 co-processor via UART protocol. */
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "esp_system.h"
@@ -115,6 +113,10 @@ typedef struct {
 } event_reporter_state_t;
 
 static event_reporter_state_t s_state = {0};
+
+/* H2 state tracking for heartbeats */
+static bool s_h2_connected = false;
+static uint8_t s_h2_thread_state = 0;
 
 /*******************************************************************************
  * Ring Buffer Operations
@@ -286,6 +288,7 @@ static int format_heartbeat_json(char *buf, size_t buf_len)
 
     /* Standard system info (protocol v1.2.2 required fields) */
     uint32_t uptime_sec = (uint32_t)(esp_timer_get_time() / 1000000);
+    uint32_t total_heap = (uint32_t)heap_caps_get_total_size(MALLOC_CAP_8BIT);
     uint32_t free_heap = (uint32_t)esp_get_free_heap_size();
     uint32_t min_free_heap = (uint32_t)esp_get_minimum_free_heap_size();
     uint32_t largest_free_block = (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
@@ -297,19 +300,25 @@ static int format_heartbeat_json(char *buf, size_t buf_len)
         "\"firmware_version\":\"%s\","
         "\"telemetry\":{"
         "\"uptime_sec\":%lu,"
+        "\"total_heap\":%lu,"
         "\"free_heap\":%lu,"
         "\"min_free_heap\":%lu,"
         "\"largest_free_block\":%lu,"
-        "\"wifi_rssi\":%d}}",
+        "\"wifi_rssi\":%d,"
+        "\"h2_connected\":%s,"
+        "\"h2_thread_state\":%d}}",
         mac_str,
         unit_id,
         DEVICE_TYPE,
         FW_VERSION_STRING,
         (unsigned long)uptime_sec,
+        (unsigned long)total_heap,
         (unsigned long)free_heap,
         (unsigned long)min_free_heap,
         (unsigned long)largest_free_block,
-        wifi_rssi);
+        wifi_rssi,
+        s_h2_connected ? "true" : "false",
+        s_h2_thread_state);
 
     return len;
 }
@@ -320,8 +329,6 @@ static int format_heartbeat_json(char *buf, size_t buf_len)
 
 /**
  * @brief Send a single event to Supabase
- *
- * Suspends Thread radio during the HTTP request for reliable TLS.
  */
 static esp_err_t send_event(const queued_event_t *event)
 {
@@ -332,20 +339,8 @@ static esp_err_t send_event(const queued_event_t *event)
         return ESP_ERR_INVALID_SIZE;
     }
 
-    /* Completely shutdown Thread to give WiFi exclusive radio access.
-     * The suspend approach wasn't reliable enough - full shutdown ensures
-     * no 802.15.4 radio activity during TLS handshake. */
-#if defined(CONFIG_OPENTHREAD_ENABLED) && CONFIG_OPENTHREAD_ENABLED
-    thread_br_shutdown_for_wifi();
-#endif
-
     supabase_response_t response;
     esp_err_t err = supabase_post("now_playing_events", json, &response, 0);
-
-    /* Restart Thread after WiFi operation */
-#if defined(CONFIG_OPENTHREAD_ENABLED) && CONFIG_OPENTHREAD_ENABLED
-    thread_br_restart_after_wifi();
-#endif
 
     if (err == ESP_OK && response.status_code >= 200 && response.status_code < 300) {
         supabase_response_free(&response);
@@ -362,11 +357,6 @@ static esp_err_t send_event(const queued_event_t *event)
 
 /**
  * @brief Send heartbeat to Supabase
- *
- * Completely shuts down Thread during the HTTP request to ensure reliable TLS.
- * With WiFi+Thread coexistence on a single radio, even suspend wasn't enough
- * to prevent packet loss during TLS handshakes. Full shutdown gives WiFi
- * exclusive radio access for reliable cloud connectivity.
  */
 static esp_err_t send_heartbeat_internal(void)
 {
@@ -381,20 +371,8 @@ static esp_err_t send_heartbeat_internal(void)
      * Use printf to avoid ESP_LOG truncation on long messages. */
     printf("[EVENT_RPT] Heartbeat payload (%d bytes): %s\n", len, json);
 
-    /* Completely shutdown Thread to give WiFi exclusive radio access.
-     * The suspend approach wasn't reliable enough - full shutdown ensures
-     * no 802.15.4 radio activity during TLS handshake. */
-#if defined(CONFIG_OPENTHREAD_ENABLED) && CONFIG_OPENTHREAD_ENABLED
-    thread_br_shutdown_for_wifi();
-#endif
-
     supabase_response_t response;
     esp_err_t err = supabase_post("device_heartbeats", json, &response, 0);
-
-    /* Restart Thread after WiFi operation */
-#if defined(CONFIG_OPENTHREAD_ENABLED) && CONFIG_OPENTHREAD_ENABLED
-    thread_br_restart_after_wifi();
-#endif
 
     if (err == ESP_OK && response.status_code >= 200 && response.status_code < 300) {
         s_state.heartbeats_sent++;
@@ -859,10 +837,6 @@ void event_reporter_set_wifi_state(bool connected)
 /*******************************************************************************
  * H2/Crate Event Reporting (INT-2: Full Pipeline)
  ******************************************************************************/
-
-/* H2 state tracking for heartbeats */
-static bool s_h2_connected = false;
-static uint8_t s_h2_thread_state = 0;
 
 void event_reporter_set_h2_state(bool connected, uint8_t thread_state)
 {

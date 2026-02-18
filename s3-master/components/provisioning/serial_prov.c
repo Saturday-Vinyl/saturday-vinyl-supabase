@@ -38,11 +38,8 @@
 #include "esp_heap_caps.h"
 #include "h2_comm.h"
 
-/* 2-SoC Architecture: Thread is handled by H2 co-processor.
- * Thread credentials will be retrieved via UART from H2.
- * TODO: Implement H2 communication in Phase S3-6.
- * For now, Thread-related functions are stubbed. */
-#define THREAD_NOT_AVAILABLE_ON_S3 1
+/* 2-SoC Architecture: Thread is managed by the H2 co-processor.
+ * Thread credentials are retrieved via h2_comm UART protocol. */
 
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -727,56 +724,46 @@ static void handle_get_status(cJSON *params)
         }
     }
 
-#if defined(CONFIG_OPENTHREAD_ENABLED) && CONFIG_OPENTHREAD_ENABLED
-    /* Thread Border Router credentials (Phase 8)
-     * These are generated on first boot and must be captured during factory
-     * provisioning for upload to Supabase. The mobile app retrieves them from
-     * the cloud when provisioning crates to join this hub's Thread network.
-     *
-     * Ensure credentials exist (generate if needed) before trying to read them.
-     * This allows get_status to work during service mode before Thread BR starts. */
-    thread_br_ensure_credentials();
+    /* Thread BR credentials from H2 co-processor */
+    if (h2_comm_is_connected()) {
+        s3h2_credentials_payload_t h2_creds;
+        esp_err_t thread_err = h2_comm_get_credentials(&h2_creds, 2000);
+        if (thread_err == ESP_OK) {
+            cJSON *thread = cJSON_CreateObject();
 
-    thread_network_credentials_t thread_creds;
-    if (thread_br_get_credentials(&thread_creds) == ESP_OK) {
-        cJSON *thread = cJSON_CreateObject();
+            cJSON_AddStringToObject(thread, "network_name", h2_creds.network_name);
+            cJSON_AddNumberToObject(thread, "pan_id", h2_creds.pan_id);
+            cJSON_AddNumberToObject(thread, "channel", h2_creds.channel);
 
-        cJSON_AddStringToObject(thread, "network_name", thread_creds.network_name);
-        cJSON_AddNumberToObject(thread, "pan_id", thread_creds.pan_id);
-        cJSON_AddNumberToObject(thread, "channel", thread_creds.channel);
+            /* Network key as hex string (32 chars) */
+            char network_key_hex[33];
+            for (int i = 0; i < 16; i++) {
+                snprintf(&network_key_hex[i * 2], 3, "%02x", h2_creds.network_key[i]);
+            }
+            cJSON_AddStringToObject(thread, "network_key", network_key_hex);
 
-        /* Network key as hex string (32 chars) */
-        char network_key_hex[33];
-        thread_br_get_network_key_hex(network_key_hex, sizeof(network_key_hex));
-        cJSON_AddStringToObject(thread, "network_key", network_key_hex);
+            /* Extended PAN ID as hex string (16 chars) */
+            char extpanid_hex[17];
+            for (int i = 0; i < 8; i++) {
+                snprintf(&extpanid_hex[i * 2], 3, "%02x", h2_creds.extended_pan_id[i]);
+            }
+            cJSON_AddStringToObject(thread, "extended_pan_id", extpanid_hex);
 
-        /* Extended PAN ID as hex string (16 chars) */
-        char extpanid_hex[17];
-        thread_br_get_extpanid_hex(extpanid_hex, sizeof(extpanid_hex));
-        cJSON_AddStringToObject(thread, "extended_pan_id", extpanid_hex);
+            /* Mesh-local prefix as hex string (16 chars) */
+            char mesh_local_hex[17];
+            for (int i = 0; i < 8; i++) {
+                snprintf(&mesh_local_hex[i * 2], 3, "%02x", h2_creds.mesh_local_prefix[i]);
+            }
+            cJSON_AddStringToObject(thread, "mesh_local_prefix", mesh_local_hex);
 
-        /* Mesh-local prefix as hex string (16 chars) */
-        char mesh_local_hex[17];
-        for (int i = 0; i < THREAD_MESH_LOCAL_PREFIX_LEN; i++) {
-            snprintf(&mesh_local_hex[i * 2], 3, "%02x",
-                     thread_creds.mesh_local_prefix[i]);
+            cJSON_AddItemToObject(data, "thread", thread);
+        } else {
+            ESP_LOGW(TAG, "Failed to get Thread credentials from H2: %s", esp_err_to_name(thread_err));
+            cJSON_AddNullToObject(data, "thread");
         }
-        cJSON_AddStringToObject(thread, "mesh_local_prefix", mesh_local_hex);
-
-        /* PSKc as hex string (32 chars) - used for commissioner authentication */
-        char pskc_hex[33];
-        uint8_t *pskc_bytes = (uint8_t *)thread_creds.pskc;
-        for (int i = 0; i < 16; i++) {
-            snprintf(&pskc_hex[i * 2], 3, "%02x", pskc_bytes[i]);
-        }
-        cJSON_AddStringToObject(thread, "pskc", pskc_hex);
-
-        cJSON_AddItemToObject(data, "thread", thread);
     } else {
-        /* Thread not initialized yet - include null to indicate it's expected */
         cJSON_AddNullToObject(data, "thread");
     }
-#endif /* CONFIG_OPENTHREAD_ENABLED */
 
     /* System info - match heartbeat format per Device Command Protocol v1.3 */
     cJSON_AddNumberToObject(data, "free_heap", esp_get_free_heap_size());
@@ -1529,7 +1516,6 @@ static void handle_test_cloud(cJSON *params)
     led_set_state(LED_COLOR_WHITE, LED_PATTERN_PULSE, 2000);
 }
 
-#if defined(CONFIG_OPENTHREAD_ENABLED) && CONFIG_OPENTHREAD_ENABLED
 static void handle_test_thread(cJSON *params)
 {
     (void)params;
@@ -1537,98 +1523,72 @@ static void handle_test_thread(cJSON *params)
     set_state(SERIAL_PROV_STATE_TESTING);
     led_set_state(LED_COLOR_CYAN, LED_PATTERN_BLINK_FAST, 250);
 
-    ESP_LOGI(TAG, "Testing Thread Border Router...");
+    ESP_LOGI(TAG, "Testing Thread via H2 co-processor...");
 
-    /* Ensure credentials exist (generate if needed) */
-    esp_err_t ret = thread_br_ensure_credentials();
-    if (ret != ESP_OK) {
-        send_error("thread_creds_failed", "Failed to ensure Thread credentials");
-        set_state(SERIAL_PROV_STATE_AWAITING);
-        led_flash(LED_COLOR_RED, 500);
-        vTaskDelay(pdMS_TO_TICKS(550));
-        led_set_state(LED_COLOR_WHITE, LED_PATTERN_PULSE, 2000);
-        return;
-    }
-
-    /* Get credentials to return in response */
-    thread_network_credentials_t creds;
-    ret = thread_br_get_credentials(&creds);
-    if (ret != ESP_OK) {
-        send_error("thread_creds_read_failed", "Failed to read Thread credentials");
-        set_state(SERIAL_PROV_STATE_AWAITING);
-        led_flash(LED_COLOR_RED, 500);
-        vTaskDelay(pdMS_TO_TICKS(550));
-        led_set_state(LED_COLOR_WHITE, LED_PATTERN_PULSE, 2000);
-        return;
-    }
-
-    /* Initialize Thread BR if not already */
-    ret = thread_br_init();
-    if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
-        /* ESP_ERR_INVALID_STATE means already initialized, which is OK */
-        send_error("thread_init_failed", "Failed to initialize Thread BR");
-        set_state(SERIAL_PROV_STATE_AWAITING);
-        led_flash(LED_COLOR_RED, 500);
-        vTaskDelay(pdMS_TO_TICKS(550));
-        led_set_state(LED_COLOR_WHITE, LED_PATTERN_PULSE, 2000);
-        return;
-    }
-
-    /* Start Thread BR */
-    ret = thread_br_start();
-    if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
-        send_error("thread_start_failed", "Failed to start Thread BR");
-        set_state(SERIAL_PROV_STATE_AWAITING);
-        led_flash(LED_COLOR_RED, 500);
-        vTaskDelay(pdMS_TO_TICKS(550));
-        led_set_state(LED_COLOR_WHITE, LED_PATTERN_PULSE, 2000);
-        return;
-    }
-
-    /* Wait for Thread to attach (become router or leader) with timeout */
-    ESP_LOGI(TAG, "Waiting for Thread network attachment...");
-    int64_t start = esp_timer_get_time();
-    const int64_t THREAD_ATTACH_TIMEOUT_MS = 30000;  /* 30 seconds */
-    bool attached = false;
-
-    while ((esp_timer_get_time() - start) < (THREAD_ATTACH_TIMEOUT_MS * 1000)) {
-        thread_br_state_t state = thread_br_get_state();
-        if (state >= THREAD_BR_STATE_CHILD) {
-            attached = true;
-            break;
+    /* Verify H2 communication */
+    if (!h2_comm_is_connected()) {
+        esp_err_t ping_ret = h2_comm_ping(2000);
+        if (ping_ret != ESP_OK) {
+            send_error("h2_not_responding", "H2 co-processor not responding to PING");
+            set_state(SERIAL_PROV_STATE_AWAITING);
+            led_flash(LED_COLOR_RED, 500);
+            vTaskDelay(pdMS_TO_TICKS(550));
+            led_set_state(LED_COLOR_WHITE, LED_PATTERN_PULSE, 2000);
+            return;
         }
-        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+
+    /* Get Thread BR status from H2 */
+    s3h2_status_payload_t h2_status;
+    esp_err_t ret = h2_comm_get_status(&h2_status, 2000);
+    if (ret != ESP_OK) {
+        send_error("h2_status_failed", "Failed to get Thread BR status from H2");
+        set_state(SERIAL_PROV_STATE_AWAITING);
+        led_flash(LED_COLOR_RED, 500);
+        vTaskDelay(pdMS_TO_TICKS(550));
+        led_set_state(LED_COLOR_WHITE, LED_PATTERN_PULSE, 2000);
+        return;
+    }
+
+    /* Get Thread credentials from H2 */
+    s3h2_credentials_payload_t h2_creds;
+    ret = h2_comm_get_credentials(&h2_creds, 2000);
+    if (ret != ESP_OK) {
+        send_error("thread_creds_failed", "Failed to get Thread credentials from H2");
+        set_state(SERIAL_PROV_STATE_AWAITING);
+        led_flash(LED_COLOR_RED, 500);
+        vTaskDelay(pdMS_TO_TICKS(550));
+        led_set_state(LED_COLOR_WHITE, LED_PATTERN_PULSE, 2000);
+        return;
     }
 
     /* Build response */
     cJSON *data = cJSON_CreateObject();
 
-    cJSON_AddStringToObject(data, "network_name", creds.network_name);
-    cJSON_AddNumberToObject(data, "pan_id", creds.pan_id);
-    cJSON_AddNumberToObject(data, "channel", creds.channel);
+    cJSON_AddStringToObject(data, "network_name", h2_creds.network_name);
+    cJSON_AddNumberToObject(data, "pan_id", h2_creds.pan_id);
+    cJSON_AddNumberToObject(data, "channel", h2_creds.channel);
 
     /* Network key as hex string */
     char network_key_hex[33];
-    thread_br_get_network_key_hex(network_key_hex, sizeof(network_key_hex));
+    for (int i = 0; i < 16; i++) {
+        snprintf(&network_key_hex[i * 2], 3, "%02x", h2_creds.network_key[i]);
+    }
     cJSON_AddStringToObject(data, "network_key", network_key_hex);
 
+    bool attached = (h2_status.thread_state >= S3H2_THREAD_STATE_CHILD);
+    cJSON_AddBoolToObject(data, "attached", attached);
+    cJSON_AddStringToObject(data, "role",
+                            h2_comm_thread_state_str((s3h2_thread_state_t)h2_status.thread_state));
+    cJSON_AddNumberToObject(data, "rloc16", h2_status.rloc16);
+    cJSON_AddNumberToObject(data, "device_count", h2_status.device_count);
+
     if (attached) {
-        thread_br_status_t status;
-        thread_br_get_status(&status);
-
-        cJSON_AddBoolToObject(data, "attached", true);
-        cJSON_AddStringToObject(data, "role", thread_br_state_to_string(status.state));
-        cJSON_AddNumberToObject(data, "rloc16", status.rloc16);
-        cJSON_AddNumberToObject(data, "device_count", status.device_count);
-
         led_flash(LED_COLOR_GREEN, 500);
-        send_response("ok", "Thread BR started and attached to network", data);
+        send_response("ok", "Thread BR running on H2 and attached to network", data);
     } else {
-        cJSON_AddBoolToObject(data, "attached", false);
-        cJSON_AddStringToObject(data, "role", thread_br_state_to_string(thread_br_get_state()));
-
         led_flash(LED_COLOR_ORANGE, 500);
-        send_response("ok", "Thread BR started but not yet attached (still forming network)", data);
+        send_response("ok", "Thread BR running on H2 but not yet attached", data);
     }
 
     cJSON_Delete(data);
@@ -1636,13 +1596,6 @@ static void handle_test_thread(cJSON *params)
     vTaskDelay(pdMS_TO_TICKS(550));
     led_set_state(LED_COLOR_WHITE, LED_PATTERN_PULSE, 2000);
 }
-#else
-static void handle_test_thread(cJSON *params)
-{
-    (void)params;
-    send_error("thread_not_supported", "Thread is not enabled in this firmware build");
-}
-#endif /* CONFIG_OPENTHREAD_ENABLED */
 
 static void handle_test_all(cJSON *params)
 {

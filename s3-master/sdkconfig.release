@@ -1,13 +1,11 @@
 # Saturday Vinyl Hub - ESP32-S3 Master Release Configuration
-# Production-optimized settings for release builds
+# Production-optimized settings that override sdkconfig.defaults for release builds.
 #
-# Usage: Copy this to sdkconfig or use: idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.release" build
-#
+# Usage: idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.release" build
 
 # =============================================================================
-# Compiler Optimization (Release)
+# Compiler (Release - silent assertions)
 # =============================================================================
-CONFIG_COMPILER_OPTIMIZATION_SIZE=y
 CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_SILENT=y
 
 # =============================================================================
@@ -28,8 +26,6 @@ CONFIG_ESP_SYSTEM_PANIC_PRINT_REBOOT=y
 # =============================================================================
 # Watchdog (Stricter for production)
 # =============================================================================
-CONFIG_ESP_TASK_WDT_EN=y
-CONFIG_ESP_TASK_WDT_TIMEOUT_S=30
 CONFIG_ESP_TASK_WDT_PANIC=y
 CONFIG_ESP_INT_WDT=y
 CONFIG_ESP_INT_WDT_TIMEOUT_MS=300
@@ -37,9 +33,7 @@ CONFIG_ESP_INT_WDT_TIMEOUT_MS=300
 # =============================================================================
 # Bootloader Security
 # =============================================================================
-CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 CONFIG_BOOTLOADER_APP_ANTI_ROLLBACK=n
-CONFIG_BOOTLOADER_WDT_ENABLE=y
 CONFIG_BOOTLOADER_WDT_TIME_MS=9000
 CONFIG_SECURE_BOOT_ALLOW_ROM_BASIC=n
 CONFIG_SECURE_BOOT_ALLOW_JTAG=n
@@ -54,34 +48,9 @@ CONFIG_SECURE_BOOT_ALLOW_JTAG=n
 # CONFIG_NVS_ENCRYPTION=y
 
 # =============================================================================
-# Memory Optimization
-# =============================================================================
-CONFIG_ESP_MAIN_TASK_STACK_SIZE=4096
-CONFIG_ESP_IPC_TASK_STACK_SIZE=1024
-CONFIG_FREERTOS_TIMER_TASK_STACK_DEPTH=2048
-
-# =============================================================================
-# HTTPS/TLS Optimization
-# =============================================================================
-CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
-CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_CMN=y
-CONFIG_MBEDTLS_SSL_MAX_CONTENT_LEN=16384
-CONFIG_MBEDTLS_ASYMMETRIC_CONTENT_LEN=y
-CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN=16384
-CONFIG_MBEDTLS_SSL_OUT_CONTENT_LEN=4096
-
-# =============================================================================
 # OTA Security
 # =============================================================================
-CONFIG_ESP_HTTPS_OTA_ALLOW_HTTP=n
-CONFIG_ESP_HTTPS_OTA_DECRYPT_CB=n
 CONFIG_BOOTLOADER_SKIP_VALIDATE_IN_DEEP_SLEEP=n
-
-# =============================================================================
-# Wi-Fi Power Optimization (Optional)
-# =============================================================================
-# CONFIG_ESP32_WIFI_DYNAMIC_RX_BUFFER_NUM=16
-# CONFIG_ESP32_WIFI_DYNAMIC_TX_BUFFER_NUM=16
 
 # =============================================================================
 # Heap Debugging Disabled (Release)

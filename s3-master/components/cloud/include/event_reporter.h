@@ -57,7 +57,7 @@ typedef struct {
 /**
  * @brief Default event queue size (number of events)
  */
-#define EVENT_QUEUE_DEFAULT_SIZE    100
+#define EVENT_QUEUE_DEFAULT_SIZE    32
 
 /**
  * @brief Default heartbeat interval in seconds
@@ -68,7 +68,7 @@ typedef struct {
  * @brief Event reporter configuration
  */
 typedef struct {
-    uint16_t queue_size;            /**< Maximum events in queue (default: 100) */
+    uint16_t queue_size;            /**< Maximum events in queue (default: 32) */
     uint16_t heartbeat_interval_sec;/**< Heartbeat interval in seconds (default: 300) */
     bool enable_heartbeat;          /**< Enable periodic heartbeat (default: true) */
 } event_reporter_config_t;

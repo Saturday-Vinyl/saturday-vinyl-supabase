@@ -42,6 +42,9 @@ static bool s_service_mode_active = false;
 /* Track if we're in BLE provisioning mode */
 static bool s_ble_prov_active = false;
 
+/* Track if BLE has been deinitialized (requires reboot to re-provision) */
+static bool s_ble_deinitialized = false;
+
 /* Track H2 connection state */
 static bool s_h2_connected = false;
 
@@ -132,6 +135,15 @@ static void on_wifi_event(void *handler_args, esp_event_base_t base,
                     s_boot_validated = true;
                 }
             }
+            /* Release BLE stack memory after successful WiFi connection.
+             * NimBLE stays resident after provisioning otherwise (~30KB).
+             * A device reboot is required to re-provision WiFi via BLE. */
+            if (!s_ble_deinitialized) {
+                ESP_LOGI(TAG, "WiFi connected - deinitializing BLE to free memory");
+                ble_prov_deinit();
+                s_ble_deinitialized = true;
+            }
+
             /* Connect to Supabase Realtime for push notifications */
             if (supabase_is_configured()) {
                 esp_err_t rt_ret = realtime_client_connect();
@@ -557,8 +569,10 @@ static void on_button_press(button_press_t press_type)
             break;
         case BUTTON_PRESS_LONG:
             ESP_LOGI(TAG, "Long button press - BLE provisioning requested");
-            /* Start BLE provisioning if not already active */
-            if (!ble_prov_is_active() && !s_service_mode_active) {
+            if (s_ble_deinitialized) {
+                ESP_LOGW(TAG, "BLE has been released to free memory - reboot to re-provision WiFi");
+                led_flash(LED_COLOR_RED, 1000);
+            } else if (!ble_prov_is_active() && !s_service_mode_active) {
                 esp_err_t ret = ble_prov_start();
                 if (ret != ESP_OK) {
                     ESP_LOGE(TAG, "Failed to start BLE provisioning: %s", esp_err_to_name(ret));
