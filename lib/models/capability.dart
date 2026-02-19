@@ -8,12 +8,16 @@ class CapabilityTest extends Equatable {
   final Map<String, dynamic> parametersSchema;
   final Map<String, dynamic> resultSchema;
 
+  /// The capability name this test belongs to (set during aggregation)
+  final String? capabilityName;
+
   const CapabilityTest({
     required this.name,
     required this.displayName,
     this.description,
     this.parametersSchema = const {},
     this.resultSchema = const {},
+    this.capabilityName,
   });
 
   factory CapabilityTest.fromJson(Map<String, dynamic> json) {
@@ -40,9 +44,20 @@ class CapabilityTest extends Equatable {
     };
   }
 
+  CapabilityTest copyWithCapability(String capabilityName) {
+    return CapabilityTest(
+      name: name,
+      displayName: displayName,
+      description: description,
+      parametersSchema: parametersSchema,
+      resultSchema: resultSchema,
+      capabilityName: capabilityName,
+    );
+  }
+
   @override
   List<Object?> get props =>
-      [name, displayName, description, parametersSchema, resultSchema];
+      [name, displayName, description, parametersSchema, resultSchema, capabilityName];
 }
 
 /// Represents a device capability with input/output schemas for provisioning phases

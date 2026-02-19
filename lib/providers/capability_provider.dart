@@ -120,6 +120,15 @@ class CapabilityManagement {
     ref.invalidate(capabilityByNameProvider(capability.name));
     ref.invalidate(allCapabilitiesProvider);
     ref.invalidate(activeCapabilitiesProvider);
+    // Invalidate device-type-derived providers since capability content changed
+    ref.invalidate(capabilitiesForDeviceTypeProvider);
+    ref.invalidate(testsForDeviceTypeProvider);
+    ref.invalidate(testsForDeviceTypeSlugProvider);
+    ref.invalidate(factoryInputSchemaForDeviceTypeProvider);
+    ref.invalidate(factoryOutputSchemaForDeviceTypeProvider);
+    ref.invalidate(consumerInputSchemaForDeviceTypeProvider);
+    ref.invalidate(consumerOutputSchemaForDeviceTypeProvider);
+    ref.invalidate(heartbeatSchemaForDeviceTypeProvider);
 
     return updated;
   }

@@ -274,46 +274,41 @@ class RemoteMonitorNotifier extends StateNotifier<RemoteMonitorState> {
   }
 
   void _handleCommandUpdate(PostgresChangePayload payload) {
-    // Update existing command entry with new status
     final commandId = payload.newRecord['id'] as String?;
     if (commandId == null) return;
 
     final status =
         DeviceCommandStatusExtension.fromString(payload.newRecord['status'] as String?);
 
-    // Find and update the existing entry, or add a new one for status change
-    final existingIndex =
-        state.logEntries.indexWhere((e) => e.commandId == commandId);
+    // Append a new log entry for the status change (don't overwrite the original)
+    final entryType = status == DeviceCommandStatus.completed ||
+            status == DeviceCommandStatus.failed
+        ? RemoteLogEntryType.commandResult
+        : status == DeviceCommandStatus.acknowledged
+            ? RemoteLogEntryType.commandAck
+            : RemoteLogEntryType.commandSent;
 
-    if (existingIndex >= 0) {
-      // Update existing entry
-      final existingEntry = state.logEntries[existingIndex];
-      final updatedEntry = RemoteLogEntry(
-        id: existingEntry.id,
-        type: status == DeviceCommandStatus.completed ||
-                status == DeviceCommandStatus.failed
-            ? RemoteLogEntryType.commandResult
-            : status == DeviceCommandStatus.acknowledged
-                ? RemoteLogEntryType.commandAck
-                : existingEntry.type,
-        timestamp: existingEntry.timestamp,
-        macAddress: existingEntry.macAddress,
-        commandId: commandId,
-        command: existingEntry.command,
-        commandStatus: status,
-        data: {
-          ...existingEntry.data,
-          if (payload.newRecord['result'] != null)
-            'result': payload.newRecord['result'],
-          if (payload.newRecord['error_message'] != null)
-            'error_message': payload.newRecord['error_message'],
-        },
-      );
+    final entry = RemoteLogEntry(
+      id: '${commandId}_${status.databaseValue}',
+      type: entryType,
+      timestamp: DateTime.now(),
+      macAddress: payload.newRecord['mac_address'] as String? ?? '',
+      commandId: commandId,
+      command: payload.newRecord['command'] as String?,
+      commandStatus: status,
+      data: {
+        if (payload.newRecord['capability'] != null)
+          'capability': payload.newRecord['capability'],
+        if (payload.newRecord['test_name'] != null)
+          'test_name': payload.newRecord['test_name'],
+        if (payload.newRecord['result'] != null)
+          'result': payload.newRecord['result'],
+        if (payload.newRecord['error_message'] != null)
+          'error_message': payload.newRecord['error_message'],
+      },
+    );
 
-      final updatedEntries = List<RemoteLogEntry>.from(state.logEntries);
-      updatedEntries[existingIndex] = updatedEntry;
-      state = state.copyWith(logEntries: updatedEntries);
-    }
+    _addLogEntry(entry);
 
     // Update pending commands
     if (status.index >= DeviceCommandStatus.acknowledged.index) {

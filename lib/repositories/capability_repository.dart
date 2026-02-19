@@ -475,7 +475,7 @@ class CapabilityRepository {
 
       final allTests = <CapabilityTest>[];
       for (final cap in capabilities) {
-        allTests.addAll(cap.tests);
+        allTests.addAll(cap.tests.map((t) => t.copyWithCapability(cap.name)));
       }
 
       AppLogger.info('Found ${allTests.length} tests for device type');

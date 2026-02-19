@@ -252,7 +252,7 @@ class _DeviceTestsSection extends ConsumerWidget {
     // TODO: For tests with parameters, show a dialog to collect them
     ref.read(remoteMonitorProvider(unitId).notifier).sendRunTest(
           macAddress: device.macAddress,
-          capability: '', // Need to get capability name
+          capability: test.capabilityName ?? '',
           testName: test.name,
         );
   }
