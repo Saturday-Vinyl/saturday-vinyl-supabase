@@ -15,6 +15,8 @@ import 'package:saturday_app/providers/device_type_provider.dart';
 import 'package:saturday_app/providers/firmware_provider.dart';
 import 'package:saturday_app/screens/device_types/device_type_form_screen.dart';
 import 'package:saturday_app/screens/firmware/firmware_form_screen.dart';
+import 'package:saturday_app/utils/cbor_size_estimator.dart';
+import 'package:saturday_app/widgets/common/cbor_size_indicator.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 /// Screen for viewing device type details with capabilities and firmware
@@ -257,26 +259,74 @@ class DeviceTypeDetailScreen extends ConsumerWidget {
               );
             }
 
-            return Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: capabilities.map((capability) {
-                return ActionChip(
-                  avatar: Icon(
-                    Icons.check,
-                    size: 16,
-                    color: SaturdayColors.primaryDark,
+            final hasHeartbeat = capabilities.any((c) => c.hasHeartbeat);
+
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: capabilities.map((capability) {
+                    return ActionChip(
+                      avatar: Icon(
+                        Icons.check,
+                        size: 16,
+                        color: SaturdayColors.primaryDark,
+                      ),
+                      label: Text(capability.displayName),
+                      backgroundColor:
+                          SaturdayColors.info.withValues(alpha: 0.1),
+                      onPressed: () =>
+                          _showCapabilityDetails(context, capability),
+                    );
+                  }).toList(),
+                ),
+                if (hasHeartbeat) ...[
+                  const SizedBox(height: 12),
+                  CborSizeIndicator(
+                    estimate: _computeHeartbeatEstimate(capabilities),
+                    label: 'Total Heartbeat Size',
                   ),
-                  label: Text(capability.displayName),
-                  backgroundColor: SaturdayColors.info.withValues(alpha: 0.1),
-                  onPressed: () => _showCapabilityDetails(context, capability),
-                );
-              }).toList(),
+                  CborSizeBreakdown(
+                    contributions:
+                        _capabilityContributions(capabilities),
+                    protocolOverhead:
+                        _computeHeartbeatEstimate(capabilities)
+                            .protocolOverhead,
+                    maxBytes: CborSizeEstimator.maxSingleFrameBytes,
+                  ),
+                ],
+              ],
             );
           },
         ),
       ],
     );
+  }
+
+  static CborSizeEstimate _computeHeartbeatEstimate(
+      List<Capability> capabilities) {
+    final propertyLists = capabilities
+        .map((cap) =>
+            CborSizeEstimator.parseHeartbeatSchema(cap.heartbeatSchema))
+        .toList();
+    return CborSizeEstimator.estimateCombinedHeartbeatSize(propertyLists);
+  }
+
+  static List<CapabilitySizeContribution> _capabilityContributions(
+      List<Capability> capabilities) {
+    final result = <CapabilitySizeContribution>[];
+    for (final cap in capabilities) {
+      final props =
+          CborSizeEstimator.parseHeartbeatSchema(cap.heartbeatSchema);
+      if (props.isEmpty) continue;
+      final bytes =
+          props.fold<int>(0, (s, p) => s + CborSizeEstimator.propertySize(p));
+      result.add(CapabilitySizeContribution(
+          name: cap.displayName, bytes: bytes));
+    }
+    return result;
   }
 
   Widget _buildFirmwareSection(

@@ -4,7 +4,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:saturday_app/config/theme.dart';
 import 'package:saturday_app/models/capability.dart';
 import 'package:saturday_app/providers/capability_provider.dart';
+import 'package:saturday_app/utils/cbor_size_estimator.dart';
 import 'package:saturday_app/widgets/common/app_button.dart';
+import 'package:saturday_app/widgets/common/cbor_size_indicator.dart';
 
 /// Form screen for creating or editing a capability
 class CapabilityFormScreen extends ConsumerStatefulWidget {
@@ -290,6 +292,14 @@ class _CapabilityFormScreenState extends ConsumerState<CapabilityFormScreen> {
                 onChanged: (props) =>
                     setState(() => _heartbeatProperties = props),
               ),
+              if (_heartbeatProperties.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                CborSizeIndicator(
+                  estimate: _heartbeatEstimate,
+                  label: 'This Capability\'s CBOR Size',
+                  capabilityOnly: true,
+                ),
+              ],
               const SizedBox(height: 24),
 
               // Tests Section
@@ -932,6 +942,27 @@ class _CapabilityFormScreenState extends ConsumerState<CapabilityFormScreen> {
         ],
       ),
     );
+  }
+
+  CborSizeEstimate get _heartbeatEstimate {
+    final sizeProps = _heartbeatProperties
+        .map((p) => SchemaPropertySize(
+              name: p.name,
+              type: p.type,
+              children: _toSizeChildren(p.children),
+            ))
+        .toList();
+    return CborSizeEstimator.estimateHeartbeatSize(sizeProps);
+  }
+
+  List<SchemaPropertySize> _toSizeChildren(List<SchemaProperty> props) {
+    return props
+        .map((p) => SchemaPropertySize(
+              name: p.name,
+              type: p.type,
+              children: _toSizeChildren(p.children),
+            ))
+        .toList();
   }
 
   Future<void> _handleSubmit() async {

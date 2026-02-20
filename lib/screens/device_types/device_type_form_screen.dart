@@ -7,7 +7,9 @@ import 'package:saturday_app/models/firmware.dart';
 import 'package:saturday_app/providers/capability_provider.dart';
 import 'package:saturday_app/providers/device_type_provider.dart';
 import 'package:saturday_app/providers/firmware_provider.dart';
+import 'package:saturday_app/utils/cbor_size_estimator.dart';
 import 'package:saturday_app/widgets/common/app_button.dart';
+import 'package:saturday_app/widgets/common/cbor_size_indicator.dart';
 
 /// Form screen for creating or editing a device type
 class DeviceTypeFormScreen extends ConsumerStatefulWidget {
@@ -311,6 +313,38 @@ class _DeviceTypeFormScreenState extends ConsumerState<DeviceTypeFormScreen> {
               ),
               const SizedBox(height: 12),
               _buildCapabilitiesSection(activeCapabilities),
+              if (_selectedCapabilityIds.isNotEmpty)
+                activeCapabilities.when(
+                  loading: () => const SizedBox.shrink(),
+                  error: (_, __) => const SizedBox.shrink(),
+                  data: (capabilities) {
+                    final selected = capabilities
+                        .where(
+                            (c) => _selectedCapabilityIds.contains(c.id))
+                        .toList();
+                    final contributions = _capabilityContributions(selected);
+                    if (contributions.isEmpty) {
+                      return const SizedBox.shrink();
+                    }
+                    final estimate = _computeHeartbeatEstimate(capabilities);
+                    return Padding(
+                      padding: const EdgeInsets.only(top: 12),
+                      child: Column(
+                        children: [
+                          CborSizeIndicator(
+                            estimate: estimate,
+                            label: 'Combined Heartbeat Size',
+                          ),
+                          CborSizeBreakdown(
+                            contributions: contributions,
+                            protocolOverhead: estimate.protocolOverhead,
+                            maxBytes: estimate.maxBytes,
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
               const SizedBox(height: 24),
 
               // Firmware Section (only for editing)
@@ -558,6 +592,34 @@ class _DeviceTypeFormScreenState extends ConsumerState<DeviceTypeFormScreen> {
         );
       },
     );
+  }
+
+  CborSizeEstimate _computeHeartbeatEstimate(List<Capability> allCapabilities) {
+    final selectedCaps = allCapabilities
+        .where((c) => _selectedCapabilityIds.contains(c.id))
+        .toList();
+
+    final propertyLists = selectedCaps
+        .map((cap) =>
+            CborSizeEstimator.parseHeartbeatSchema(cap.heartbeatSchema))
+        .toList();
+
+    return CborSizeEstimator.estimateCombinedHeartbeatSize(propertyLists);
+  }
+
+  List<CapabilitySizeContribution> _capabilityContributions(
+      List<Capability> capabilities) {
+    final result = <CapabilitySizeContribution>[];
+    for (final cap in capabilities) {
+      final props =
+          CborSizeEstimator.parseHeartbeatSchema(cap.heartbeatSchema);
+      if (props.isEmpty) continue;
+      final bytes =
+          props.fold<int>(0, (s, p) => s + CborSizeEstimator.propertySize(p));
+      result.add(CapabilitySizeContribution(
+          name: cap.displayName, bytes: bytes));
+    }
+    return result;
   }
 
   Future<void> _handleSubmit() async {
