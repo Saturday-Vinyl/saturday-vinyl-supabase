@@ -586,44 +586,62 @@ static void process_command(const char *json_str)
         handle_get_provision_data(params);
     }
     /***************************************************************************
-     * Device Command Protocol v1.3 - Testing Commands
+     * Capability Commands (flat dispatch, replaces run_test)
      **************************************************************************/
-    else if (strcmp(cmd_str, "run_test") == 0) {
-        handle_run_test(root);  /* Pass root to access capability/test_name */
+    else if (strcmp(cmd_str, "connect") == 0) {
+        handle_test_wifi(params);
+    } else if (strcmp(cmd_str, "ping") == 0) {
+        handle_test_cloud(params);
+    } else if (strcmp(cmd_str, "scan") == 0) {
+        handle_test_rfid(params);
+    } else if (strcmp(cmd_str, "get_dataset") == 0) {
+        handle_test_thread(params);
+    } else if (strcmp(cmd_str, "join") == 0) {
+        handle_test_thread(params);
     }
     /***************************************************************************
-     * Device Command Protocol v1.3 - OTA Commands
+     * OTA Commands
      **************************************************************************/
     else if (strcmp(cmd_str, "ota_update") == 0) {
         handle_ota_update(params);
     }
     /***************************************************************************
-     * Legacy Commands (backwards compatibility with Service Mode Protocol)
+     * Legacy Commands (backwards compatibility)
      **************************************************************************/
-    else if (strcmp(cmd_str, "get_manifest") == 0) {
-        handle_get_manifest(params);  /* Alias: get_capabilities */
+    else if (strcmp(cmd_str, "run_test") == 0) {
+        /* DEPRECATED: extract test_name and re-dispatch as flat command */
+        cJSON *test_name = cJSON_GetObjectItem(root, "test_name");
+        if (cJSON_IsString(test_name)) {
+            ESP_LOGW(TAG, "run_test is deprecated — use cmd:\"%s\" directly",
+                     test_name->valuestring);
+            handle_run_test(root);
+        } else {
+            send_error("missing_params", "run_test requires test_name");
+        }
+    } else if (strcmp(cmd_str, "get_manifest") == 0) {
+        handle_get_manifest(params);
     } else if (strcmp(cmd_str, "enter_service_mode") == 0) {
-        handle_enter_service_mode(params);  /* No-op in always-listening mode */
+        handle_enter_service_mode(params);
     } else if (strcmp(cmd_str, "exit_service_mode") == 0) {
-        handle_exit_service_mode(params);  /* No-op in always-listening mode */
+        handle_exit_service_mode(params);
     } else if (strcmp(cmd_str, "provision") == 0) {
-        handle_provision(params);  /* Legacy: use factory_provision */
+        handle_provision(params);
     } else if (strcmp(cmd_str, "test_wifi") == 0) {
-        handle_test_wifi(params);  /* Legacy: use run_test */
+        handle_test_wifi(params);
     } else if (strcmp(cmd_str, "test_rfid") == 0) {
-        handle_test_rfid(params);  /* Legacy: use run_test */
+        handle_test_rfid(params);
     } else if (strcmp(cmd_str, "test_cloud") == 0) {
-        handle_test_cloud(params);  /* Legacy: use run_test */
+        handle_test_cloud(params);
     } else if (strcmp(cmd_str, "test_thread") == 0) {
-        handle_test_thread(params);  /* Legacy: use run_test */
+        handle_test_thread(params);
     } else if (strcmp(cmd_str, "test_all") == 0) {
-        handle_test_all(params);  /* Legacy: use run_test */
+        handle_test_all(params);
     } else if (strcmp(cmd_str, "customer_reset") == 0) {
-        handle_customer_reset(params);  /* Legacy: use consumer_reset */
+        handle_customer_reset(params);
     } else if (strcmp(cmd_str, "check_ota") == 0) {
         handle_check_ota(params);
     } else if (strcmp(cmd_str, "start_ota") == 0) {
-        handle_start_ota(params);  /* Legacy: use ota_update */
+        handle_start_ota(params);
     } else if (strcmp(cmd_str, "get_ota_status") == 0) {
         handle_get_ota_status(params);
     } else {
@@ -1047,8 +1065,9 @@ static void handle_run_test(cJSON *root)
         } else {
             send_error("test_not_found", "Unknown rfid test");
         }
-    } else if (strcmp(cap, "thread") == 0) {
-        if (strcmp(test, "connect") == 0 || strcmp(test, "start") == 0) {
+    } else if (strcmp(cap, "thread_br") == 0) {
+        if (strcmp(test, "connect") == 0 || strcmp(test, "start") == 0
+            || strcmp(test, "get_dataset") == 0) {
             handle_test_thread(params);
         } else {
             send_error("test_not_found", "Unknown thread test");
@@ -1575,6 +1594,20 @@ static void handle_test_thread(cJSON *params)
         snprintf(&network_key_hex[i * 2], 3, "%02x", h2_creds.network_key[i]);
     }
     cJSON_AddStringToObject(data, "network_key", network_key_hex);
+
+    /* Extended PAN ID as hex string */
+    char extpanid_hex[17];
+    for (int i = 0; i < 8; i++) {
+        snprintf(&extpanid_hex[i * 2], 3, "%02x", h2_creds.extended_pan_id[i]);
+    }
+    cJSON_AddStringToObject(data, "extended_pan_id", extpanid_hex);
+
+    /* Mesh-local prefix as hex string */
+    char mesh_prefix_hex[17];
+    for (int i = 0; i < 8; i++) {
+        snprintf(&mesh_prefix_hex[i * 2], 3, "%02x", h2_creds.mesh_local_prefix[i]);
+    }
+    cJSON_AddStringToObject(data, "mesh_local_prefix", mesh_prefix_hex);
 
     bool attached = (h2_status.thread_state >= S3H2_THREAD_STATE_CHILD);
     cJSON_AddBoolToObject(data, "attached", attached);

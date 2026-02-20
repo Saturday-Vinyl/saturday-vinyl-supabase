@@ -28,6 +28,7 @@
 #include "serial_prov.h"
 #include "h2_comm.h"
 #include "ota_manager.h"
+#include "cJSON.h"
 #include "h2_flasher.h"
 #include "watchdog_manager.h"
 
@@ -288,6 +289,12 @@ static void on_h2_event(void *handler_args, esp_event_base_t base,
         case H2_COMM_EVENT_CONNECTED:
             ESP_LOGI(TAG, "H2 connected");
             s_h2_connected = true;
+            /* Start Thread BR on (re)connect — initial boot may miss this if H2 is slow */
+            if (h2_comm_start_thread(2000) == ESP_OK) {
+                ESP_LOGI(TAG, "Thread BR started");
+            } else {
+                ESP_LOGW(TAG, "Failed to start Thread BR after H2 connect");
+            }
             /* PROD-2.4: Reset error counter on successful connection */
             if (s_h2_error_count > 0) {
                 ESP_LOGI(TAG, "H2 recovered after %lu disconnections",
@@ -364,6 +371,25 @@ static void on_h2_event(void *handler_args, esp_event_base_t base,
             event_reporter_queue_crate_heartbeat(evt->ext_addr,
                                                   evt->battery_percent,
                                                   evt->rssi);
+            break;
+        }
+
+        case H2_COMM_EVENT_CRATE_TELEMETRY: {
+            h2_comm_crate_telemetry_event_t *evt = (h2_comm_crate_telemetry_event_t *)event_data;
+            ESP_LOGI(TAG, "Crate telemetry: type=%d, cbor_len=%d",
+                     evt->hb_type, evt->cbor_len);
+            event_reporter_queue_crate_telemetry(evt->ext_addr, evt->hb_type,
+                                                  evt->cbor_data, evt->cbor_len);
+            break;
+        }
+
+        case H2_COMM_EVENT_CRATE_REGISTERED: {
+            h2_comm_crate_registered_event_t *evt = (h2_comm_crate_registered_event_t *)event_data;
+            ESP_LOGI(TAG, "Crate registered: mac=%s, type=%s",
+                     evt->mac, evt->device_type);
+            event_reporter_cache_crate_identity(evt->ext_addr, evt->mac,
+                                                 evt->unit_id, evt->device_type,
+                                                 evt->fw_version);
             break;
         }
 
@@ -467,6 +493,100 @@ static void on_ota_event(void *handler_args, esp_event_base_t base,
 }
 
 /**
+ * @brief Run test task — executes on a dedicated stack to avoid sys_evt overflow
+ *
+ * The system event loop task has a small stack (~3.5KB). H2 UART communication
+ * and cJSON serialization need more room, so the event handler spawns this
+ * one-shot task with 4KB of stack.
+ */
+static void run_test_task(void *arg)
+{
+    realtime_command_event_t *event = (realtime_command_event_t *)arg;
+
+    cJSON *params = cJSON_Parse(event->parameters);
+    if (params == NULL) {
+        realtime_client_ack_command(event->command_id, "failed",
+            "{\"error\":\"invalid_params\",\"message\":\"Failed to parse parameters\"}");
+        goto done;
+    }
+
+    const cJSON *cap_json = cJSON_GetObjectItem(params, "capability");
+    const cJSON *test_json = cJSON_GetObjectItem(params, "test_name");
+    const char *cap = cJSON_IsString(cap_json) ? cap_json->valuestring : "";
+    const char *test = cJSON_IsString(test_json) ? test_json->valuestring : "";
+
+    if (strcmp(cap, "thread_br") == 0 &&
+        (strcmp(test, "connect") == 0 || strcmp(test, "start") == 0
+         || strcmp(test, "get_dataset") == 0)) {
+
+        /* Get Thread status and credentials from H2 */
+        s3h2_status_payload_t h2_status;
+        esp_err_t ret = h2_comm_get_status(&h2_status, 3000);
+        if (ret != ESP_OK) {
+            realtime_client_ack_command(event->command_id, "failed",
+                "{\"error\":\"h2_status_failed\",\"message\":\"Failed to get Thread BR status from H2\"}");
+            goto cleanup;
+        }
+
+        s3h2_credentials_payload_t h2_creds;
+        ret = h2_comm_get_credentials(&h2_creds, 3000);
+        if (ret != ESP_OK) {
+            realtime_client_ack_command(event->command_id, "failed",
+                "{\"error\":\"thread_creds_failed\",\"message\":\"Failed to get Thread credentials from H2\"}");
+            goto cleanup;
+        }
+
+        /* Build result JSON */
+        cJSON *result = cJSON_CreateObject();
+        cJSON_AddStringToObject(result, "network_name", h2_creds.network_name);
+        cJSON_AddNumberToObject(result, "pan_id", h2_creds.pan_id);
+        cJSON_AddNumberToObject(result, "channel", h2_creds.channel);
+
+        char network_key_hex[33];
+        for (int i = 0; i < 16; i++) {
+            snprintf(&network_key_hex[i * 2], 3, "%02x", h2_creds.network_key[i]);
+        }
+        cJSON_AddStringToObject(result, "network_key", network_key_hex);
+
+        char extpanid_hex[17];
+        for (int i = 0; i < 8; i++) {
+            snprintf(&extpanid_hex[i * 2], 3, "%02x", h2_creds.extended_pan_id[i]);
+        }
+        cJSON_AddStringToObject(result, "extended_pan_id", extpanid_hex);
+
+        char mesh_prefix_hex[17];
+        for (int i = 0; i < 8; i++) {
+            snprintf(&mesh_prefix_hex[i * 2], 3, "%02x", h2_creds.mesh_local_prefix[i]);
+        }
+        cJSON_AddStringToObject(result, "mesh_local_prefix", mesh_prefix_hex);
+
+        bool attached = (h2_status.thread_state >= S3H2_THREAD_STATE_CHILD);
+        cJSON_AddBoolToObject(result, "attached", attached);
+        cJSON_AddStringToObject(result, "role",
+            h2_comm_thread_state_str((s3h2_thread_state_t)h2_status.thread_state));
+        cJSON_AddNumberToObject(result, "rloc16", h2_status.rloc16);
+        cJSON_AddNumberToObject(result, "device_count", h2_status.device_count);
+
+        char *result_str = cJSON_PrintUnformatted(result);
+        realtime_client_ack_command(event->command_id, "completed", result_str);
+        free(result_str);
+        cJSON_Delete(result);
+
+    } else {
+        char err_msg[128];
+        snprintf(err_msg, sizeof(err_msg),
+            "{\"error\":\"test_not_found\",\"message\":\"Unknown test: %s/%s\"}", cap, test);
+        realtime_client_ack_command(event->command_id, "failed", err_msg);
+    }
+
+cleanup:
+    cJSON_Delete(params);
+done:
+    free(event);
+    vTaskDelete(NULL);
+}
+
+/**
  * @brief Realtime client event handler - handles push notifications from cloud
  */
 static void on_realtime_event(void *handler_args, esp_event_base_t base,
@@ -496,8 +616,20 @@ static void on_realtime_event(void *handler_args, esp_event_base_t base,
         case REALTIME_EVENT_COMMAND: {
             realtime_command_event_t *event = (realtime_command_event_t *)event_data;
             ESP_LOGI(TAG, "Remote command received: %s", event->command);
-            /* Built-in commands (reboot, check_update) are handled by realtime_client */
-            /* Application-specific commands can be handled here */
+            /* Built-in commands (reboot, check_update, get_status) are handled by realtime_client */
+            if (strcmp(event->command, "run_test") == 0) {
+                /* Spawn on a dedicated task — H2 comm + cJSON need more stack than sys_evt provides */
+                realtime_command_event_t *event_copy = malloc(sizeof(*event_copy));
+                if (event_copy != NULL) {
+                    memcpy(event_copy, event, sizeof(*event_copy));
+                    if (xTaskCreate(run_test_task, "run_test", 8192, event_copy, 5, NULL) != pdPASS) {
+                        ESP_LOGE(TAG, "Failed to create run_test task");
+                        realtime_client_ack_command(event->command_id, "failed",
+                            "{\"error\":\"task_failed\",\"message\":\"Could not create test task\"}");
+                        free(event_copy);
+                    }
+                }
+            }
             break;
         }
 

@@ -78,6 +78,17 @@ typedef struct {
 static supabase_state_t s_state = {0};
 
 /*******************************************************************************
+ * Persistent HTTP Client
+ *
+ * Keeps a single esp_http_client handle alive across requests. The TLS
+ * connection stays open via HTTP keep-alive, eliminating the repeated
+ * alloc/free cycle of ~40KB mbedtls buffers that causes heap fragmentation
+ * over hours of operation.
+ ******************************************************************************/
+
+static esp_http_client_handle_t s_persistent_client = NULL;
+
+/*******************************************************************************
  * HTTP Response Buffer
  ******************************************************************************/
 
@@ -250,8 +261,18 @@ esp_err_t supabase_init(void)
     return ESP_OK;
 }
 
+void supabase_close_connection(void)
+{
+    if (s_persistent_client != NULL) {
+        esp_http_client_cleanup(s_persistent_client);
+        s_persistent_client = NULL;
+        ESP_LOGI(TAG, "Persistent connection closed");
+    }
+}
+
 esp_err_t supabase_deinit(void)
 {
+    supabase_close_connection();
     memset(&s_state, 0, sizeof(s_state));
     ESP_LOGI(TAG, "Supabase client deinitialized");
     return ESP_OK;
@@ -358,7 +379,6 @@ esp_err_t supabase_post(const char *table, const char *json_body,
         return ESP_ERR_INVALID_SIZE;
     }
 
-    /* Use shorter timeout with retries for better reliability with radio coexistence */
     uint32_t per_attempt_timeout = (timeout_ms > 0) ? timeout_ms : RETRY_TIMEOUT_MS;
 
     ESP_LOGI(TAG, "POST %s (timeout=%lums)", url, (unsigned long)per_attempt_timeout);
@@ -371,9 +391,12 @@ esp_err_t supabase_post(const char *table, const char *json_body,
     int64_t overall_start = esp_timer_get_time();
     esp_err_t err = ESP_FAIL;
 
-    /* Retry loop for TLS handshake failures */
+    /* Retry loop — on the first attempt we try to reuse the persistent
+     * connection.  If that fails (server closed idle connection, etc.)
+     * we tear it down and create a fresh one for subsequent attempts. */
     for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-        /* Allocate fresh response buffer for each attempt */
+
+        /* Allocate a per-request response buffer (small, doesn't fragment) */
         response_buffer_t resp_buf = {
             .buffer = malloc(MAX_RESPONSE_SIZE),
             .buffer_size = MAX_RESPONSE_SIZE,
@@ -385,48 +408,55 @@ esp_err_t supabase_post(const char *table, const char *json_body,
         }
         resp_buf.buffer[0] = '\0';
 
-        /* Configure HTTP client with embedded Supabase CA certificate */
-        esp_http_client_config_t http_config = {
-            .url = url,
-            .event_handler = http_event_handler,
-            .user_data = &resp_buf,
-            .timeout_ms = per_attempt_timeout,
-            .cert_pem = supabase_ca_pem_start,
-            .buffer_size = 2048,
-            .buffer_size_tx = 1024,
-        };
+        /* Lazy-init or reuse persistent client */
+        if (s_persistent_client == NULL) {
+            esp_http_client_config_t http_config = {
+                .url = url,
+                .event_handler = http_event_handler,
+                .user_data = &resp_buf,
+                .timeout_ms = per_attempt_timeout,
+                .cert_pem = supabase_ca_pem_start,
+                .buffer_size = 2048,
+                .buffer_size_tx = 1024,
+                .keep_alive_enable = true,
+            };
 
-        esp_http_client_handle_t client = esp_http_client_init(&http_config);
-        if (client == NULL) {
-            ESP_LOGE(TAG, "Failed to initialize HTTP client");
-            free(resp_buf.buffer);
-            return ESP_FAIL;
+            s_persistent_client = esp_http_client_init(&http_config);
+            if (s_persistent_client == NULL) {
+                ESP_LOGE(TAG, "Failed to initialize HTTP client");
+                free(resp_buf.buffer);
+                return ESP_FAIL;
+            }
+            ESP_LOGI(TAG, "Created persistent HTTP client");
+        } else {
+            /* Reuse existing client — update per-request fields */
+            esp_http_client_set_url(s_persistent_client, url);
+            esp_http_client_set_timeout_ms(s_persistent_client, per_attempt_timeout);
         }
 
-        /* Set headers */
-        esp_http_client_set_method(client, HTTP_METHOD_POST);
-        esp_http_client_set_header(client, "Content-Type", "application/json");
-        esp_http_client_set_header(client, "apikey", s_state.config.anon_key);
-        esp_http_client_set_header(client, "Authorization", auth_header);
-        esp_http_client_set_header(client, "Prefer", "return=minimal");
-        esp_http_client_set_post_field(client, json_body, strlen(json_body));
+        /* Update user_data to point to this request's response buffer */
+        esp_http_client_set_user_data(s_persistent_client, &resp_buf);
 
-        /* Perform request */
+        /* Set headers and body (safe to call every time) */
+        esp_http_client_set_method(s_persistent_client, HTTP_METHOD_POST);
+        esp_http_client_set_header(s_persistent_client, "Content-Type", "application/json");
+        esp_http_client_set_header(s_persistent_client, "apikey", s_state.config.anon_key);
+        esp_http_client_set_header(s_persistent_client, "Authorization", auth_header);
+        esp_http_client_set_header(s_persistent_client, "Prefer", "return=minimal");
+        esp_http_client_set_post_field(s_persistent_client, json_body, strlen(json_body));
+
         if (attempt > 1) {
             ESP_LOGI(TAG, "Retry attempt %d/%d...", attempt, MAX_RETRIES);
         }
-        err = esp_http_client_perform(client);
+
+        err = esp_http_client_perform(s_persistent_client);
 
         if (err == ESP_OK) {
-            /* Success! Get response details */
             response->request_time_ms = (esp_timer_get_time() - overall_start) / 1000;
-            response->status_code = esp_http_client_get_status_code(client);
+            response->status_code = esp_http_client_get_status_code(s_persistent_client);
             response->body = resp_buf.buffer;  /* Transfer ownership */
             response->body_len = resp_buf.data_len;
 
-            esp_http_client_cleanup(client);
-
-            /* Log result */
             if (response->status_code >= 200 && response->status_code < 300) {
                 ESP_LOGI(TAG, "POST %s: %d (%lldms, attempt %d)",
                          table, response->status_code, response->request_time_ms, attempt);
@@ -438,9 +468,10 @@ esp_err_t supabase_post(const char *table, const char *json_body,
             return ESP_OK;
         }
 
-        /* Request failed - clean up and maybe retry */
-        esp_http_client_cleanup(client);
+        /* Request failed — tear down the persistent client so the next
+         * attempt creates a fresh TLS session. */
         free(resp_buf.buffer);
+        supabase_close_connection();
 
         if (attempt < MAX_RETRIES) {
             ESP_LOGW(TAG, "Attempt %d failed (%s), retrying in %dms...",

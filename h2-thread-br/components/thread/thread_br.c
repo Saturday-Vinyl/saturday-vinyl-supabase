@@ -486,12 +486,33 @@ static void ot_state_changed_callback(otChangedFlags flags, void *context)
     }
 
     if (flags & OT_CHANGED_THREAD_CHILD_ADDED) {
-        ESP_LOGI(TAG, "Device joined the network");
-        esp_event_post(THREAD_BR_EVENTS, THREAD_BR_EVENT_DEVICE_JOINED, NULL, 0, pdMS_TO_TICKS(100));
+        /* Find the newest child by iterating the neighbor table */
+        thread_device_info_t info = {0};
+        otNeighborInfoIterator iter = OT_NEIGHBOR_INFO_ITERATOR_INIT;
+        otNeighborInfo neighbor;
+        while (otThreadGetNextNeighborInfo(s_ot_instance, &iter, &neighbor) == OT_ERROR_NONE) {
+            if (neighbor.mIsChild) {
+                info.rloc16 = neighbor.mRloc16;
+                memcpy(info.ext_addr, neighbor.mExtAddress.m8, 8);
+                info.is_child = true;
+            }
+        }
+
+        /* Guard: skip if no child was actually found in neighbor table
+         * (can happen during init when OT restores stale ChildInfo from flash) */
+        uint8_t zeros[8] = {0};
+        if (memcmp(info.ext_addr, zeros, 8) == 0) {
+            ESP_LOGD(TAG, "CHILD_ADDED fired but no child in neighbor table (stale restore?)");
+        } else {
+            ESP_LOGI(TAG, "Device joined: rloc16=0x%04X, ext_addr=%02x%02x%02x%02x%02x%02x%02x%02x",
+                     info.rloc16, info.ext_addr[0], info.ext_addr[1], info.ext_addr[2], info.ext_addr[3],
+                     info.ext_addr[4], info.ext_addr[5], info.ext_addr[6], info.ext_addr[7]);
+            esp_event_post(THREAD_BR_EVENTS, THREAD_BR_EVENT_DEVICE_JOINED, &info, sizeof(info), pdMS_TO_TICKS(100));
+        }
     }
 
     if (flags & OT_CHANGED_THREAD_CHILD_REMOVED) {
-        ESP_LOGI(TAG, "Device left the network");
+        ESP_LOGI(TAG, "Device left the network (device_count=%d)", thread_br_get_device_count());
         esp_event_post(THREAD_BR_EVENTS, THREAD_BR_EVENT_DEVICE_LEFT, NULL, 0, pdMS_TO_TICKS(100));
     }
 

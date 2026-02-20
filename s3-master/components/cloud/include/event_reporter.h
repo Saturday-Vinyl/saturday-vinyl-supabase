@@ -238,6 +238,56 @@ esp_err_t event_reporter_queue_crate_heartbeat(const uint8_t *crate_ext_addr,
  */
 void event_reporter_set_h2_state(bool connected, uint8_t thread_state);
 
+/*******************************************************************************
+ * CoAP Mesh Protocol — Telemetry and Identity Cache
+ ******************************************************************************/
+
+/**
+ * @brief Queue CBOR telemetry from a mesh node
+ *
+ * Decodes CBOR, resolves device identity from cache, and posts
+ * to device_heartbeats with relay fields.
+ *
+ * @param crate_ext_addr Node extended MAC address (8 bytes)
+ * @param hb_type Heartbeat type (S3H2_HB_TYPE_*)
+ * @param cbor_data Raw CBOR payload
+ * @param cbor_len CBOR payload length
+ * @return ESP_OK on success
+ */
+esp_err_t event_reporter_queue_crate_telemetry(const uint8_t *crate_ext_addr,
+                                                uint8_t hb_type,
+                                                const uint8_t *cbor_data,
+                                                uint16_t cbor_len);
+
+/**
+ * @brief Cache crate identity from registration event
+ *
+ * Called when H2 forwards a CoAP /register event. Stores the mapping
+ * from ext_addr to device identity (mac, unit_id, device_type, fw_version).
+ *
+ * @param ext_addr Node extended MAC address (8 bytes)
+ * @param mac WiFi MAC string
+ * @param unit_id Supabase unit UUID
+ * @param device_type Device type slug
+ * @param fw_version Firmware version string
+ */
+void event_reporter_cache_crate_identity(const uint8_t *ext_addr,
+                                          const char *mac,
+                                          const char *unit_id,
+                                          const char *device_type,
+                                          const char *fw_version);
+
+/**
+ * @brief Look up crate extended address by MAC
+ *
+ * Searches the crate identity cache for a device with matching MAC address.
+ *
+ * @param mac MAC address string (e.g., "AA:BB:CC:DD:EE:FF")
+ * @param ext_addr_out Output: 8-byte extended address
+ * @return true if found, false if not in cache
+ */
+bool event_reporter_lookup_crate_ext_addr(const char *mac, uint8_t *ext_addr_out);
+
 #ifdef __cplusplus
 }
 #endif

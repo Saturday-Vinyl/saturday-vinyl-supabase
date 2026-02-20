@@ -30,6 +30,9 @@
 #include <time.h>
 #include <sys/time.h>
 
+#include "cbor.h"
+#include "s3_h2_protocol.h"
+
 static const char *TAG = "EVENT_RPT";
 
 /*******************************************************************************
@@ -831,6 +834,9 @@ void event_reporter_set_wifi_state(bool connected)
          */
     } else if (!connected && was_connected) {
         ESP_LOGI(TAG, "Wi-Fi disconnected - events will be queued");
+        /* Close persistent Supabase connection — the TLS session is dead
+         * and holding stale buffers wastes heap. */
+        supabase_close_connection();
     }
 }
 
@@ -990,4 +996,249 @@ esp_err_t event_reporter_queue_crate_heartbeat(const uint8_t *crate_ext_addr,
     }
     supabase_response_free(&response);
     return err;
+}
+
+/*******************************************************************************
+ * CoAP Mesh Protocol — Crate Identity Cache
+ ******************************************************************************/
+
+#define MAX_CACHED_CRATES  20
+
+typedef struct {
+    bool valid;
+    uint8_t ext_addr[8];
+    char mac[18];
+    char unit_id[24];
+    char device_type[20];
+    char fw_version[16];
+} crate_identity_t;
+
+static crate_identity_t s_crate_cache[MAX_CACHED_CRATES];
+
+void event_reporter_cache_crate_identity(const uint8_t *ext_addr,
+                                          const char *mac,
+                                          const char *unit_id,
+                                          const char *device_type,
+                                          const char *fw_version)
+{
+    if (ext_addr == NULL) return;
+
+    /* Look for existing entry */
+    int free_slot = -1;
+    for (int i = 0; i < MAX_CACHED_CRATES; i++) {
+        if (s_crate_cache[i].valid &&
+            memcmp(s_crate_cache[i].ext_addr, ext_addr, 8) == 0) {
+            /* Update existing */
+            if (mac) strncpy(s_crate_cache[i].mac, mac, sizeof(s_crate_cache[i].mac) - 1);
+            if (unit_id) strncpy(s_crate_cache[i].unit_id, unit_id, sizeof(s_crate_cache[i].unit_id) - 1);
+            if (device_type) strncpy(s_crate_cache[i].device_type, device_type, sizeof(s_crate_cache[i].device_type) - 1);
+            if (fw_version) strncpy(s_crate_cache[i].fw_version, fw_version, sizeof(s_crate_cache[i].fw_version) - 1);
+            ESP_LOGI(TAG, "Updated crate identity cache: mac=%s", s_crate_cache[i].mac);
+            return;
+        }
+        if (!s_crate_cache[i].valid && free_slot < 0) {
+            free_slot = i;
+        }
+    }
+
+    /* New entry */
+    if (free_slot < 0) {
+        ESP_LOGW(TAG, "Crate identity cache full, overwriting slot 0");
+        free_slot = 0;
+    }
+
+    memset(&s_crate_cache[free_slot], 0, sizeof(crate_identity_t));
+    s_crate_cache[free_slot].valid = true;
+    memcpy(s_crate_cache[free_slot].ext_addr, ext_addr, 8);
+    if (mac) strncpy(s_crate_cache[free_slot].mac, mac, sizeof(s_crate_cache[free_slot].mac) - 1);
+    if (unit_id) strncpy(s_crate_cache[free_slot].unit_id, unit_id, sizeof(s_crate_cache[free_slot].unit_id) - 1);
+    if (device_type) strncpy(s_crate_cache[free_slot].device_type, device_type, sizeof(s_crate_cache[free_slot].device_type) - 1);
+    if (fw_version) strncpy(s_crate_cache[free_slot].fw_version, fw_version, sizeof(s_crate_cache[free_slot].fw_version) - 1);
+    ESP_LOGI(TAG, "Cached new crate identity: mac=%s, type=%s", mac ? mac : "?", device_type ? device_type : "?");
+}
+
+bool event_reporter_lookup_crate_ext_addr(const char *mac, uint8_t *ext_addr_out)
+{
+    if (mac == NULL || ext_addr_out == NULL) return false;
+
+    for (int i = 0; i < MAX_CACHED_CRATES; i++) {
+        if (s_crate_cache[i].valid && strcmp(s_crate_cache[i].mac, mac) == 0) {
+            memcpy(ext_addr_out, s_crate_cache[i].ext_addr, 8);
+            return true;
+        }
+    }
+    return false;
+}
+
+static const crate_identity_t *crate_identity_lookup(const uint8_t *ext_addr)
+{
+    for (int i = 0; i < MAX_CACHED_CRATES; i++) {
+        if (s_crate_cache[i].valid &&
+            memcmp(s_crate_cache[i].ext_addr, ext_addr, 8) == 0) {
+            return &s_crate_cache[i];
+        }
+    }
+    return NULL;
+}
+
+/*******************************************************************************
+ * CoAP Mesh Protocol — CBOR Telemetry Decode and Cloud Posting
+ ******************************************************************************/
+
+esp_err_t event_reporter_queue_crate_telemetry(const uint8_t *crate_ext_addr,
+                                                uint8_t hb_type,
+                                                const uint8_t *cbor_data,
+                                                uint16_t cbor_len)
+{
+    if (!s_state.initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (!s_state.wifi_connected || !supabase_is_configured()) {
+        ESP_LOGD(TAG, "Cannot send crate telemetry - WiFi or Supabase not ready");
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    if (!wifi_is_time_synced()) {
+        ESP_LOGD(TAG, "Cannot send crate telemetry - time not synced");
+        return ESP_ERR_NOT_FINISHED;
+    }
+
+    /* Look up device identity */
+    const crate_identity_t *identity = crate_identity_lookup(crate_ext_addr);
+    if (identity == NULL) {
+        char addr_str[20];
+        format_ext_addr(crate_ext_addr, addr_str, sizeof(addr_str));
+        ESP_LOGW(TAG, "No identity cached for crate %s, dropping telemetry", addr_str);
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    /* Determine heartbeat type string */
+    const char *type_str = "status";
+    if (hb_type == S3H2_HB_TYPE_COMMAND_ACK) {
+        type_str = "command_ack";
+    } else if (hb_type == S3H2_HB_TYPE_COMMAND_RESULT) {
+        type_str = "command_result";
+    }
+
+    /* Decode CBOR into JSON telemetry object */
+    CborParser cbor_parser;
+    CborValue cbor_root;
+    CborError cbor_err = cbor_parser_init(cbor_data, cbor_len, 0, &cbor_parser, &cbor_root);
+    if (cbor_err != CborNoError || !cbor_value_is_map(&cbor_root)) {
+        ESP_LOGW(TAG, "Invalid CBOR telemetry payload");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    /* Build telemetry JSON by iterating CBOR map */
+    char telemetry_json[512] = "{";
+    size_t tpos = 1;
+    bool first = true;
+
+    CborValue map_iter;
+    cbor_err = cbor_value_enter_container(&cbor_root, &map_iter);
+    if (cbor_err != CborNoError) {
+        ESP_LOGW(TAG, "Failed to enter CBOR map");
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    while (!cbor_value_at_end(&map_iter)) {
+        /* Read key */
+        if (!cbor_value_is_text_string(&map_iter)) {
+            cbor_value_advance(&map_iter);
+            if (!cbor_value_at_end(&map_iter)) cbor_value_advance(&map_iter);
+            continue;
+        }
+
+        char key[32] = {0};
+        size_t key_len = sizeof(key) - 1;
+        cbor_value_copy_text_string(&map_iter, key, &key_len, NULL);
+        key[key_len] = '\0';
+        cbor_value_advance(&map_iter);
+
+        if (cbor_value_at_end(&map_iter)) break;
+
+        if (!first && tpos < sizeof(telemetry_json) - 2) {
+            telemetry_json[tpos++] = ',';
+        }
+        first = false;
+
+        if (cbor_value_is_integer(&map_iter)) {
+            int64_t val;
+            cbor_value_get_int64(&map_iter, &val);
+            tpos += snprintf(&telemetry_json[tpos], sizeof(telemetry_json) - tpos,
+                             "\"%s\":%lld", key, (long long)val);
+        } else if (cbor_value_is_text_string(&map_iter)) {
+            char val[64] = {0};
+            size_t val_len = sizeof(val) - 1;
+            cbor_value_copy_text_string(&map_iter, val, &val_len, NULL);
+            val[val_len] = '\0';
+            tpos += snprintf(&telemetry_json[tpos], sizeof(telemetry_json) - tpos,
+                             "\"%s\":\"%s\"", key, val);
+        } else if (cbor_value_is_boolean(&map_iter)) {
+            bool val;
+            cbor_value_get_boolean(&map_iter, &val);
+            tpos += snprintf(&telemetry_json[tpos], sizeof(telemetry_json) - tpos,
+                             "\"%s\":%s", key, val ? "true" : "false");
+        } else if (cbor_value_is_float(&map_iter) || cbor_value_is_double(&map_iter)) {
+            double val;
+            if (cbor_value_is_float(&map_iter)) {
+                float fval;
+                cbor_value_get_float(&map_iter, &fval);
+                val = fval;
+            } else {
+                cbor_value_get_double(&map_iter, &val);
+            }
+            tpos += snprintf(&telemetry_json[tpos], sizeof(telemetry_json) - tpos,
+                             "\"%s\":%.2f", key, val);
+        }
+
+        cbor_value_advance(&map_iter);
+    }
+
+    snprintf(&telemetry_json[tpos], sizeof(telemetry_json) - tpos, "}");
+
+    /* Get hub identity for relay fields */
+    char hub_unit_id[SUPABASE_UNIT_ID_MAX_LEN] = "UNIT-UNKNOWN";
+    supabase_get_unit_id(hub_unit_id, sizeof(hub_unit_id));
+
+    char timestamp[32];
+    format_timestamp(esp_timer_get_time(), timestamp, sizeof(timestamp));
+
+    /* Build device_heartbeats JSON */
+    char json[1024];
+    int json_len = snprintf(json, sizeof(json),
+        "{\"mac_address\":\"%s\",\"unit_id\":\"%s\",\"device_type\":\"%s\","
+        "\"firmware_version\":\"%s\",\"type\":\"%s\","
+        "\"telemetry\":%s,"
+        "\"relay_device_type\":\"hub\",\"relay_instance_id\":\"%s\","
+        "\"timestamp\":\"%s\"}",
+        identity->mac, identity->unit_id, identity->device_type,
+        identity->fw_version, type_str,
+        telemetry_json,
+        hub_unit_id,
+        timestamp);
+
+    if (json_len >= (int)sizeof(json)) {
+        ESP_LOGE(TAG, "Crate telemetry JSON too long");
+        return ESP_ERR_INVALID_SIZE;
+    }
+
+    ESP_LOGI(TAG, "Sending crate telemetry: mac=%s, type=%s", identity->mac, type_str);
+
+    supabase_response_t response;
+    esp_err_t ret = supabase_post("device_heartbeats", json, &response, 0);
+
+    if (ret == ESP_OK && response.status_code >= 200 && response.status_code < 300) {
+        ESP_LOGI(TAG, "Crate telemetry sent successfully");
+        supabase_response_free(&response);
+        return ESP_OK;
+    }
+
+    if (ret == ESP_OK) {
+        ESP_LOGW(TAG, "Crate telemetry POST failed with status %d", response.status_code);
+        ret = ESP_FAIL;
+    }
+    supabase_response_free(&response);
+    return ret;
 }

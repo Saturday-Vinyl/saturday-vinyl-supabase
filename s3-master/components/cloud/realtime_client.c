@@ -12,6 +12,8 @@
 #include "supabase_client.h"
 #include "ota_manager.h"
 #include "crate_ota.h"
+#include "event_reporter.h"
+#include "h2_comm.h"
 #include "app_config.h"
 #include "wifi_manager.h"
 #include "esp_log.h"
@@ -22,6 +24,7 @@
 #include "esp_mac.h"
 #include "esp_heap_caps.h"
 #include "cJSON.h"
+#include "cbor.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -1216,6 +1219,144 @@ static void handle_update_available(const cJSON *payload, const char *request_id
     }
 }
 
+/*******************************************************************************
+ * Mesh Command Relay — CBOR Encoder and Dispatch
+ ******************************************************************************/
+
+/**
+ * @brief Encode a command as CBOR for mesh relay (CoAP POST /cmd)
+ *
+ * Per CoAP Mesh Protocol section 8, the CBOR map contains:
+ *   "id"         : tstr   (command UUID)
+ *   "cmd"        : tstr   (command name)
+ *   "capability" : tstr   (optional)
+ *   "test_name"  : tstr   (optional)
+ *   "params"     : map    (optional, string keys → any values)
+ *
+ * @param command_id Command UUID string
+ * @param command Command name string
+ * @param payload Full command payload (may contain capability, test_name, parameters)
+ * @param out_buf Output buffer for CBOR data
+ * @param out_buf_size Output buffer size
+ * @return Encoded length, or -1 on error
+ */
+static int encode_command_cbor(const char *command_id, const char *command,
+                                const cJSON *payload,
+                                uint8_t *out_buf, size_t out_buf_size)
+{
+    CborEncoder encoder, map_encoder;
+    cbor_encoder_init(&encoder, out_buf, out_buf_size, 0);
+
+    /* Normalize legacy run_test → flat command name.
+     * New format: {"id":"...","cmd":"get_dataset","params":{...}}
+     * Old format: {"id":"...","cmd":"run_test","capability":"thread","test_name":"get_dataset"}
+     * We always produce the new format on the wire. */
+    const char *effective_cmd = command;
+    if (strcmp(command, "run_test") == 0) {
+        const cJSON *test_name = cJSON_GetObjectItem(payload, "test_name");
+        if (cJSON_IsString(test_name)) {
+            effective_cmd = test_name->valuestring;
+        }
+    }
+
+    /* Count map entries: id + cmd + optional params */
+    int map_entries = 2;  /* id, cmd always present */
+    const cJSON *params = cJSON_GetObjectItem(payload, "parameters");
+    if (cJSON_IsObject(params)) map_entries++;
+
+    CborError err = cbor_encoder_create_map(&encoder, &map_encoder, map_entries);
+    if (err != CborNoError) return -1;
+
+    /* "id" */
+    err = cbor_encode_text_stringz(&map_encoder, "id");
+    if (err != CborNoError) return -1;
+    err = cbor_encode_text_stringz(&map_encoder, command_id);
+    if (err != CborNoError) return -1;
+
+    /* "cmd" — flat command name */
+    err = cbor_encode_text_stringz(&map_encoder, "cmd");
+    if (err != CborNoError) return -1;
+    err = cbor_encode_text_stringz(&map_encoder, effective_cmd);
+    if (err != CborNoError) return -1;
+
+    /* "params" (optional) — encode JSON object as CBOR map */
+    if (cJSON_IsObject(params)) {
+        /* Count params */
+        int param_count = cJSON_GetArraySize(params);
+
+        err = cbor_encode_text_stringz(&map_encoder, "params");
+        if (err != CborNoError) return -1;
+
+        CborEncoder params_encoder;
+        err = cbor_encoder_create_map(&map_encoder, &params_encoder, param_count);
+        if (err != CborNoError) return -1;
+
+        cJSON *item;
+        cJSON_ArrayForEach(item, params) {
+            err = cbor_encode_text_stringz(&params_encoder, item->string);
+            if (err != CborNoError) return -1;
+
+            if (cJSON_IsNumber(item)) {
+                if (item->valuedouble == (double)(int64_t)item->valuedouble) {
+                    err = cbor_encode_int(&params_encoder, (int64_t)item->valuedouble);
+                } else {
+                    err = cbor_encode_double(&params_encoder, item->valuedouble);
+                }
+            } else if (cJSON_IsString(item)) {
+                err = cbor_encode_text_stringz(&params_encoder, item->valuestring);
+            } else if (cJSON_IsBool(item)) {
+                err = cbor_encode_boolean(&params_encoder, cJSON_IsTrue(item));
+            } else {
+                /* Encode as null for unsupported types */
+                err = cbor_encode_null(&params_encoder);
+            }
+            if (err != CborNoError) return -1;
+        }
+
+        err = cbor_encoder_close_container(&map_encoder, &params_encoder);
+        if (err != CborNoError) return -1;
+    }
+
+    err = cbor_encoder_close_container(&encoder, &map_encoder);
+    if (err != CborNoError) return -1;
+
+    return (int)cbor_encoder_get_buffer_size(&encoder, out_buf);
+}
+
+/**
+ * @brief Relay a command to a mesh node via H2
+ *
+ * Encodes the command as CBOR and sends via UART → H2 → CoAP POST /cmd.
+ * The command_ack/result flow back as CBOR heartbeats through the telemetry pipeline.
+ *
+ * @param ext_addr Target node extended address (8 bytes)
+ * @param command_id Command UUID string
+ * @param command Command name string
+ * @param payload Full command payload from WebSocket
+ * @return ESP_OK on success
+ */
+static esp_err_t relay_command_to_mesh(const uint8_t *ext_addr,
+                                        const char *command_id,
+                                        const char *command,
+                                        const cJSON *payload)
+{
+    uint8_t cbor_buf[512];
+    int cbor_len = encode_command_cbor(command_id, command, payload, cbor_buf, sizeof(cbor_buf));
+    if (cbor_len < 0) {
+        ESP_LOGE(TAG, "Failed to encode command CBOR");
+        return ESP_FAIL;
+    }
+
+    ESP_LOGI(TAG, "Relaying command '%s' (id=%s) to mesh node (%d bytes CBOR)",
+             command, command_id, cbor_len);
+
+    return h2_comm_relay_command(ext_addr, cbor_buf, (uint16_t)cbor_len, 5000);
+}
+
+/*******************************************************************************
+ * Command Handler
+ ******************************************************************************/
+
 /**
  * @brief Handle a device command received via WebSocket
  *
@@ -1224,6 +1365,10 @@ static void handle_update_available(const cJSON *payload, const char *request_id
  * 2. Device immediately sends command_ack heartbeat
  * 3. Device executes command
  * 4. Device sends command_result heartbeat with outcome
+ *
+ * For mesh-targeted commands (target_mac present and in crate cache):
+ * - Command is CBOR-encoded and relayed via H2 → CoAP POST /cmd
+ * - The mesh node handles ack/result via the CBOR heartbeat pipeline
  *
  * Known commands (handled internally):
  * - reboot: Restarts the device
@@ -1252,15 +1397,51 @@ static void handle_command(const cJSON *payload)
     if (cJSON_IsString(command)) {
         strncpy(event.command, command->valuestring, sizeof(event.command) - 1);
     }
-    if (params != NULL) {
-        char *params_str = cJSON_PrintUnformatted(params);
-        if (params_str != NULL) {
-            strncpy(event.parameters, params_str, sizeof(event.parameters) - 1);
-            free(params_str);
+    /*
+     * Serialize full payload (except id/command) into parameters string.
+     * Legacy run_test puts capability/test_name as top-level fields
+     * alongside parameters — preserved for backwards compatibility.
+     */
+    cJSON *payload_copy = cJSON_Duplicate(payload, true);
+    if (payload_copy != NULL) {
+        cJSON_DeleteItemFromObject(payload_copy, "id");
+        cJSON_DeleteItemFromObject(payload_copy, "command");
+        char *payload_str = cJSON_PrintUnformatted(payload_copy);
+        if (payload_str != NULL) {
+            strncpy(event.parameters, payload_str, sizeof(event.parameters) - 1);
+            free(payload_str);
         }
+        cJSON_Delete(payload_copy);
     }
 
     ESP_LOGI(TAG, "Command: %s (id=%s)", event.command, event.command_id);
+
+    /*
+     * Mesh relay check: if target_mac is present and matches a registered
+     * mesh node, relay the command via H2 → CoAP POST /cmd instead of
+     * handling locally. The mesh node will send command_ack/result back
+     * through the CBOR heartbeat telemetry pipeline.
+     */
+    const cJSON *target_mac = cJSON_GetObjectItem(payload, "target_mac");
+    if (cJSON_IsString(target_mac)) {
+        uint8_t ext_addr[8];
+        if (event_reporter_lookup_crate_ext_addr(target_mac->valuestring, ext_addr)) {
+            ESP_LOGI(TAG, "Relaying command to mesh node: %s", target_mac->valuestring);
+            esp_err_t relay_err = relay_command_to_mesh(
+                ext_addr, event.command_id, event.command, payload);
+            if (relay_err != ESP_OK) {
+                ESP_LOGE(TAG, "Mesh relay failed: %s", esp_err_to_name(relay_err));
+                /* Send failure result on behalf of the unreachable node */
+                send_command_result_heartbeat(event.command_id, false, NULL,
+                                              "mesh_relay_failed");
+            }
+            /* Don't handle locally — mesh node handles ack/result */
+            return;
+        } else {
+            ESP_LOGW(TAG, "target_mac %s not in crate cache, handling locally",
+                     target_mac->valuestring);
+        }
+    }
 
     /* Post event to event loop for any listeners */
     esp_event_post(REALTIME_EVENTS, REALTIME_EVENT_COMMAND,

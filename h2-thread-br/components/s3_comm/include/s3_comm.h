@@ -234,6 +234,44 @@ esp_err_t s3_comm_send_inventory_update(const uint8_t *ext_addr,
 esp_err_t s3_comm_send_error_event(s3h2_error_t error_code);
 
 /*******************************************************************************
+ * CoAP Mesh Protocol Event Functions
+ ******************************************************************************/
+
+/**
+ * @brief Send CBOR telemetry event
+ *
+ * Forwards raw CBOR heartbeat/telemetry data from a mesh node to S3.
+ *
+ * @param ext_addr Node extended MAC address (8 bytes)
+ * @param hb_type Heartbeat type (S3H2_HB_TYPE_*)
+ * @param cbor_data Raw CBOR payload
+ * @param cbor_len CBOR payload length
+ * @return ESP_OK on success
+ */
+esp_err_t s3_comm_send_crate_telemetry(const uint8_t *ext_addr,
+                                        uint8_t hb_type,
+                                        const uint8_t *cbor_data,
+                                        uint16_t cbor_len);
+
+/**
+ * @brief Send crate registered event
+ *
+ * Forwards device registration info from CoAP /register to S3.
+ *
+ * @param ext_addr Node extended MAC address (8 bytes)
+ * @param mac WiFi MAC string (e.g., "AA:BB:CC:DD:EE:FF")
+ * @param unit_id Supabase unit UUID string
+ * @param device_type Device type slug string
+ * @param fw_version Firmware version string
+ * @return ESP_OK on success
+ */
+esp_err_t s3_comm_send_crate_registered(const uint8_t *ext_addr,
+                                         const char *mac,
+                                         const char *unit_id,
+                                         const char *device_type,
+                                         const char *fw_version);
+
+/*******************************************************************************
  * Phase 4: OTA Event Functions
  ******************************************************************************/
 

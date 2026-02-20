@@ -53,6 +53,7 @@ ESP_EVENT_DECLARE_BASE(COAP_SERVER_EVENTS);
 typedef enum {
     COAP_SERVER_EVENT_INVENTORY_UPDATE,     /**< Inventory update received */
     COAP_SERVER_EVENT_HEARTBEAT,            /**< Heartbeat received */
+    COAP_SERVER_EVENT_REGISTER,            /**< New device registered via CoAP */
     COAP_SERVER_EVENT_ERROR,                /**< Error occurred */
 } coap_server_event_t;
 
@@ -76,6 +77,17 @@ typedef struct {
     int8_t rssi;                            /**< Signal strength (dBm) */
     uint8_t tag_count;                      /**< Number of tags in crate */
 } coap_heartbeat_event_t;
+
+/**
+ * @brief Device registration event data
+ */
+typedef struct {
+    uint8_t crate_ext_addr[8];              /**< Node extended MAC address (IID) */
+    char mac[18];                           /**< WiFi MAC "AA:BB:CC:DD:EE:FF" */
+    char unit_id[24];                       /**< Supabase unit UUID */
+    char device_type[20];                   /**< Device type slug */
+    char fw_version[16];                    /**< Firmware version "M.m.p" */
+} coap_register_event_t;
 
 /*******************************************************************************
  * Initialization
@@ -136,6 +148,7 @@ typedef struct {
     uint32_t inventory_requests;            /**< Total inventory POSTs received */
     uint32_t heartbeat_requests;            /**< Total heartbeat POSTs received */
     uint32_t config_requests;               /**< Total config GETs received */
+    uint32_t unregistered_heartbeats;       /**< Heartbeats from unregistered devices (auto-accepted) */
     uint32_t errors;                        /**< Total errors */
 } coap_server_stats_t;
 

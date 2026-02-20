@@ -79,6 +79,8 @@ typedef enum {
     H2_COMM_EVENT_CRATE_LEFT,           /**< Crate left Thread network */
     H2_COMM_EVENT_INVENTORY_UPDATE,     /**< Crate inventory changed */
     H2_COMM_EVENT_CRATE_HEARTBEAT,      /**< Crate heartbeat received */
+    H2_COMM_EVENT_CRATE_TELEMETRY,      /**< CBOR telemetry from mesh node */
+    H2_COMM_EVENT_CRATE_REGISTERED,     /**< Mesh node registered via CoAP */
     H2_COMM_EVENT_H2_RESET,             /**< H2 was reset due to failure */
     H2_COMM_EVENT_ERROR,                /**< Communication error */
 } h2_comm_event_t;
@@ -123,6 +125,27 @@ typedef struct {
     uint8_t epc_count;                  /**< Number of EPCs */
     uint8_t epcs[75][12];               /**< EPC values (max 75 per crate) */
 } h2_comm_inventory_event_t;
+
+/**
+ * @brief CBOR telemetry event data
+ */
+typedef struct {
+    uint8_t ext_addr[8];                /**< Node extended MAC address */
+    uint8_t hb_type;                    /**< Heartbeat type (S3H2_HB_TYPE_*) */
+    uint16_t cbor_len;                  /**< CBOR payload length */
+    uint8_t cbor_data[512];             /**< CBOR payload (max reasonable size) */
+} h2_comm_crate_telemetry_event_t;
+
+/**
+ * @brief Device registration event data
+ */
+typedef struct {
+    uint8_t ext_addr[8];                /**< Node extended MAC address */
+    char mac[18];                       /**< WiFi MAC "AA:BB:CC:DD:EE:FF" */
+    char unit_id[24];                   /**< Supabase unit UUID */
+    char device_type[20];               /**< Device type slug */
+    char fw_version[16];                /**< Firmware version */
+} h2_comm_crate_registered_event_t;
 
 /*******************************************************************************
  * Initialization
@@ -282,6 +305,22 @@ esp_err_t h2_comm_disable_joining(uint32_t timeout_ms);
  * @return ESP_OK if ACK received
  */
 esp_err_t h2_comm_reset_credentials(uint32_t timeout_ms);
+
+/**
+ * @brief Relay a CBOR command to a mesh node via H2
+ *
+ * Sends CMD_RELAY_CMD to H2, which forwards via CoAP POST /cmd.
+ *
+ * @param target_ext_addr Target node extended MAC address (8 bytes)
+ * @param cbor_data CBOR-encoded command payload
+ * @param cbor_len CBOR payload length
+ * @param timeout_ms Response timeout in milliseconds (0 = default)
+ * @return ESP_OK if ACK received from H2
+ */
+esp_err_t h2_comm_relay_command(const uint8_t *target_ext_addr,
+                                 const uint8_t *cbor_data,
+                                 uint16_t cbor_len,
+                                 uint32_t timeout_ms);
 
 /*******************************************************************************
  * Health Monitoring

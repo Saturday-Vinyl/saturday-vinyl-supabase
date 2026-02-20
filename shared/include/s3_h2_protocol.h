@@ -67,6 +67,9 @@ typedef enum {
     S3H2_CMD_OTA_VERIFY_CRATE   = 0x22,     /**< Verify and apply crate OTA */
     S3H2_CMD_OTA_ABORT_CRATE    = 0x23,     /**< Abort crate OTA in progress */
     S3H2_CMD_PING_CRATE         = 0x24,     /**< Ping crate to check if reachable */
+
+    /* CoAP Mesh Protocol Commands */
+    S3H2_CMD_RELAY_CMD          = 0x25,     /**< Relay command to mesh node via CoAP */
 } s3h2_cmd_t;
 
 /*******************************************************************************
@@ -96,6 +99,11 @@ typedef enum {
     S3H2_EVT_OTA_PROGRESS       = 0xE5,     /**< Crate OTA progress update */
     S3H2_EVT_OTA_COMPLETE       = 0xE6,     /**< Crate OTA completed (success/fail) */
     S3H2_EVT_CRATE_PING_RESULT  = 0xE7,     /**< Crate ping result */
+
+    /* CoAP Mesh Protocol Events */
+    S3H2_EVT_CRATE_TELEMETRY   = 0xE8,     /**< CBOR telemetry from mesh node */
+    S3H2_EVT_CRATE_REGISTERED  = 0xE9,     /**< Mesh node registered via CoAP */
+
     S3H2_EVT_ERROR              = 0xEF,     /**< Error occurred */
 } s3h2_evt_t;
 
@@ -321,6 +329,54 @@ typedef struct __attribute__((packed)) {
     uint8_t reachable;              /**< 1 = reachable, 0 = not reachable */
     int8_t rssi;                    /**< Signal strength if reachable (dBm) */
 } s3h2_ping_result_payload_t;
+
+/*******************************************************************************
+ * CoAP Mesh Protocol Payload Structures
+ ******************************************************************************/
+
+/** Heartbeat type codes for telemetry event */
+#define S3H2_HB_TYPE_STATUS         0   /**< Regular status heartbeat */
+#define S3H2_HB_TYPE_COMMAND_ACK    1   /**< Command acknowledgement */
+#define S3H2_HB_TYPE_COMMAND_RESULT 2   /**< Command result */
+
+/**
+ * @brief CBOR telemetry event header (EVT_CRATE_TELEMETRY)
+ *
+ * Variable-length event: header followed by cbor_len bytes of CBOR data.
+ */
+typedef struct __attribute__((packed)) {
+    uint8_t ext_addr[8];            /**< Sender extended MAC address */
+    uint8_t hb_type;                /**< Heartbeat type (S3H2_HB_TYPE_*) */
+    uint16_t cbor_len;              /**< CBOR payload length (little-endian) */
+    /* uint8_t cbor_data[cbor_len] follows */
+} s3h2_crate_telemetry_header_t;
+
+/**
+ * @brief Command relay payload (CMD_RELAY_CMD)
+ *
+ * Variable-length command: header followed by cbor_len bytes of CBOR data.
+ */
+typedef struct __attribute__((packed)) {
+    uint8_t target_ext_addr[8];     /**< Target node extended MAC address */
+    uint16_t cbor_len;              /**< CBOR command length (little-endian) */
+    /* uint8_t cbor_data[cbor_len] follows */
+} s3h2_relay_cmd_header_t;
+
+/**
+ * @brief Crate registered event payload (EVT_CRATE_REGISTERED)
+ *
+ * Variable-length event containing device identity from CoAP /register.
+ * String fields are length-prefixed: [len(1)][data(len)].
+ */
+typedef struct __attribute__((packed)) {
+    uint8_t ext_addr[8];            /**< Node extended MAC address */
+    /* Followed by length-prefixed strings:
+     *   uint8_t mac_len;       char mac[mac_len];
+     *   uint8_t unit_id_len;   char unit_id[unit_id_len];
+     *   uint8_t type_len;      char device_type[type_len];
+     *   uint8_t fw_len;        char fw_version[fw_len];
+     */
+} s3h2_crate_registered_header_t;
 
 /*******************************************************************************
  * Frame Structure

@@ -25,6 +25,7 @@
 #include "s3_comm.h"
 #include "thread_br.h"
 #include "coap_server.h"
+#include "coap_cmd_client.h"
 #include "coap_ota.h"
 
 static const char *TAG = "main";
@@ -75,6 +76,14 @@ static void thread_br_event_handler(void *arg, esp_event_base_t event_base,
 
         case THREAD_BR_EVENT_ATTACHED:
             ESP_LOGI(TAG, "Thread BR attached");
+            /* Start CoAP server now that OpenThread instance is available */
+            if (!coap_server_is_running()) {
+                if (coap_server_start() == ESP_OK) {
+                    ESP_LOGI(TAG, "CoAP server started");
+                } else {
+                    ESP_LOGE(TAG, "Failed to start CoAP server");
+                }
+            }
             break;
 
         case THREAD_BR_EVENT_DETACHED:
@@ -100,18 +109,59 @@ static void thread_br_event_handler(void *arg, esp_event_base_t event_base,
             break;
 
         case THREAD_BR_EVENT_DEVICE_JOINED:
-            ESP_LOGI(TAG, "Device joined Thread network");
-            /* Note: For full implementation, we'd get the device's ext_addr
-             * from OpenThread and send via s3_comm_send_crate_joined() */
+            if (event_data != NULL) {
+                thread_device_info_t *dev = (thread_device_info_t *)event_data;
+                ESP_LOGI(TAG, "Thread child attached (rloc16=0x%04X) — awaiting /register",
+                         dev->rloc16);
+                /* Don't send CRATE_JOINED to S3 here. The authoritative join signal
+                 * is CRATE_REGISTERED, sent when the node completes POST /register
+                 * with its full identity (mac, unit_id, device_type, fw_version). */
+            }
             break;
 
         case THREAD_BR_EVENT_DEVICE_LEFT:
             ESP_LOGI(TAG, "Device left Thread network");
-            /* Note: For full implementation, we'd send via s3_comm_send_crate_left() */
+            /* ext_addr of departed device is not available from OT_CHANGED_THREAD_CHILD_REMOVED */
+            {
+                uint8_t zeroed_addr[8] = {0};
+                s3_comm_send_crate_left(zeroed_addr);
+            }
             break;
 
         default:
             ESP_LOGD(TAG, "Unknown Thread BR event: %ld", (long)event_id);
+            break;
+    }
+}
+
+/*******************************************************************************
+ * CoAP Server Event Handler
+ *
+ * Forwards device registration events to S3 via UART
+ ******************************************************************************/
+
+static void coap_server_event_handler(void *arg, esp_event_base_t event_base,
+                                       int32_t event_id, void *event_data)
+{
+    if (event_base != COAP_SERVER_EVENTS) {
+        return;
+    }
+
+    switch (event_id) {
+        case COAP_SERVER_EVENT_REGISTER:
+            if (event_data != NULL) {
+                coap_register_event_t *evt = (coap_register_event_t *)event_data;
+                ESP_LOGI(TAG, "Device registered: mac=%s, type=%s",
+                         evt->mac, evt->device_type);
+                s3_comm_send_crate_registered(evt->crate_ext_addr,
+                                               evt->mac,
+                                               evt->unit_id,
+                                               evt->device_type,
+                                               evt->fw_version);
+            }
+            break;
+
+        default:
             break;
     }
 }
@@ -186,6 +236,17 @@ void app_main(void)
     }
 
     /*
+     * Register CoAP Server event handler
+     */
+    ESP_LOGI(TAG, "Registering CoAP server event handler...");
+    ret = esp_event_handler_register(COAP_SERVER_EVENTS, ESP_EVENT_ANY_ID,
+                                     coap_server_event_handler, NULL);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to register CoAP server handler: %s", esp_err_to_name(ret));
+        return;
+    }
+
+    /*
      * Initialize S3 Communication (UART)
      * This creates the RX task that handles commands from S3
      */
@@ -209,6 +270,16 @@ void app_main(void)
     }
 
     /*
+     * Initialize CoAP server for crate communication
+     * Resources are configured here; server starts when Thread attaches
+     */
+    ESP_LOGI(TAG, "Initializing CoAP server...");
+    ret = coap_server_init();
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to init CoAP server: %s", esp_err_to_name(ret));
+    }
+
+    /*
      * Initialize CoAP OTA client for Crate firmware updates
      * This is used when S3 relays OTA data to Crates via Thread
      */
@@ -217,6 +288,16 @@ void app_main(void)
     if (ret != ESP_OK) {
         ESP_LOGW(TAG, "Failed to init CoAP OTA: %s", esp_err_to_name(ret));
         /* Non-fatal - OTA to crates won't work but other functions will */
+    }
+
+    /*
+     * Initialize CoAP command client for mesh command relay
+     * Used when S3 relays commands to crates via CoAP POST /cmd
+     */
+    ESP_LOGI(TAG, "Initializing CoAP command client...");
+    ret = coap_cmd_client_init();
+    if (ret != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to init CoAP cmd client: %s", esp_err_to_name(ret));
     }
 
     /*

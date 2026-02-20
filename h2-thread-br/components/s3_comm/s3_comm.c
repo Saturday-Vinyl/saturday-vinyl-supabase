@@ -12,6 +12,7 @@
 #include "thread_br.h"
 #include "h2_version.h"
 #include "coap_ota.h"
+#include "coap_cmd_client.h"
 #include "driver/uart.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
@@ -86,6 +87,9 @@ static void handle_ota_data_crate(const uint8_t *payload, uint16_t len);
 static void handle_ota_verify_crate(const uint8_t *payload, uint16_t len);
 static void handle_ota_abort_crate(const uint8_t *payload, uint16_t len);
 static void handle_ping_crate(const uint8_t *payload, uint16_t len);
+
+/* CoAP Mesh Protocol command handler */
+static void handle_relay_cmd(const uint8_t *payload, uint16_t len);
 
 /*******************************************************************************
  * Initialization
@@ -390,6 +394,11 @@ static void handle_command(uint8_t cmd_type, const uint8_t *payload, uint16_t le
 
         case S3H2_CMD_PING_CRATE:
             handle_ping_crate(payload, len);
+            break;
+
+        /* CoAP Mesh Protocol */
+        case S3H2_CMD_RELAY_CMD:
+            handle_relay_cmd(payload, len);
             break;
 
         default:
@@ -1016,6 +1025,51 @@ static void handle_ping_crate(const uint8_t *payload, uint16_t len)
 }
 
 /*******************************************************************************
+ * CoAP Mesh Protocol Command Handler
+ ******************************************************************************/
+
+static void handle_relay_cmd(const uint8_t *payload, uint16_t len)
+{
+    ESP_LOGI(TAG, "RELAY_CMD received");
+
+    if (len < sizeof(s3h2_relay_cmd_header_t)) {
+        ESP_LOGE(TAG, "Payload too short for RELAY_CMD");
+        s3_comm_send_nak(S3H2_ERR_INVALID_PARAM);
+        return;
+    }
+
+    const s3h2_relay_cmd_header_t *cmd = (const s3h2_relay_cmd_header_t *)payload;
+    const uint8_t *cbor_data = payload + sizeof(s3h2_relay_cmd_header_t);
+    uint16_t cbor_len = cmd->cbor_len;
+
+    /* Validate payload length */
+    if (sizeof(s3h2_relay_cmd_header_t) + cbor_len > len) {
+        ESP_LOGE(TAG, "RELAY_CMD: CBOR length mismatch");
+        s3_comm_send_nak(S3H2_ERR_INVALID_PARAM);
+        return;
+    }
+
+    ESP_LOGI(TAG, "Relaying command to crate %02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X, cbor_len=%d",
+             cmd->target_ext_addr[0], cmd->target_ext_addr[1],
+             cmd->target_ext_addr[2], cmd->target_ext_addr[3],
+             cmd->target_ext_addr[4], cmd->target_ext_addr[5],
+             cmd->target_ext_addr[6], cmd->target_ext_addr[7],
+             cbor_len);
+
+    /* Forward via CoAP POST /cmd */
+    esp_err_t ret = coap_cmd_client_send(cmd->target_ext_addr, cbor_data, cbor_len);
+    if (ret == ESP_OK) {
+        s3_comm_send_ack();
+    } else if (ret == ESP_ERR_TIMEOUT) {
+        ESP_LOGW(TAG, "Crate not reachable for command relay");
+        s3_comm_send_nak(S3H2_ERR_CRATE_UNREACHABLE);
+    } else {
+        ESP_LOGE(TAG, "Command relay failed: %s", esp_err_to_name(ret));
+        s3_comm_send_nak(S3H2_ERR_INTERNAL);
+    }
+}
+
+/*******************************************************************************
  * Phase 4: OTA Event Functions
  ******************************************************************************/
 
@@ -1077,6 +1131,75 @@ esp_err_t s3_comm_send_ping_result(const uint8_t *crate_ext_addr,
     ESP_LOGI(TAG, "Sending PING_RESULT: reachable=%d, rssi=%d", reachable, rssi);
 
     return send_frame(S3H2_EVT_CRATE_PING_RESULT, &payload, sizeof(payload));
+}
+
+/*******************************************************************************
+ * CoAP Mesh Protocol Event Functions
+ ******************************************************************************/
+
+esp_err_t s3_comm_send_crate_telemetry(const uint8_t *ext_addr,
+                                        uint8_t hb_type,
+                                        const uint8_t *cbor_data,
+                                        uint16_t cbor_len)
+{
+    if (ext_addr == NULL || cbor_data == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    /* Build variable-length payload: header + CBOR data */
+    size_t header_size = sizeof(s3h2_crate_telemetry_header_t);
+    size_t total_len = header_size + cbor_len;
+    if (total_len > S3H2_MAX_PAYLOAD_LEN) {
+        ESP_LOGE(TAG, "Telemetry too large: %d bytes", (int)total_len);
+        return ESP_ERR_INVALID_SIZE;
+    }
+
+    uint8_t payload_buf[S3H2_MAX_PAYLOAD_LEN];
+    s3h2_crate_telemetry_header_t *header = (s3h2_crate_telemetry_header_t *)payload_buf;
+    memcpy(header->ext_addr, ext_addr, 8);
+    header->hb_type = hb_type;
+    header->cbor_len = cbor_len;
+    memcpy(&payload_buf[header_size], cbor_data, cbor_len);
+
+    ESP_LOGI(TAG, "Sending CRATE_TELEMETRY: type=%d, cbor_len=%d", hb_type, cbor_len);
+    return send_frame(S3H2_EVT_CRATE_TELEMETRY, payload_buf, total_len);
+}
+
+esp_err_t s3_comm_send_crate_registered(const uint8_t *ext_addr,
+                                         const char *mac,
+                                         const char *unit_id,
+                                         const char *device_type,
+                                         const char *fw_version)
+{
+    if (ext_addr == NULL || mac == NULL || unit_id == NULL ||
+        device_type == NULL || fw_version == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    /* Build variable-length payload:
+     * ext_addr[8] + len-prefixed strings: mac, unit_id, device_type, fw_version */
+    uint8_t payload_buf[256];
+    size_t pos = 0;
+
+    /* ext_addr */
+    memcpy(&payload_buf[pos], ext_addr, 8);
+    pos += 8;
+
+    /* Length-prefixed strings */
+    const char *strings[] = { mac, unit_id, device_type, fw_version };
+    for (int i = 0; i < 4; i++) {
+        uint8_t slen = (uint8_t)strlen(strings[i]);
+        if (pos + 1 + slen > sizeof(payload_buf)) {
+            ESP_LOGE(TAG, "Registration payload too large");
+            return ESP_ERR_INVALID_SIZE;
+        }
+        payload_buf[pos++] = slen;
+        memcpy(&payload_buf[pos], strings[i], slen);
+        pos += slen;
+    }
+
+    ESP_LOGI(TAG, "Sending CRATE_REGISTERED: mac=%s, unit=%s", mac, unit_id);
+    return send_frame(S3H2_EVT_CRATE_REGISTERED, payload_buf, pos);
 }
 
 /*******************************************************************************

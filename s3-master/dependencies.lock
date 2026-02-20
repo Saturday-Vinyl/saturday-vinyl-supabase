@@ -1,4 +1,15 @@
 dependencies:
+  espressif/cbor:
+    component_hash: 
+      dad9ca860963e930366510a10b422b3125a4fb27b979712ed65efcbcd742de50
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 0.6.1~4
   espressif/cjson:
     component_hash: 
       9372811fb197926f522c467627cf4a8e72b681e0366e17879631da801103aef3
@@ -123,11 +134,12 @@ dependencies:
       type: idf
     version: 5.5.2
 direct_dependencies:
+- espressif/cbor
 - espressif/cjson
 - espressif/esp-serial-flasher
 - espressif/esp_websocket_client
 - espressif/led_strip
 - idf
-manifest_hash: da533b30000eb7429e9822922889989745e8ecf02f2e7056c0e0b3a106574232
+manifest_hash: 5c373128c9022daa3f8fa95cd5331247a7c68501e7307cb200fda5a51674905d
 target: esp32s3
 version: 2.0.0

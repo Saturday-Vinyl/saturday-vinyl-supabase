@@ -80,11 +80,20 @@ esp_err_t supabase_init(void);
 /**
  * @brief Deinitialize the Supabase client
  *
- * Cleans up resources.
+ * Cleans up resources including persistent connection.
  *
  * @return ESP_OK on success
  */
 esp_err_t supabase_deinit(void);
+
+/**
+ * @brief Close the persistent HTTP connection
+ *
+ * Tears down the reusable TLS session. Call when WiFi disconnects
+ * or when the connection is known to be stale. The next supabase_post()
+ * will transparently create a new connection.
+ */
+void supabase_close_connection(void);
 
 /**
  * @brief Check if Supabase client is configured

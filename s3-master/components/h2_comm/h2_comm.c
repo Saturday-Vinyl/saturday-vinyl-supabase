@@ -625,6 +625,68 @@ static void handle_event(uint8_t evt_type, const uint8_t *payload, uint16_t len)
             break;
         }
 
+        case S3H2_EVT_CRATE_TELEMETRY: {
+            if (len >= sizeof(s3h2_crate_telemetry_header_t)) {
+                const s3h2_crate_telemetry_header_t *p =
+                    (const s3h2_crate_telemetry_header_t *)payload;
+                uint16_t cbor_len = p->cbor_len;
+                size_t expected = sizeof(s3h2_crate_telemetry_header_t) + cbor_len;
+
+                if (len >= expected && cbor_len <= 512) {
+                    ESP_LOGI(TAG, "Crate telemetry: type=%d, cbor_len=%d",
+                             p->hb_type, cbor_len);
+
+                    h2_comm_crate_telemetry_event_t event = {
+                        .hb_type = p->hb_type,
+                        .cbor_len = cbor_len,
+                    };
+                    memcpy(event.ext_addr, p->ext_addr, 8);
+                    memcpy(event.cbor_data,
+                           payload + sizeof(s3h2_crate_telemetry_header_t),
+                           cbor_len);
+                    esp_event_post(H2_COMM_EVENTS, H2_COMM_EVENT_CRATE_TELEMETRY,
+                                   &event, sizeof(event), pdMS_TO_TICKS(100));
+                } else {
+                    ESP_LOGW(TAG, "Telemetry payload truncated or too large");
+                }
+            }
+            break;
+        }
+
+        case S3H2_EVT_CRATE_REGISTERED: {
+            if (len >= sizeof(s3h2_crate_registered_header_t)) {
+                const uint8_t *p = payload;
+                h2_comm_crate_registered_event_t event = {0};
+                memcpy(event.ext_addr, p, 8);
+                size_t pos = 8;
+
+                /* Parse length-prefixed strings: mac, unit_id, device_type, fw_version */
+                char *dests[] = { event.mac, event.unit_id, event.device_type, event.fw_version };
+                size_t max_lens[] = { sizeof(event.mac) - 1, sizeof(event.unit_id) - 1,
+                                      sizeof(event.device_type) - 1, sizeof(event.fw_version) - 1 };
+                bool parse_ok = true;
+
+                for (int i = 0; i < 4 && parse_ok; i++) {
+                    if (pos >= len) { parse_ok = false; break; }
+                    uint8_t slen = p[pos++];
+                    if (pos + slen > len || slen > max_lens[i]) { parse_ok = false; break; }
+                    memcpy(dests[i], &p[pos], slen);
+                    dests[i][slen] = '\0';
+                    pos += slen;
+                }
+
+                if (parse_ok) {
+                    ESP_LOGI(TAG, "Crate registered: mac=%s, type=%s",
+                             event.mac, event.device_type);
+                    esp_event_post(H2_COMM_EVENTS, H2_COMM_EVENT_CRATE_REGISTERED,
+                                   &event, sizeof(event), pdMS_TO_TICKS(100));
+                } else {
+                    ESP_LOGW(TAG, "Failed to parse CRATE_REGISTERED payload");
+                }
+            }
+            break;
+        }
+
         case S3H2_EVT_ERROR: {
             if (len >= sizeof(s3h2_nak_payload_t)) {
                 const s3h2_nak_payload_t *p = (const s3h2_nak_payload_t *)payload;
@@ -863,6 +925,36 @@ esp_err_t h2_comm_disable_joining(uint32_t timeout_ms)
 esp_err_t h2_comm_reset_credentials(uint32_t timeout_ms)
 {
     return send_command_wait_response(S3H2_CMD_RESET_CREDENTIALS, NULL, 0,
+                                       S3H2_RSP_ACK, NULL, 0,
+                                       timeout_ms);
+}
+
+esp_err_t h2_comm_relay_command(const uint8_t *target_ext_addr,
+                                 const uint8_t *cbor_data,
+                                 uint16_t cbor_len,
+                                 uint32_t timeout_ms)
+{
+    if (target_ext_addr == NULL || cbor_data == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    /* Build variable-length payload: header + CBOR data */
+    size_t header_size = sizeof(s3h2_relay_cmd_header_t);
+    size_t total_len = header_size + cbor_len;
+    if (total_len > S3H2_MAX_PAYLOAD_LEN) {
+        ESP_LOGE(TAG, "Relay command too large: %d bytes", (int)total_len);
+        return ESP_ERR_INVALID_SIZE;
+    }
+
+    uint8_t payload_buf[S3H2_MAX_PAYLOAD_LEN];
+    s3h2_relay_cmd_header_t *header = (s3h2_relay_cmd_header_t *)payload_buf;
+    memcpy(header->target_ext_addr, target_ext_addr, 8);
+    header->cbor_len = cbor_len;
+    memcpy(&payload_buf[header_size], cbor_data, cbor_len);
+
+    ESP_LOGI(TAG, "Relaying command to crate, cbor_len=%d", cbor_len);
+    return send_command_wait_response(S3H2_CMD_RELAY_CMD,
+                                       payload_buf, total_len,
                                        S3H2_RSP_ACK, NULL, 0,
                                        timeout_ms);
 }

@@ -28,6 +28,14 @@
 #include "openthread/thread.h"
 #include "openthread/ip6.h"
 
+/* CoAP code extraction macros (removed in newer OpenThread versions) */
+#ifndef OT_COAP_CODE_CLASS
+#define OT_COAP_CODE_CLASS(code)  (((code) >> 5) & 0x7)
+#endif
+#ifndef OT_COAP_CODE_DETAIL
+#define OT_COAP_CODE_DETAIL(code) ((code) & 0x1f)
+#endif
+
 static const char *TAG = "COAP_OTA";
 
 /*******************************************************************************
@@ -648,14 +656,10 @@ static esp_err_t send_coap_request(const otIp6Address *dest_addr,
         return ESP_ERR_NO_MEM;
     }
 
-    /* Initialize message */
-    otError error = otCoapMessageInit(message, type, code);
-    if (error != OT_ERROR_NONE) {
-        ESP_LOGE(TAG, "Failed to init CoAP message: %d", error);
-        otMessageFree(message);
-        esp_openthread_lock_release();
-        return ESP_FAIL;
-    }
+    /* Initialize message (returns void in OpenThread v4+) */
+    otCoapMessageInit(message, type, code);
+
+    otError error;
 
     /* Generate message ID and token */
     otCoapMessageGenerateToken(message, OT_COAP_DEFAULT_TOKEN_LENGTH);
