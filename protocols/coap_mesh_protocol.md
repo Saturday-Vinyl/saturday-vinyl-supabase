@@ -1,7 +1,7 @@
 # Saturday CoAP Mesh Protocol
 
-**Version:** 1.0.0
-**Last Updated:** 2026-02-19
+**Version:** 1.1.0
+**Last Updated:** 2026-02-20
 **Audience:** Saturday Firmware engineers, Node firmware developers, Backend developers
 
 ---
@@ -329,37 +329,55 @@ General command delivery over mesh. This is the mesh transport for commands orig
 
 ```cddl
 cmd-request = {
-  "id"           : tstr,              ; Command UUID from device_commands table
-  "cmd"          : tstr,              ; Command name: "locate", "reboot", "run_test", etc.
-  ? "capability" : tstr,             ; Capability scope (for capability-specific commands)
-  ? "test_name"  : tstr,             ; Test name (for run_test command)
-  ? "params"     : {* tstr => any},  ; Command parameters
+  "id"      : tstr,              ; Command UUID from device_commands table
+  "cmd"     : tstr,              ; Command name: "reboot", "get_dataset", "register", etc.
+  ? "params" : {* tstr => any},  ; Command parameters
 }
 ```
 
-### Example: Locate Command (CBOR diagnostic)
+All commands — both core (e.g., `reboot`) and capability-specific (e.g., `get_dataset`, `scan`) — use the same flat format. There is no wrapping meta-command.
+
+### Example: Core Command (CBOR diagnostic)
 
 ```cbor-diag
 {
   "id": "550e8400-e29b-41d4-a716-446655440000",
-  "cmd": "locate"
+  "cmd": "reboot"
 }
 ```
 
-### Example: Run Test Command (CBOR diagnostic)
+### Example: Capability Command (CBOR diagnostic)
 
 ```cbor-diag
 {
   "id": "660e8400-e29b-41d4-a716-446655440001",
-  "cmd": "run_test",
-  "capability": "rfid",
-  "test_name": "scan",
+  "cmd": "scan",
   "params": {
     "duration_ms": 5000,
     "power_dbm": 20
   }
 }
 ```
+
+### Example: Thread Dataset Query (CBOR diagnostic)
+
+```cbor-diag
+{
+  "id": "770e8400-e29b-41d4-a716-446655440002",
+  "cmd": "get_dataset"
+}
+```
+
+### Example: Hub-Initiated Re-registration (CBOR diagnostic)
+
+```cbor-diag
+{
+  "id": "00000000-0000-0000-0000-000000000000",
+  "cmd": "register"
+}
+```
+
+The `register` command is sent by the Hub when it receives a heartbeat from an unregistered node. See [Unregistered Device Handling](#unregistered-device-handling).
 
 ### Response
 
@@ -511,7 +529,13 @@ This is identical to the WiFi-connected device flow described in [Device Command
 
 ### Unregistered Device Handling
 
-If the Hub receives a `POST /heartbeat` from an address not in the cache, it responds with **4.01 Unauthorized**. The node should interpret this as "re-register required" and send `POST /register` before retrying.
+When the Hub receives a `POST /heartbeat` from an address not in the cache, it uses a two-pronged approach to recover:
+
+1. **Graceful accept with 4.01 (passive signal):** The Hub creates a partial cache entry (`mac="unknown"`, `unit_id="unknown"`) so telemetry can still be forwarded to the cloud. It responds with **4.01 Unauthorized** to signal "re-register required." The node should interpret 4.01 as a prompt to send `POST /register` before its next heartbeat.
+
+2. **Active re-register nudge:** The Hub sends a CON `POST /cmd` to the unregistered node with `{"id":"00000000-0000-0000-0000-000000000000","cmd":"register"}`. This actively tells the node to re-register, handling cases where the node firmware doesn't react to the 4.01 response code. The nudge is rate-limited to **one per device per 60 seconds** to avoid flooding.
+
+This dual approach handles the common scenario where the Hub restarts (clearing its registration cache) while mesh nodes continue sending heartbeats. Previously, these heartbeats were rejected permanently until the nodes were power-cycled.
 
 ### Re-registration
 
@@ -688,7 +712,7 @@ The CBOR telemetry blob is passed through from CoAP to UART. The S3 decodes the 
 - Static array of structs, max 20 entries
 - Keyed by mesh-local IPv6 address (16 bytes)
 - Fields: `mac` (string, 18 chars), `unit_id` (string, 20 chars), `type` (string, 20 chars), `fw` (string, 12 chars), `caps` (bitmask or string list), `last_seen_ms` (uint32)
-- On cache miss for heartbeat: respond 4.01, node re-registers
+- On cache miss for heartbeat: graceful accept with partial cache entry, respond 4.01, send re-register nudge
 
 ### Content-Format Option
 
@@ -700,6 +724,7 @@ All CBOR endpoints MUST include the Content-Format: 60 option in both requests a
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.1.0 | 2026-02-20 | Simplified POST /cmd to flat command format (removed `capability`/`test_name` fields); added `register` command; expanded unregistered device handling with two-pronged approach (graceful accept + active nudge) |
 | 1.0.0 | 2026-02-19 | Initial CoAP Mesh Protocol specification |
 
 ---
