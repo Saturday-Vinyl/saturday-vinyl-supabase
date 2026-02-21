@@ -27,6 +27,21 @@ class DeviceCard extends StatelessWidget {
     return device.isHub ? 'Hub' : 'Crate';
   }
 
+  bool get _hasTelemetry =>
+      device.temperatureC != null || device.humidityPct != null;
+
+  String get _telemetrySummary {
+    final parts = <String>[];
+    if (device.temperatureC != null) {
+      final tempF = (device.temperatureC! * 9 / 5 + 32).round();
+      parts.add('$tempF°F');
+    }
+    if (device.humidityPct != null) {
+      parts.add('${device.humidityPct!.round()}% humidity');
+    }
+    return parts.join(' • ');
+  }
+
   String? get _lastSeenText {
     if (device.lastSeenAt == null) return null;
     final diff = DateTime.now().difference(device.lastSeenAt!);
@@ -110,6 +125,15 @@ class DeviceCard extends StatelessWidget {
                         ],
                       ],
                     ),
+                    if (device.isCrate && _hasTelemetry) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        _telemetrySummary,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: SaturdayColors.secondary,
+                            ),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -122,6 +146,7 @@ class DeviceCard extends StatelessWidget {
                     const SizedBox(height: 4),
                     BatteryIndicator(
                       level: device.batteryLevel,
+                      isCharging: device.isCharging == true,
                       size: 18,
                     ),
                   ],
@@ -189,7 +214,10 @@ class DeviceListTile extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           if (device.isCrate && device.batteryLevel != null)
-            BatteryIconOnly(level: device.batteryLevel),
+            BatteryIconOnly(
+              level: device.batteryLevel,
+              isCharging: device.isCharging == true,
+            ),
           const SizedBox(width: 8),
           ConnectivityStatusBadge.fromDevice(
             device: device,

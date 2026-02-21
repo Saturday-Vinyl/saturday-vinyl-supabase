@@ -4,9 +4,13 @@ import 'package:saturday_consumer_app/config/theme.dart';
 /// A widget displaying a battery level indicator.
 ///
 /// Shows the battery icon with fill level and optional percentage text.
+/// When [isCharging] is true, shows a charging icon variant.
 class BatteryIndicator extends StatelessWidget {
   /// Battery level from 0 to 100.
   final int? level;
+
+  /// Whether the device is currently charging.
+  final bool isCharging;
 
   /// Whether to show the percentage text.
   final bool showPercentage;
@@ -17,6 +21,7 @@ class BatteryIndicator extends StatelessWidget {
   const BatteryIndicator({
     super.key,
     this.level,
+    this.isCharging = false,
     this.showPercentage = true,
     this.size = 24,
   });
@@ -29,6 +34,7 @@ class BatteryIndicator extends StatelessWidget {
   }
 
   IconData get _batteryIcon {
+    if (isCharging) return Icons.battery_charging_full;
     if (level == null) return Icons.battery_unknown;
     if (level! <= 10) return Icons.battery_alert;
     if (level! <= 20) return Icons.battery_1_bar;
@@ -66,11 +72,13 @@ class BatteryIndicator extends StatelessWidget {
 /// A compact battery indicator that only shows icon with tooltip.
 class BatteryIconOnly extends StatelessWidget {
   final int? level;
+  final bool isCharging;
   final double size;
 
   const BatteryIconOnly({
     super.key,
     this.level,
+    this.isCharging = false,
     this.size = 20,
   });
 
@@ -82,6 +90,7 @@ class BatteryIconOnly extends StatelessWidget {
   }
 
   IconData get _batteryIcon {
+    if (isCharging) return Icons.battery_charging_full;
     if (level == null) return Icons.battery_unknown;
     if (level! <= 10) return Icons.battery_alert;
     if (level! <= 20) return Icons.battery_1_bar;
@@ -93,8 +102,13 @@ class BatteryIconOnly extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final tooltip = isCharging
+        ? 'Charging${level != null ? ' ($level%)' : ''}'
+        : level != null
+            ? '$level% battery'
+            : 'Unknown battery level';
     return Tooltip(
-      message: level != null ? '$level% battery' : 'Unknown battery level',
+      message: tooltip,
       child: Icon(
         _batteryIcon,
         color: _batteryColor,
@@ -107,10 +121,12 @@ class BatteryIconOnly extends StatelessWidget {
 /// A detailed battery display with progress bar.
 class BatteryProgress extends StatelessWidget {
   final int? level;
+  final bool isCharging;
 
   const BatteryProgress({
     super.key,
     this.level,
+    this.isCharging = false,
   });
 
   Color get _batteryColor {
@@ -130,9 +146,29 @@ class BatteryProgress extends StatelessWidget {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text(
-              'Battery',
-              style: Theme.of(context).textTheme.bodySmall,
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Battery',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                if (isCharging) ...[
+                  const SizedBox(width: 4),
+                  Icon(
+                    Icons.bolt,
+                    size: 14,
+                    color: SaturdayColors.warning,
+                  ),
+                  Text(
+                    'Charging',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: SaturdayColors.warning,
+                          fontWeight: FontWeight.w500,
+                        ),
+                  ),
+                ],
+              ],
             ),
             Text(
               level != null ? '$level%' : 'Unknown',

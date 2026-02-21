@@ -107,8 +107,20 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
           _buildSection(
             context,
             title: 'Battery',
-            child: BatteryProgress(level: device.batteryLevel),
+            child: BatteryProgress(
+              level: device.batteryLevel,
+              isCharging: device.isCharging == true,
+            ),
           ),
+          if (device.temperatureC != null || device.humidityPct != null) ...[
+            Spacing.sectionGap,
+            // Environment section for crates
+            _buildSection(
+              context,
+              title: 'Environment',
+              child: _buildEnvironmentContent(context, device),
+            ),
+          ],
         ],
         Spacing.sectionGap,
         // Actions section
@@ -280,6 +292,32 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
           label: 'Added',
           value: _formatDate(device.createdAt),
         ),
+      ],
+    );
+  }
+
+  Widget _buildEnvironmentContent(BuildContext context, Device device) {
+    final hasTemp = device.temperatureC != null;
+    final hasHumidity = device.humidityPct != null;
+
+    return Column(
+      children: [
+        if (hasTemp)
+          _buildInfoRow(
+            context,
+            icon: Icons.thermostat,
+            label: 'Temperature',
+            value:
+                '${(device.temperatureC! * 9 / 5 + 32).round()}°F',
+          ),
+        if (hasTemp && hasHumidity) const Divider(height: 24),
+        if (hasHumidity)
+          _buildInfoRow(
+            context,
+            icon: Icons.water_drop,
+            label: 'Humidity',
+            value: '${device.humidityPct!.round()}%',
+          ),
       ],
     );
   }
