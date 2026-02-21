@@ -15,6 +15,7 @@
 #include "wifi_manager.h"
 #include "rfid_protocol.h"
 #include "app_config.h"
+#include "realtime_client.h"
 
 /* Thread networking is managed by the H2 co-processor via UART protocol. */
 #include "esp_log.h"
@@ -296,6 +297,9 @@ static int format_heartbeat_json(char *buf, size_t buf_len)
     uint32_t min_free_heap = (uint32_t)esp_get_minimum_free_heap_size();
     uint32_t largest_free_block = (uint32_t)heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
 
+    /* WebSocket capability heartbeat field (websocket_connected per schema) */
+    bool ws_connected = realtime_client_is_connected();
+
     int len = snprintf(buf, buf_len,
         "{\"mac_address\":\"%s\","
         "\"unit_id\":\"%s\","
@@ -309,7 +313,8 @@ static int format_heartbeat_json(char *buf, size_t buf_len)
         "\"largest_free_block\":%lu,"
         "\"wifi_rssi\":%d,"
         "\"h2_connected\":%s,"
-        "\"h2_thread_state\":%d}}",
+        "\"h2_thread_state\":%d,"
+        "\"websocket_connected\":%s}}",
         mac_str,
         unit_id,
         DEVICE_TYPE,
@@ -321,7 +326,8 @@ static int format_heartbeat_json(char *buf, size_t buf_len)
         (unsigned long)largest_free_block,
         wifi_rssi,
         s_h2_connected ? "true" : "false",
-        s_h2_thread_state);
+        s_h2_thread_state,
+        ws_connected ? "true" : "false");
 
     return len;
 }
@@ -1202,22 +1208,17 @@ esp_err_t event_reporter_queue_crate_telemetry(const uint8_t *crate_ext_addr,
     char hub_unit_id[SUPABASE_UNIT_ID_MAX_LEN] = "UNIT-UNKNOWN";
     supabase_get_unit_id(hub_unit_id, sizeof(hub_unit_id));
 
-    char timestamp[32];
-    format_timestamp(esp_timer_get_time(), timestamp, sizeof(timestamp));
-
-    /* Build device_heartbeats JSON */
+    /* Build device_heartbeats JSON (created_at defaults to now() server-side) */
     char json[1024];
     int json_len = snprintf(json, sizeof(json),
         "{\"mac_address\":\"%s\",\"unit_id\":\"%s\",\"device_type\":\"%s\","
         "\"firmware_version\":\"%s\",\"type\":\"%s\","
         "\"telemetry\":%s,"
-        "\"relay_device_type\":\"hub\",\"relay_instance_id\":\"%s\","
-        "\"timestamp\":\"%s\"}",
+        "\"relay_device_type\":\"hub\",\"relay_instance_id\":\"%s\"}",
         identity->mac, identity->unit_id, identity->device_type,
         identity->fw_version, type_str,
         telemetry_json,
-        hub_unit_id,
-        timestamp);
+        hub_unit_id);
 
     if (json_len >= (int)sizeof(json)) {
         ESP_LOGE(TAG, "Crate telemetry JSON too long");

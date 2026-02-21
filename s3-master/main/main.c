@@ -280,6 +280,21 @@ static void on_service_mode_state_change(serial_prov_state_t state, void *user_d
 }
 
 /**
+ * @brief Crate telemetry task — executes on a dedicated stack to avoid sys_evt overflow
+ *
+ * CBOR decoding + JSON serialization + Supabase POST need ~2KB of stack buffers.
+ * The sys_evt task only has 4KB, so we offload to a one-shot task.
+ */
+static void crate_telemetry_task(void *arg)
+{
+    h2_comm_crate_telemetry_event_t *evt = (h2_comm_crate_telemetry_event_t *)arg;
+    event_reporter_queue_crate_telemetry(evt->ext_addr, evt->hb_type,
+                                          evt->cbor_data, evt->cbor_len);
+    free(evt);
+    vTaskDelete(NULL);
+}
+
+/**
  * @brief H2 communication event handler - handles Thread/crate events from H2
  */
 static void on_h2_event(void *handler_args, esp_event_base_t base,
@@ -378,8 +393,16 @@ static void on_h2_event(void *handler_args, esp_event_base_t base,
             h2_comm_crate_telemetry_event_t *evt = (h2_comm_crate_telemetry_event_t *)event_data;
             ESP_LOGI(TAG, "Crate telemetry: type=%d, cbor_len=%d",
                      evt->hb_type, evt->cbor_len);
-            event_reporter_queue_crate_telemetry(evt->ext_addr, evt->hb_type,
-                                                  evt->cbor_data, evt->cbor_len);
+            /* Offload to dedicated task — CBOR+JSON+HTTP needs more stack than sys_evt has */
+            h2_comm_crate_telemetry_event_t *evt_copy = malloc(sizeof(*evt_copy));
+            if (evt_copy != NULL) {
+                memcpy(evt_copy, evt, sizeof(*evt_copy));
+                if (xTaskCreate(crate_telemetry_task, "crate_telem", 6144,
+                                evt_copy, 5, NULL) != pdPASS) {
+                    ESP_LOGE(TAG, "Failed to create crate_telem task");
+                    free(evt_copy);
+                }
+            }
             break;
         }
 

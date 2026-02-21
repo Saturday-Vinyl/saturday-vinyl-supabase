@@ -607,11 +607,15 @@ static void register_handler(void *context, otMessage *message,
     char device_type[20] = {0};
     char fw_version[16] = {0};
 
-    if (!cbor_map_find_text(&root, "mac", mac, sizeof(mac)) ||
-        !cbor_map_find_text(&root, "unit_id", unit_id, sizeof(unit_id)) ||
-        !cbor_map_find_text(&root, "type", device_type, sizeof(device_type)) ||
-        !cbor_map_find_text(&root, "fw", fw_version, sizeof(fw_version))) {
-        ESP_LOGW(TAG, "Register: missing required fields");
+    bool has_mac = cbor_map_find_text(&root, "mac", mac, sizeof(mac));
+    bool has_unit_id = cbor_map_find_text(&root, "unit_id", unit_id, sizeof(unit_id));
+    bool has_type = cbor_map_find_text(&root, "type", device_type, sizeof(device_type));
+    bool has_fw = cbor_map_find_text(&root, "fw", fw_version, sizeof(fw_version));
+
+    if (!has_mac || !has_unit_id || !has_type || !has_fw) {
+        ESP_LOGW(TAG, "Register: missing required fields — mac=%d unit_id=%d type=%d fw=%d",
+                 has_mac, has_unit_id, has_type, has_fw);
+        ESP_LOG_BUFFER_HEX_LEVEL(TAG, payload, length, ESP_LOG_WARN);
         send_coap_response(message, message_info, OT_COAP_CODE_BAD_REQUEST,
                            NULL, 0);
         return;

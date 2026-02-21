@@ -228,6 +228,10 @@ static cJSON *build_standard_heartbeat_fields(cJSON *heartbeat)
     }
     cJSON_AddNumberToObject(telemetry, "wifi_rssi", wifi_rssi);
 
+    /* WebSocket capability heartbeat field */
+    cJSON_AddBoolToObject(telemetry, "websocket_connected",
+                          s_rt.state == RT_STATE_SUBSCRIBED);
+
     return telemetry;
 }
 

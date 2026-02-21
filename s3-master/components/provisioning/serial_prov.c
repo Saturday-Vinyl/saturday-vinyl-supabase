@@ -598,6 +598,8 @@ static void process_command(const char *json_str)
         handle_test_thread(params);
     } else if (strcmp(cmd_str, "join") == 0) {
         handle_test_thread(params);
+    } else if (strcmp(cmd_str, "thread_router_test") == 0) {
+        handle_test_thread(params);
     }
     /***************************************************************************
      * OTA Commands
@@ -1354,7 +1356,7 @@ static void handle_test_wifi(cJSON *params)
     cJSON *data = cJSON_CreateObject();
     cJSON_AddBoolToObject(data, "connected", true);
     cJSON_AddStringToObject(data, "ssid", s_prov.test_results.wifi_ssid);
-    cJSON_AddStringToObject(data, "ip", s_prov.test_results.wifi_ip);
+    cJSON_AddStringToObject(data, "ip_address", s_prov.test_results.wifi_ip);
     cJSON_AddNumberToObject(data, "rssi", s_prov.test_results.wifi_rssi);
 
     led_flash(LED_COLOR_GREEN, 500);
