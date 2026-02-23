@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:saturday_consumer_app/config/routes.dart';
 import 'package:saturday_consumer_app/config/styles.dart';
 import 'package:saturday_consumer_app/config/theme.dart';
 import 'package:saturday_consumer_app/models/device.dart';
 import 'package:saturday_consumer_app/providers/device_provider.dart';
 import 'package:saturday_consumer_app/providers/repository_providers.dart';
+import 'package:saturday_consumer_app/screens/account/wifi_reprovision_screen.dart';
 import 'package:saturday_consumer_app/widgets/devices/devices.dart';
 
 /// Screen displaying detailed information about a device.
@@ -47,24 +49,36 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
         actions: [
           PopupMenuButton<String>(
             onSelected: (value) => _handleMenuAction(context, ref, value),
-            itemBuilder: (context) => [
-              const PopupMenuItem(
-                value: 'rename',
-                child: ListTile(
-                  leading: Icon(Icons.edit),
-                  title: Text('Rename'),
-                  contentPadding: EdgeInsets.zero,
+            itemBuilder: (context) {
+              final device = ref.read(deviceByIdProvider(widget.deviceId)).valueOrNull;
+              return [
+                if (device != null && device.isHub && !device.needsSetup)
+                  const PopupMenuItem(
+                    value: 'change_wifi',
+                    child: ListTile(
+                      leading: Icon(Icons.wifi),
+                      title: Text('Change Wi-Fi Network'),
+                      contentPadding: EdgeInsets.zero,
+                    ),
+                  ),
+                const PopupMenuItem(
+                  value: 'rename',
+                  child: ListTile(
+                    leading: Icon(Icons.edit),
+                    title: Text('Rename'),
+                    contentPadding: EdgeInsets.zero,
+                  ),
                 ),
-              ),
-              const PopupMenuItem(
-                value: 'remove',
-                child: ListTile(
-                  leading: Icon(Icons.delete_outline, color: SaturdayColors.error),
-                  title: Text('Remove Device', style: TextStyle(color: SaturdayColors.error)),
-                  contentPadding: EdgeInsets.zero,
+                const PopupMenuItem(
+                  value: 'remove',
+                  child: ListTile(
+                    leading: Icon(Icons.delete_outline, color: SaturdayColors.error),
+                    title: Text('Remove Device', style: TextStyle(color: SaturdayColors.error)),
+                    contentPadding: EdgeInsets.zero,
+                  ),
                 ),
-              ),
-            ],
+              ];
+            },
           ),
         ],
       ),
@@ -371,6 +385,12 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
             icon: const Icon(Icons.settings),
             label: const Text('Complete Setup'),
           ),
+        if (device.isHub && !device.needsSetup)
+          OutlinedButton.icon(
+            onPressed: () => _navigateToWifiReprovision(context, device),
+            icon: const Icon(Icons.wifi),
+            label: const Text('Change Wi-Fi Network'),
+          ),
         const SizedBox(height: 8),
         OutlinedButton.icon(
           onPressed: () => _showRemoveConfirmation(context, ref, device),
@@ -450,6 +470,9 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
     if (device == null) return;
 
     switch (action) {
+      case 'change_wifi':
+        _navigateToWifiReprovision(context, device);
+        break;
       case 'rename':
         setState(() {
           _isEditing = true;
@@ -487,6 +510,18 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
         );
       }
     }
+  }
+
+  void _navigateToWifiReprovision(BuildContext context, Device device) {
+    context.pushNamed(
+      RouteNames.wifiReprovision,
+      pathParameters: {'id': device.id},
+      extra: WifiReprovisionExtra(
+        deviceName: device.name,
+        serialNumber: device.serialNumber,
+        knownSsid: device.provisionData?['wifi_ssid'] as String?,
+      ),
+    );
   }
 
   Future<void> _showRemoveConfirmation(

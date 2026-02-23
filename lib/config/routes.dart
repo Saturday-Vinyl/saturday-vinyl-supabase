@@ -22,6 +22,7 @@ import 'package:saturday_consumer_app/screens/account/account_screen.dart';
 import 'package:saturday_consumer_app/screens/account/device_list_screen.dart';
 import 'package:saturday_consumer_app/screens/account/device_detail_screen.dart';
 import 'package:saturday_consumer_app/screens/account/device_setup_screen.dart';
+import 'package:saturday_consumer_app/screens/account/wifi_reprovision_screen.dart';
 import 'package:saturday_consumer_app/screens/account/notification_settings_screen.dart';
 import 'package:saturday_consumer_app/screens/onboarding/quick_start_screen.dart';
 import 'package:saturday_consumer_app/screens/onboarding/add_album_intro_screen.dart';
@@ -57,6 +58,7 @@ class RoutePaths {
   static const String deviceList = 'devices';
   static const String deviceDetail = 'devices/:id';
   static const String deviceSetup = 'devices/setup';
+  static const String wifiReprovision = 'devices/:id/wifi';
   static const String notificationSettings = 'notifications';
   static const String settings = 'settings';
   static const String search = '/search';
@@ -95,6 +97,7 @@ class RouteNames {
   static const String deviceList = 'device-list';
   static const String deviceDetail = 'device-detail';
   static const String deviceSetup = 'device-setup';
+  static const String wifiReprovision = 'wifi-reprovision';
   static const String notificationSettings = 'notification-settings';
   static const String settings = 'settings';
   static const String search = 'search';
@@ -280,6 +283,23 @@ GoRouter createAppRouter(Ref ref) {
                 name: RouteNames.deviceSetup,
                 parentNavigatorKey: rootNavigatorKey,
                 builder: (context, state) => const DeviceSetupScreen(),
+              ),
+              // WiFi re-provisioning (uses root navigator for fullscreen)
+              // NOTE: Must come before deviceDetail to avoid :id matching "wifi"
+              GoRoute(
+                path: RoutePaths.wifiReprovision,
+                name: RouteNames.wifiReprovision,
+                parentNavigatorKey: rootNavigatorKey,
+                builder: (context, state) {
+                  final deviceId = state.pathParameters['id']!;
+                  final extra = state.extra as WifiReprovisionExtra?;
+                  return WifiReprovisionScreen(
+                    unitId: deviceId,
+                    deviceName: extra?.deviceName ?? '',
+                    serialNumber: extra?.serialNumber ?? '',
+                    knownSsid: extra?.knownSsid,
+                  );
+                },
               ),
               // Notification settings
               GoRoute(
