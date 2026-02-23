@@ -67,14 +67,7 @@ class RemoteLogEntry extends Equatable {
   }
 
   String _formatCommandSent() {
-    final buffer = StringBuffer(command ?? 'unknown');
-    if (data['capability'] != null) {
-      buffer.write(' (${data['capability']})');
-    }
-    if (data['test_name'] != null) {
-      buffer.write(' test:${data['test_name']}');
-    }
-    return buffer.toString();
+    return command ?? 'unknown';
   }
 
   String _formatCommandAck() {

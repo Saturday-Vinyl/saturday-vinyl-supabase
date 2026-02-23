@@ -1,7 +1,7 @@
 # Saturday Capability Schema Specification
 
-**Version:** 1.3.0
-**Last Updated:** 2026-01-26
+**Version:** 1.4.0
+**Last Updated:** 2026-02-20
 **Audience:** Saturday Admin App developers, Firmware engineers
 
 ---
@@ -25,6 +25,7 @@ Schemas follow the pattern `{phase}_{direction}_schema`:
 | **consumer_input_schema** | Data sent TO device during consumer provisioning | Consumer app (BLE) |
 | **consumer_output_schema** | Data returned FROM device after consumer provisioning | Consumer app, Cloud |
 | **heartbeat_schema** | Telemetry data in periodic heartbeats | Cloud |
+| **commands** | Capability commands with parameter/result schemas | Factory app, Admin app |
 
 ### Key Distinctions
 
@@ -62,7 +63,7 @@ CREATE TABLE capabilities (
   consumer_input_schema JSONB DEFAULT '{}',       -- Data sent TO device (consumer/BLE)
   consumer_output_schema JSONB DEFAULT '{}',      -- Data returned FROM device (consumer)
   heartbeat_schema JSONB DEFAULT '{}',            -- Telemetry data
-  tests JSONB DEFAULT '[]',
+  tests JSONB DEFAULT '[]',                          -- NOTE: column remains "tests" for backwards compat; conceptually "commands"
   is_active BOOLEAN DEFAULT true,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -174,7 +175,7 @@ Wi-Fi connectivity for network-enabled devices.
 }
 ```
 
-**tests:**
+**commands:**
 ```json
 [
   {
@@ -336,7 +337,7 @@ For devices that act as Thread Border Routers, they generate network credentials
 }
 ```
 
-**tests:**
+**commands:**
 ```json
 [
   {
@@ -357,6 +358,45 @@ For devices that act as Thread Border Routers, they generate network credentials
         "connected": {"type": "boolean"},
         "role": {"type": "string"},
         "duration_ms": {"type": "integer"}
+      }
+    }
+  },
+  {
+    "name": "get_dataset",
+    "display_name": "Get Thread Dataset",
+    "description": "Returns the full active Thread operational dataset for credential comparison between devices. Use this to diagnose join failures by comparing all credential fields between the Border Router and a node stuck in detached state.",
+    "parameters_schema": {
+      "type": "object",
+      "properties": {}
+    },
+    "result_schema": {
+      "type": "object",
+      "properties": {
+        "network_name": {"type": "string", "description": "Thread network name"},
+        "pan_id": {"type": "integer", "description": "16-bit PAN ID"},
+        "channel": {"type": "integer", "description": "Radio channel (11-26)"},
+        "network_key": {"type": "string", "description": "128-bit network key (32 hex chars)"},
+        "extended_pan_id": {"type": "string", "description": "64-bit extended PAN ID (16 hex chars)"},
+        "mesh_local_prefix": {"type": "string", "description": "64-bit mesh-local prefix (16 hex chars)"},
+        "attached": {"type": "boolean", "description": "Whether device is attached to a Thread network"},
+        "role": {"type": "string", "enum": ["disabled", "detached", "attaching", "child", "router", "leader"]},
+        "rloc16": {"type": "integer", "description": "16-bit Router Locator address"},
+        "device_count": {"type": "integer", "description": "Number of devices on the network"}
+      }
+    }
+  },
+  {
+    "name": "register",
+    "display_name": "Re-register with Hub",
+    "description": "Hub-initiated command sent when a node's heartbeat arrives but the node is not in the Hub's registration cache (e.g., after Hub restart). The node should respond by sending POST /register to re-establish its identity.",
+    "parameters_schema": {
+      "type": "object",
+      "properties": {}
+    },
+    "result_schema": {
+      "type": "object",
+      "properties": {
+        "registered": {"type": "boolean", "description": "Whether re-registration succeeded"}
       }
     }
   }
@@ -409,7 +449,7 @@ Cloud backend connectivity. Cloud credentials are factory-provisioned only.
 }
 ```
 
-**tests:**
+**commands:**
 ```json
 [
   {
@@ -479,7 +519,7 @@ UHF RFID tag reading capability. RFID settings are factory-provisioned.
 }
 ```
 
-**tests:**
+**commands:**
 ```json
 [
   {
@@ -555,7 +595,7 @@ Addressable LED strip control. LED hardware config is factory-set, brightness ca
 }
 ```
 
-**tests:**
+**commands:**
 ```json
 [
   {
@@ -603,7 +643,7 @@ Temperature and humidity sensing.
 }
 ```
 
-**tests:**
+**commands:**
 ```json
 [
   {
@@ -631,7 +671,7 @@ Temperature and humidity sensing.
 
 Accelerometer/motion detection.
 
-**tests:**
+**commands:**
 ```json
 [
   {
@@ -663,7 +703,7 @@ Accelerometer/motion detection.
 
 Physical button input.
 
-**tests:**
+**commands:**
 ```json
 [
   {
@@ -711,7 +751,7 @@ The `configuration` field allows per-device-type customization of the capability
 {
   "required_for_provisioning": true,
   "included_in_heartbeat": true,
-  "test_order": 1,
+  "command_order": 1,
   "custom_defaults": {
     "power_dbm": 15
   }
@@ -772,7 +812,7 @@ The admin app provides a visual editor for capability schemas:
 
 1. Create/edit capabilities with display name and description
 2. Build input/output schemas for factory and consumer phases using form builders
-3. Define tests with parameter and result schemas
+3. Define commands with parameter and result schemas
 4. Link capabilities to device types
 5. Configure per-device-type settings
 
@@ -785,8 +825,59 @@ The admin app validates:
 - Factory provision responses against `factory_output_schema`
 - Consumer provision responses against `consumer_output_schema`
 - Heartbeat data against `heartbeat_schema`
-- Test parameters against test `parameters_schema`
-- Test results against test `result_schema`
+- Command parameters against command `parameters_schema`
+- Command results against command `result_schema`
+
+---
+
+## Command Categories
+
+Capability commands fall into three categories:
+
+| Category | Purpose | Examples |
+|----------|---------|---------|
+| **Tests** | Validate hardware or connectivity | `connect`, `join`, `ping` |
+| **Queries** | Read device state without side effects | `get_dataset`, `read` |
+| **Actions** | Trigger behavior or state change | `pattern`, `register`, `scan` |
+
+The category is informational — it helps the admin app present commands appropriately (e.g., "Run Test" vs "Query" vs "Action" buttons). Firmware dispatch does not distinguish between categories; all are flat `cmd` values.
+
+---
+
+## Command Uniqueness
+
+Command names are flat strings with no namespace prefix (e.g., `get_dataset`, not `thread.get_dataset` or `thread_get_dataset`).
+
+**Uniqueness is enforced by the admin app per device type.** The admin app defines which capabilities a device type has, and each capability defines its commands. If two capabilities assigned to the same device type define the same command name, the admin app must catch this conflict when configuring device type capabilities.
+
+In practice, the current command set has no conflicts across capabilities, and with a small number of capabilities per device type, collisions are unlikely.
+
+---
+
+## Database Migration Note
+
+- The database column remains `tests` (JSONB) for backwards compatibility
+- The firmware JSON schema key output by the admin app remains `tests` until an admin app migration renames it
+- Firmware accepts `run_test` as a deprecated alias that extracts `test_name` and re-dispatches as a flat command
+- Documentation uses `commands` to reflect the conceptual rename
+
+---
+
+## Adding a New Command (Process Guide)
+
+When adding a new capability command to the Saturday ecosystem:
+
+1. **Define the command contract** — Choose which capability it belongs to, pick a unique command name, define parameter schema and result schema. Classify as test/query/action. Ensure the name doesn't conflict with other commands on the same device type.
+
+2. **Update capability schema documentation** — Add the command to the relevant capability's `commands` array in this document (`shared-docs/schemas/capability_schema.md`).
+
+3. **Update protocol documentation** — If the command introduces new protocol behavior (like `register` being hub-initiated), document it in `device_command_protocol.md` and/or `coap_mesh_protocol.md`.
+
+4. **Update admin app** — Add the command to the capability's `tests` array (column rename pending) in the admin app's capability editor. This makes it available in firmware JSON schemas.
+
+5. **Implement in firmware** — Add a `strcmp` entry for the command name in the firmware's flat command dispatch table (see `serial_prov.c`). The command name on the wire is just the flat name (e.g., `"register"`, `"get_dataset"`).
+
+6. **Test the full loop** — Send via admin app → WebSocket/UART → device executes → result flows back via heartbeat.
 
 ---
 
@@ -794,6 +885,7 @@ The admin app validates:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.4.0 | 2026-02-20 | Renamed `tests` → `commands` throughout; added `register` command to thread capability; added Command Categories, Command Uniqueness, Database Migration Note, and Process Guide sections |
 | 1.3.0 | 2026-01-26 | Renamed schemas to `{phase}_{direction}_schema` pattern for clarity |
 | 1.2.0 | 2026-01-25 | Clarified purpose of 4 schema types; added BLE service generation and consumer reset behavior documentation |
 | 1.1.0 | 2026-01-25 | Added capability prefixes to field names for flat protocol |

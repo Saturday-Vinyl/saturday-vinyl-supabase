@@ -338,8 +338,6 @@ class RemoteMonitorNotifier extends StateNotifier<RemoteMonitorState> {
   Future<DeviceCommand?> sendCommand({
     required String macAddress,
     required String command,
-    String? capability,
-    String? testName,
     Map<String, dynamic>? parameters,
   }) async {
     try {
@@ -348,8 +346,6 @@ class RemoteMonitorNotifier extends StateNotifier<RemoteMonitorState> {
       final deviceCommand = await repository.sendCommand(
         macAddress: macAddress,
         command: command,
-        capability: capability,
-        testName: testName,
         parameters: parameters,
       );
 
@@ -389,18 +385,15 @@ class RemoteMonitorNotifier extends StateNotifier<RemoteMonitorState> {
     return sendCommand(macAddress: macAddress, command: 'factory_reset');
   }
 
-  /// Send run_test command
-  Future<DeviceCommand?> sendRunTest({
+  /// Send a capability command to a device
+  Future<DeviceCommand?> sendCapabilityCommand({
     required String macAddress,
-    required String capability,
-    required String testName,
+    required String commandName,
     Map<String, dynamic>? parameters,
   }) async {
     return sendCommand(
       macAddress: macAddress,
-      command: 'run_test',
-      capability: capability,
-      testName: testName,
+      command: commandName,
       parameters: parameters,
     );
   }

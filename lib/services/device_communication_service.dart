@@ -109,23 +109,10 @@ class FactoryProvisionParams {
 class DeviceCommandTimeouts {
   static const Duration probe = Duration(seconds: 2);
   static const Duration standard = Duration(seconds: 10);
-  static const Duration wifiTest = Duration(seconds: 45);
-  static const Duration cloudTest = Duration(seconds: 15);
-  static const Duration allTests = Duration(seconds: 90);
   static const Duration otaUpdate = Duration(minutes: 5);
-
-  static Duration getTestTimeout(String capability, String testName) {
-    if (capability == 'wifi' && testName == 'connect') {
-      return wifiTest;
-    }
-    if (capability == 'cloud' && testName == 'connect') {
-      return cloudTest;
-    }
-    return standard;
-  }
 }
 
-/// Service for communicating with devices using the Device Command Protocol v1.2.3
+/// Service for communicating with devices using the Device Command Protocol v1.3.0
 ///
 /// This implements the always-listening architecture where devices accept commands
 /// immediately without requiring an entry window. Commands use UUID tracking and
@@ -297,8 +284,6 @@ class DeviceCommunicationService {
   /// Send a command and wait for response
   Future<CommandResponse> sendCommand(
     String cmd, {
-    String? capability,
-    String? testName,
     Map<String, dynamic>? params,
     Duration? timeout,
   }) async {
@@ -309,13 +294,11 @@ class DeviceCommunicationService {
       return CommandResponse.error(commandId, 'Not connected');
     }
 
-    // Build command JSON per Device Command Protocol
+    // Build command JSON per Device Command Protocol v1.3.0 (flat format)
     final command = <String, dynamic>{
       'id': commandId,
       'cmd': cmd,
     };
-    if (capability != null) command['capability'] = capability;
-    if (testName != null) command['test_name'] = testName;
     if (params != null && params.isNotEmpty) command['params'] = params;
 
     final jsonString = '${jsonEncode(command)}\n';
@@ -407,19 +390,18 @@ class DeviceCommunicationService {
     );
   }
 
-  /// Run a capability test
-  Future<CommandResponse> runTest(
-    String capability,
-    String testName, {
+  /// Run a capability command (flat dispatch)
+  ///
+  /// Capability commands are dispatched as flat top-level commands.
+  /// See Device Command Protocol v1.3.0.
+  Future<CommandResponse> runCapabilityCommand(
+    String commandName, {
     Map<String, dynamic>? params,
   }) async {
-    final timeout = DeviceCommandTimeouts.getTestTimeout(capability, testName);
     return sendCommand(
-      'run_test',
-      capability: capability,
-      testName: testName,
+      commandName,
       params: params,
-      timeout: timeout,
+      timeout: DeviceCommandTimeouts.standard,
     );
   }
 

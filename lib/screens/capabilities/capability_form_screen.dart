@@ -35,8 +35,8 @@ class _CapabilityFormScreenState extends ConsumerState<CapabilityFormScreen> {
   List<SchemaProperty> _consumerOutputProperties = [];
   List<SchemaProperty> _heartbeatProperties = [];
 
-  // Tests
-  List<CapabilityTest> _tests = [];
+  // Commands
+  List<CapabilityCommand> _commands = [];
 
   bool _isActive = true;
   bool _isLoading = false;
@@ -62,8 +62,8 @@ class _CapabilityFormScreenState extends ConsumerState<CapabilityFormScreen> {
       _heartbeatProperties =
           _parseSchemaProperties(widget.capability!.heartbeatSchema);
 
-      // Copy tests
-      _tests = List.from(widget.capability!.tests);
+      // Copy commands
+      _commands = List.from(widget.capability!.commands);
     }
   }
 
@@ -302,17 +302,17 @@ class _CapabilityFormScreenState extends ConsumerState<CapabilityFormScreen> {
               ],
               const SizedBox(height: 24),
 
-              // Tests Section
-              _buildSectionHeader('Tests'),
+              // Commands Section
+              _buildSectionHeader('Commands'),
               const SizedBox(height: 8),
               Text(
-                'Test definitions for factory testing',
+                'Command definitions (tests, queries, actions)',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: SaturdayColors.secondaryGrey,
                     ),
               ),
               const SizedBox(height: 12),
-              _buildTestsEditor(),
+              _buildCommandsEditor(),
               const SizedBox(height: 24),
 
               // Active status
@@ -701,10 +701,10 @@ class _CapabilityFormScreenState extends ConsumerState<CapabilityFormScreen> {
     );
   }
 
-  Widget _buildTestsEditor() {
+  Widget _buildCommandsEditor() {
     return Column(
       children: [
-        if (_tests.isEmpty)
+        if (_commands.isEmpty)
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
@@ -718,13 +718,13 @@ class _CapabilityFormScreenState extends ConsumerState<CapabilityFormScreen> {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Icon(
-                  Icons.science_outlined,
+                  Icons.terminal,
                   color: SaturdayColors.secondaryGrey,
                   size: 20,
                 ),
                 const SizedBox(width: 8),
                 Text(
-                  'No tests defined',
+                  'No commands defined',
                   style: TextStyle(
                     color: SaturdayColors.secondaryGrey,
                     fontStyle: FontStyle.italic,
@@ -734,16 +734,16 @@ class _CapabilityFormScreenState extends ConsumerState<CapabilityFormScreen> {
             ),
           )
         else
-          ..._tests.asMap().entries.map((entry) {
+          ..._commands.asMap().entries.map((entry) {
             final index = entry.key;
-            final test = entry.value;
+            final command = entry.value;
             return Card(
               margin: const EdgeInsets.only(bottom: 8),
               child: ListTile(
-                leading: Icon(Icons.science, color: SaturdayColors.info),
-                title: Text(test.displayName),
+                leading: Icon(Icons.terminal, color: SaturdayColors.info),
+                title: Text(command.displayName),
                 subtitle: Text(
-                  test.description ?? test.name,
+                  command.description ?? command.name,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -752,7 +752,7 @@ class _CapabilityFormScreenState extends ConsumerState<CapabilityFormScreen> {
                   children: [
                     IconButton(
                       icon: const Icon(Icons.edit, size: 20),
-                      onPressed: () => _editTest(index),
+                      onPressed: () => _editCommand(index),
                       tooltip: 'Edit',
                     ),
                     IconButton(
@@ -760,7 +760,7 @@ class _CapabilityFormScreenState extends ConsumerState<CapabilityFormScreen> {
                           size: 20, color: SaturdayColors.error),
                       onPressed: () {
                         setState(() {
-                          _tests.removeAt(index);
+                          _commands.removeAt(index);
                         });
                       },
                       tooltip: 'Delete',
@@ -772,54 +772,54 @@ class _CapabilityFormScreenState extends ConsumerState<CapabilityFormScreen> {
           }),
         const SizedBox(height: 8),
         OutlinedButton.icon(
-          onPressed: _addTest,
+          onPressed: _addCommand,
           icon: const Icon(Icons.add),
-          label: const Text('Add Test'),
+          label: const Text('Add Command'),
         ),
       ],
     );
   }
 
-  void _addTest() {
-    _showTestDialog(
-      title: 'Add Test',
-      onSave: (test) {
+  void _addCommand() {
+    _showCommandDialog(
+      title: 'Add Command',
+      onSave: (command) {
         setState(() {
-          _tests.add(test);
+          _commands.add(command);
         });
       },
     );
   }
 
-  void _editTest(int index) {
-    _showTestDialog(
-      title: 'Edit Test',
-      test: _tests[index],
-      onSave: (test) {
+  void _editCommand(int index) {
+    _showCommandDialog(
+      title: 'Edit Command',
+      command: _commands[index],
+      onSave: (command) {
         setState(() {
-          _tests[index] = test;
+          _commands[index] = command;
         });
       },
     );
   }
 
-  void _showTestDialog({
+  void _showCommandDialog({
     required String title,
-    CapabilityTest? test,
-    required ValueChanged<CapabilityTest> onSave,
+    CapabilityCommand? command,
+    required ValueChanged<CapabilityCommand> onSave,
   }) {
-    final nameController = TextEditingController(text: test?.name ?? '');
+    final nameController = TextEditingController(text: command?.name ?? '');
     final displayNameController =
-        TextEditingController(text: test?.displayName ?? '');
-    final descController = TextEditingController(text: test?.description ?? '');
+        TextEditingController(text: command?.displayName ?? '');
+    final descController = TextEditingController(text: command?.description ?? '');
     final paramsController = TextEditingController(
-      text: test?.parametersSchema.isNotEmpty == true
-          ? const JsonEncoder.withIndent('  ').convert(test!.parametersSchema)
+      text: command?.parametersSchema.isNotEmpty == true
+          ? const JsonEncoder.withIndent('  ').convert(command!.parametersSchema)
           : '',
     );
     final resultController = TextEditingController(
-      text: test?.resultSchema.isNotEmpty == true
-          ? const JsonEncoder.withIndent('  ').convert(test!.resultSchema)
+      text: command?.resultSchema.isNotEmpty == true
+          ? const JsonEncoder.withIndent('  ').convert(command!.resultSchema)
           : '',
     );
 
@@ -837,7 +837,7 @@ class _CapabilityFormScreenState extends ConsumerState<CapabilityFormScreen> {
                   controller: nameController,
                   decoration: const InputDecoration(
                     labelText: 'Name (machine-readable) *',
-                    hintText: 'e.g., led_test, speaker_test',
+                    hintText: 'e.g., connect, scan, get_dataset',
                   ),
                 ),
                 const SizedBox(height: 16),
@@ -845,7 +845,7 @@ class _CapabilityFormScreenState extends ConsumerState<CapabilityFormScreen> {
                   controller: displayNameController,
                   decoration: const InputDecoration(
                     labelText: 'Display Name *',
-                    hintText: 'e.g., LED Test',
+                    hintText: 'e.g., Connect to Wi-Fi',
                   ),
                 ),
                 const SizedBox(height: 16),
@@ -853,7 +853,7 @@ class _CapabilityFormScreenState extends ConsumerState<CapabilityFormScreen> {
                   controller: descController,
                   decoration: const InputDecoration(
                     labelText: 'Description',
-                    hintText: 'What this test verifies',
+                    hintText: 'What this command does',
                   ),
                   maxLines: 2,
                 ),
@@ -926,7 +926,7 @@ class _CapabilityFormScreenState extends ConsumerState<CapabilityFormScreen> {
                 return;
               }
 
-              onSave(CapabilityTest(
+              onSave(CapabilityCommand(
                 name: name,
                 displayName: displayName,
                 description: descController.text.trim().isEmpty
@@ -975,6 +975,28 @@ class _CapabilityFormScreenState extends ConsumerState<CapabilityFormScreen> {
     });
 
     try {
+      // Validate command name uniqueness before saving
+      final repository = ref.read(capabilityRepositoryProvider);
+      final conflicts = await repository.findCommandNameConflicts(
+        commandNames: _commands.map((c) => c.name).toList(),
+        excludeCapabilityId: widget.capability?.id,
+      );
+      if (conflicts.isNotEmpty) {
+        if (mounted) {
+          final conflictMessages = conflicts.entries
+              .map((e) => "'${e.key}' is already used by ${e.value}")
+              .join('\n');
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Command name conflicts:\n$conflictMessages'),
+              backgroundColor: SaturdayColors.error,
+              duration: const Duration(seconds: 5),
+            ),
+          );
+        }
+        return; // Don't proceed with save
+      }
+
       final management = ref.read(capabilityManagementProvider);
 
       if (widget.capability != null) {
@@ -990,7 +1012,7 @@ class _CapabilityFormScreenState extends ConsumerState<CapabilityFormScreen> {
           consumerInputSchema: _buildSchema(_consumerInputProperties),
           consumerOutputSchema: _buildSchema(_consumerOutputProperties),
           heartbeatSchema: _buildSchema(_heartbeatProperties),
-          tests: _tests,
+          commands: _commands,
           isActive: _isActive,
         );
 
@@ -1019,7 +1041,7 @@ class _CapabilityFormScreenState extends ConsumerState<CapabilityFormScreen> {
           consumerInputSchema: _buildSchema(_consumerInputProperties),
           consumerOutputSchema: _buildSchema(_consumerOutputProperties),
           heartbeatSchema: _buildSchema(_heartbeatProperties),
-          tests: _tests,
+          commands: _commands,
           isActive: _isActive,
           createdAt: DateTime.now(),
         );

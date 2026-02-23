@@ -1,7 +1,7 @@
 # Saturday Device Command Protocol
 
-**Version:** 1.2.7
-**Last Updated:** 2026-02-18
+**Version:** 1.3.0
+**Last Updated:** 2026-02-20
 **Audience:** Saturday Admin App developers, Firmware engineers, Consumer App developers
 
 ---
@@ -15,7 +15,7 @@
 5. [Command Details](#command-details)
    - [factory_provision](#factory_provision)
    - [get_status](#get_status)
-   - [run_test](#run_test)
+   - [Capability Commands](#capability-commands)
    - [ota_update](#ota_update)
    - [consumer_reset](#consumer_reset)
    - [factory_reset](#factory_reset)
@@ -86,7 +86,7 @@ Commands are delivered using Supabase Realtime Broadcast rather than Postgres Ch
 - **Lower latency** — the database trigger calls `realtime.send()` directly instead of going through WAL parsing and per-client filtering.
 - **No RLS complexity** — broadcast channels authenticate via the API key, avoiding the need for row-level security policies on `device_commands` for each device's anon key.
 - **Clean per-device addressing** — each device subscribes only to its own `device:{mac_address}` topic, rather than a shared table-level channel with server-side row filtering.
-- **Fire-and-forget fits imperative commands** — commands like `reboot` or `run_test` are actions, not data. If the device is offline, the command is likely stale anyway.
+- **Fire-and-forget fits imperative commands** — commands like `reboot` or `scan` are actions, not data. If the device is offline, the command is likely stale anyway.
 - **Catch-up via REST** — the `device_commands` table still holds pending rows, so devices can poll for missed commands with `status = 'pending'` on reconnect if needed.
 
 Note: `device_commands` is also in the `supabase_realtime` publication for Postgres Changes, but that is used by the admin app to monitor command status updates — not for device delivery.
@@ -121,8 +121,6 @@ All messages are JSON objects terminated by a newline character (`\n`) for UART,
 {
   "id": "uuid",
   "cmd": "<command>",
-  "capability": "<capability_name>",
-  "test_name": "<test_name>",
   "params": {...}
 }
 ```
@@ -130,9 +128,7 @@ All messages are JSON objects terminated by a newline character (`\n`) for UART,
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `id` | uuid | Yes | Unique command identifier for tracking |
-| `cmd` | string | Yes | Command name |
-| `capability` | string | Conditional | Capability name (required for capability-specific commands) |
-| `test_name` | string | Conditional | Test name (required for `run_test` command) |
+| `cmd` | string | Yes | Command name (core or capability command) |
 | `params` | object | No | Command parameters |
 
 ### Response Message (Device → Host)
@@ -187,11 +183,24 @@ All devices support these commands regardless of capabilities.
 | `set_provision_data` | Update provision data | Capability-specific fields at top level |
 | `get_provision_data` | Read all stored provision data | None |
 
-### Testing Commands
+### Capability Commands
 
-| Command | Description | Parameters |
-|---------|-------------|------------|
-| `run_test` | Execute a capability test | `capability`, `test_name`, test-specific params |
+Capability-specific commands are flat top-level commands — same dispatch level as core commands. Command names are unique per device type; uniqueness is enforced by the admin app when configuring device type capabilities.
+
+| Command | Capability | Description |
+|---------|-----------|-------------|
+| `connect` | wifi | Connect to Wi-Fi network |
+| `scan` | rfid | Scan for RFID tags in range |
+| `ping` | cloud | Test cloud API connectivity |
+| `get_dataset` | thread | Get Thread operational dataset |
+| `join` | thread | Join Thread network |
+| `register` | thread | Re-register with hub (hub-initiated) |
+| `pattern` | led | Display test LED pattern |
+| `read` | environment | Read temperature/humidity |
+| `detect` | motion | Wait for motion detection |
+| `press` | button | Wait for button press |
+
+> **Deprecated:** `run_test` with `capability` and `test_name` fields is still accepted as a legacy alias. Firmware extracts `test_name` and re-dispatches it as a flat command. New integrations should use the flat command names directly.
 
 ### OTA Commands
 
@@ -345,22 +354,36 @@ Returns current device status including firmware version, connectivity state, an
 | `capabilities` | object | Capability-specific status (varies by device) |
 ```
 
-### run_test
+### Capability Commands
 
-Executes a test defined by a capability. Test definitions come from the admin app's capability configuration.
+Capability commands are dispatched as flat top-level `cmd` values — the same as core commands like `reboot` or `get_status`. There is no wrapping meta-command. Each capability defines its commands in the admin app's capability schema (see [Capability Schema](../schemas/capability_schema.md)).
 
-**Request:**
+**Example: Wi-Fi connect**
 ```json
 {
   "id": "uuid",
-  "cmd": "run_test",
-  "capability": "wifi",
-  "test_name": "connect",
+  "cmd": "connect",
   "params": {
     "ssid": "TestNetwork",
     "password": "TestPass123",
     "timeout_ms": 30000
   }
+}
+```
+
+**Example: Thread dataset query**
+```json
+{
+  "id": "uuid",
+  "cmd": "get_dataset"
+}
+```
+
+**Example: Hub-initiated re-registration (thread capability)**
+```json
+{
+  "id": "uuid",
+  "cmd": "register"
 }
 ```
 
@@ -392,6 +415,22 @@ Executes a test defined by a capability. Test definitions come from the admin ap
   }
 }
 ```
+
+**Deprecated `run_test` Alias:**
+
+The legacy `run_test` format is still accepted for backwards compatibility. Firmware extracts `test_name` and re-dispatches as a flat command:
+
+```json
+{
+  "id": "uuid",
+  "cmd": "run_test",
+  "capability": "wifi",
+  "test_name": "connect",
+  "params": { "ssid": "TestNetwork" }
+}
+```
+
+This is equivalent to `{"cmd": "connect", "params": {"ssid": "TestNetwork"}}`. New integrations should use flat commands directly.
 
 ### ota_update
 
@@ -791,7 +830,7 @@ Commands reference capabilities by name. Each capability defines schemas that se
 | `consumer_input` | TO device | Consumer | Data sent during consumer provisioning (BLE) |
 | `consumer_output` | FROM device | Consumer | Data returned after consumer provisioning |
 | `heartbeat` | FROM device | Runtime | Telemetry data in periodic heartbeats |
-| `tests` | Bidirectional | Any | Test commands with parameter/result schemas |
+| `commands` | Bidirectional | Any | Capability commands with parameter/result schemas |
 
 **Data Persistence (Device NVS):**
 - **Factory data** persists through consumer reset (stored with `source: "factory"` in NVS)
@@ -895,7 +934,7 @@ When building firmware for a Saturday device, developers receive a **Firmware JS
           "rssi": { "type": "integer" }
         }
       },
-      "tests": {
+      "commands": {
         "connect": {
           "params": {
             "type": "object",
@@ -956,7 +995,7 @@ Each capability can include any combination of these schemas (all are optional):
 | `consumer_input` | JSON Schema for data received during consumer provisioning (BLE) |
 | `consumer_output` | JSON Schema for data returned after consumer provisioning |
 | `heartbeat` | JSON Schema for telemetry data in periodic heartbeats |
-| `tests` | Object mapping test name → { params, result } schemas |
+| `commands` | Object mapping command name → { params, result } schemas |
 
 ### Obtaining the Schema
 
@@ -1127,15 +1166,20 @@ typedef struct {
 } command_entry_t;
 
 static const command_entry_t commands[] = {
+    /* Core commands */
     {"get_status", handle_get_status},
     {"factory_provision", handle_factory_provision},
     {"set_provision_data", handle_set_provision_data},
     {"get_provision_data", handle_get_provision_data},
-    {"run_test", handle_run_test},
     {"consumer_reset", handle_consumer_reset},
     {"factory_reset", handle_factory_reset},
     {"ota_update", handle_ota_update},
     {"reboot", handle_reboot},
+    /* Capability commands (flat dispatch) */
+    {"connect", handle_wifi_connect},
+    {"ping", handle_cloud_ping},
+    {"scan", handle_rfid_scan},
+    {"get_dataset", handle_thread_get_dataset},
     {NULL, NULL}
 };
 
@@ -1353,7 +1397,7 @@ static void heartbeat_task(void *arg) {
 
 4. **BLE characteristics**: Map directly from `consumer_input` schema fields. Each property becomes a characteristic.
 
-5. **Tests are capability-scoped**: Use the `capability` and `test_name` fields to route to the correct handler.
+5. **Capability commands are flat**: Each capability command is a top-level `cmd` value dispatched the same way as core commands. No wrapping `run_test` meta-command needed.
 
 6. **Heartbeat fields are prefixed**: Use capability prefixes (e.g., `wifi_rssi`, `cloud_connected`) to avoid conflicts.
 
@@ -1454,9 +1498,7 @@ Returns the full Thread operational dataset from the device, enabling field-by-f
 ```json
 {
   "id": "uuid",
-  "cmd": "run_test",
-  "capability": "thread",
-  "test_name": "get_dataset"
+  "cmd": "get_dataset"
 }
 ```
 
@@ -1521,7 +1563,7 @@ All of the following fields must match **exactly** between the Border Router and
 | `not_provisioned` | Device not factory-provisioned |
 | `already_provisioned` | Cannot re-provision without factory reset |
 | `capability_not_found` | Referenced capability not supported |
-| `test_not_found` | Referenced test not defined |
+| `command_not_found` | Referenced capability command not defined |
 | `timeout` | Operation timed out |
 | `busy` | Device busy with another operation |
 | `internal_error` | Unexpected device error |
@@ -1539,7 +1581,7 @@ All of the following fields must match **exactly** between the Border Router and
 | `exit_service_mode` command | Not needed |
 | `provision` command | `factory_provision` command |
 | `get_manifest` command | `get_capabilities` command |
-| `test_wifi`, `test_cloud`, etc. | `run_test` with capability/test_name |
+| `test_wifi`, `test_cloud`, etc. | Flat capability commands: `connect`, `ping`, `scan`, etc. |
 | `unit_id` field | `serial_number` field |
 | UART only | UART + Supabase Realtime |
 
@@ -1549,7 +1591,7 @@ All of the following fields must match **exactly** between the Border Router and
 2. Replace `enter_service_mode`/`exit_service_mode` handlers with always-on listening
 3. Update provisioning to use `factory_provision` command format
 4. Implement `get_capabilities` to return capability manifest
-5. Implement `run_test` dispatcher with capability/test_name routing
+5. Implement flat capability command dispatch (e.g., `connect`, `scan`, `get_dataset`)
 6. Add Supabase Realtime client for remote command reception
 7. Implement heartbeat reporting to `device_heartbeats` table
 
@@ -1580,6 +1622,7 @@ Key components:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.3.0 | 2026-02-20 | Replaced `run_test` meta-command with flat capability commands (`connect`, `scan`, `get_dataset`, `register`, etc.); renamed `tests` → `commands` in schema references; `run_test` kept as deprecated alias; added `register` command for hub-initiated re-registration |
 | 1.2.7 | 2026-02-18 | Added Thread Network Diagnostics section with `get_dataset` test command and troubleshooting workflow for debugging Thread join failures |
 | 1.2.6 | 2026-02-06 | Clarified that `provision_data` stores only device response data (`_output` schemas), not input params; added validation requirement - provisioning must fail if required `factory_output` fields are missing |
 | 1.2.5 | 2026-02-04 | Added Cloud Provision Data section documenting `devices.provision_data` JSONB column |

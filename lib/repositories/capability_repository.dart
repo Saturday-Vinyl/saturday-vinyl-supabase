@@ -465,33 +465,33 @@ class CapabilityRepository {
     }
   }
 
-  /// Get all tests available for a device type (by ID)
-  Future<List<CapabilityTest>> getTestsForDeviceType(
+  /// Get all commands available for a device type (by ID)
+  Future<List<CapabilityCommand>> getCommandsForDeviceType(
       String deviceTypeId) async {
     try {
-      AppLogger.info('Getting tests for device type: $deviceTypeId');
+      AppLogger.info('Getting commands for device type: $deviceTypeId');
 
       final capabilities = await getCapabilitiesForDeviceType(deviceTypeId);
 
-      final allTests = <CapabilityTest>[];
+      final allCommands = <CapabilityCommand>[];
       for (final cap in capabilities) {
-        allTests.addAll(cap.tests.map((t) => t.copyWithCapability(cap.name)));
+        allCommands.addAll(cap.commands.map((t) => t.copyWithCapability(cap.name)));
       }
 
-      AppLogger.info('Found ${allTests.length} tests for device type');
-      return allTests;
+      AppLogger.info('Found ${allCommands.length} commands for device type');
+      return allCommands;
     } catch (error, stackTrace) {
       AppLogger.error(
-          'Failed to get tests for device type', error, stackTrace);
+          'Failed to get commands for device type', error, stackTrace);
       rethrow;
     }
   }
 
-  /// Get all tests available for a device type (by slug)
-  Future<List<CapabilityTest>> getTestsForDeviceTypeBySlug(
+  /// Get all commands available for a device type (by slug)
+  Future<List<CapabilityCommand>> getCommandsForDeviceTypeBySlug(
       String deviceTypeSlug) async {
     try {
-      AppLogger.info('Getting tests for device type by slug: $deviceTypeSlug');
+      AppLogger.info('Getting commands for device type by slug: $deviceTypeSlug');
 
       // First get the device type ID from slug
       final deviceTypeResponse = await _supabase
@@ -506,11 +506,55 @@ class CapabilityRepository {
       }
 
       final deviceTypeId = deviceTypeResponse['id'] as String;
-      return getTestsForDeviceType(deviceTypeId);
+      return getCommandsForDeviceType(deviceTypeId);
     } catch (error, stackTrace) {
       AppLogger.error(
-          'Failed to get tests for device type by slug', error, stackTrace);
+          'Failed to get commands for device type by slug', error, stackTrace);
       rethrow;
     }
+  }
+
+  /// Reserved global command names that capability commands must not collide with
+  static const _reservedGlobalCommands = {
+    'get_status',
+    'get_capabilities',
+    'factory_provision',
+    'set_provision_data',
+    'get_provision_data',
+    'reboot',
+    'consumer_reset',
+    'factory_reset',
+    'ota_update',
+  };
+
+  /// Find command name conflicts across all capabilities and global commands.
+  ///
+  /// Returns a map of conflicting command name → owning entity description
+  /// (e.g., "capability 'wifi'" or "global command").
+  Future<Map<String, String>> findCommandNameConflicts({
+    required List<String> commandNames,
+    String? excludeCapabilityId,
+  }) async {
+    final conflicts = <String, String>{};
+
+    // Check against reserved global commands
+    for (final name in commandNames) {
+      if (_reservedGlobalCommands.contains(name)) {
+        conflicts[name] = 'global command';
+      }
+    }
+
+    // Check against all other capabilities' commands
+    final allCapabilities = await getAllCapabilities();
+    for (final cap in allCapabilities) {
+      if (cap.id == excludeCapabilityId) continue;
+      for (final cmd in cap.commands) {
+        if (commandNames.contains(cmd.name)) {
+          conflicts[cmd.name] = "capability '${cap.name}'";
+        }
+      }
+    }
+
+    return conflicts;
   }
 }

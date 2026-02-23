@@ -22,8 +22,6 @@ class DeviceCommandRepository {
   Future<DeviceCommand> sendCommand({
     required String macAddress,
     required String command,
-    String? capability,
-    String? testName,
     Map<String, dynamic>? parameters,
     int priority = 0,
     Duration? expiresIn,
@@ -39,8 +37,6 @@ class DeviceCommandRepository {
         'id': commandId,
         'mac_address': macAddress,
         'command': command,
-        if (capability != null) 'capability': capability,
-        if (testName != null) 'test_name': testName,
         'parameters': parameters ?? {},
         'priority': priority,
         'status': 'pending',
@@ -103,19 +99,19 @@ class DeviceCommandRepository {
     );
   }
 
-  /// Send run_test command
-  Future<DeviceCommand> sendRunTest({
+  /// Send a capability command (flat dispatch)
+  ///
+  /// Capability commands are dispatched as flat top-level commands.
+  /// See Device Command Protocol v1.3.0.
+  Future<DeviceCommand> sendCapabilityCommand({
     required String macAddress,
-    required String capability,
-    required String testName,
+    required String command,
     Map<String, dynamic>? parameters,
     String? createdBy,
   }) {
     return sendCommand(
       macAddress: macAddress,
-      command: 'run_test',
-      capability: capability,
-      testName: testName,
+      command: command,
       parameters: parameters,
       createdBy: createdBy,
     );

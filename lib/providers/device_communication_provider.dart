@@ -537,16 +537,14 @@ class DeviceCommunicationNotifier
     }
   }
 
-  /// Run a capability test
-  Future<TestResult> runTest(
-    String capability,
-    String testName, {
+  /// Run a capability command
+  Future<CommandResult> runCommand(
+    String commandName, {
     Map<String, dynamic>? params,
   }) async {
     if (!state.phase.canSendCommands) {
-      return TestResult(
-        capability: capability,
-        testName: testName,
+      return CommandResult(
+        commandName: commandName,
         passed: false,
         message: 'Not connected',
         duration: Duration.zero,
@@ -555,21 +553,21 @@ class DeviceCommunicationNotifier
 
     state = state.copyWith(
       phase: DeviceCommunicationPhase.executing,
-      currentCommand: 'run_test:$capability:$testName',
+      currentCommand: commandName,
     );
 
     final startTime = DateTime.now();
-    final response = await _service.runTest(capability, testName, params: params);
+    final response = await _service.runCapabilityCommand(commandName, params: params);
     final duration = DateTime.now().difference(startTime);
 
-    final result = TestResult.fromResponse(capability, testName, response, duration);
+    final result = CommandResult.fromResponse(commandName, response, duration);
 
     state = state
         .copyWith(
           phase: DeviceCommunicationPhase.connected,
           clearCurrentCommand: true,
         )
-        .addTestResult(result);
+        .addCommandResult(result);
 
     return result;
   }

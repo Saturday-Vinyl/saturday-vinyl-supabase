@@ -190,7 +190,7 @@ class _FirmwareFormScreenState extends ConsumerState<FirmwareFormScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              'Upload binary files for each SoC. The master file is pushed via OTA.',
+              'Upload binary files for each SoC. Files can be added later from the firmware detail screen.',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: SaturdayColors.secondaryGrey,
                   ),
@@ -386,17 +386,8 @@ class _FirmwareFormScreenState extends ConsumerState<FirmwareFormScreen> {
       return;
     }
 
-    // Validate at least one file
-    final hasFiles = _selectedFiles.isNotEmpty || _existingFiles.isNotEmpty;
-    if (!hasFiles && !isEditing) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please upload at least one firmware file'),
-          backgroundColor: SaturdayColors.error,
-        ),
-      );
-      return;
-    }
+    // Note: files are optional at creation time. The firmware record can be
+    // saved first so the JSON schema can be generated and included in the binary.
 
     setState(() {
       _isSaving = true;

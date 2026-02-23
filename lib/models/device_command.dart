@@ -59,13 +59,14 @@ class DeviceCommand extends Equatable {
   /// Target device MAC address
   final String macAddress;
 
-  /// Command type (e.g., get_status, run_test, reboot)
+  /// Command name (e.g., get_status, connect, reboot).
+  /// For capability commands, this is the flat command name.
   final String command;
 
-  /// Optional capability this command relates to
+  /// Legacy: capability this command relates to (kept for reading old DB rows)
   final String? capability;
 
-  /// Optional test name for run_test commands
+  /// Legacy: test name for old run_test commands (kept for reading old DB rows)
   final String? testName;
 
   /// Command parameters
@@ -127,10 +128,9 @@ class DeviceCommand extends Equatable {
 
   /// Get display name for the command
   String get displayName {
-    if (command == 'run_test' && testName != null) {
-      return 'Test: $testName';
-    }
-    return command.replaceAll('_', ' ');
+    final formatted = command.replaceAll('_', ' ');
+    if (formatted.isEmpty) return formatted;
+    return formatted[0].toUpperCase() + formatted.substring(1);
   }
 
   /// Create from JSON
@@ -181,13 +181,12 @@ class DeviceCommand extends Equatable {
     };
   }
 
-  /// Convert to JSON for insertion (without id, timestamps, result fields)
+  /// Convert to JSON for insertion (without id, timestamps, result fields).
+  /// New commands use flat command names — capability/test_name are not included.
   Map<String, dynamic> toInsertJson() {
     return {
       'mac_address': macAddress,
       'command': command,
-      if (capability != null) 'capability': capability,
-      if (testName != null) 'test_name': testName,
       'parameters': parameters,
       'priority': priority,
       if (expiresAt != null) 'expires_at': expiresAt!.toIso8601String(),

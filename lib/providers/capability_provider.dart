@@ -75,18 +75,18 @@ final heartbeatSchemaForDeviceTypeProvider =
   return repository.getHeartbeatSchemaForDeviceType(deviceTypeId);
 });
 
-/// Provider for tests available for a device type (by ID)
-final testsForDeviceTypeProvider =
-    FutureProvider.family<List<CapabilityTest>, String>((ref, deviceTypeId) async {
+/// Provider for commands available for a device type (by ID)
+final commandsForDeviceTypeProvider =
+    FutureProvider.family<List<CapabilityCommand>, String>((ref, deviceTypeId) async {
   final repository = ref.watch(capabilityRepositoryProvider);
-  return repository.getTestsForDeviceType(deviceTypeId);
+  return repository.getCommandsForDeviceType(deviceTypeId);
 });
 
-/// Provider for tests available for a device type (by slug)
-final testsForDeviceTypeSlugProvider =
-    FutureProvider.family<List<CapabilityTest>, String>((ref, deviceTypeSlug) async {
+/// Provider for commands available for a device type (by slug)
+final commandsForDeviceTypeSlugProvider =
+    FutureProvider.family<List<CapabilityCommand>, String>((ref, deviceTypeSlug) async {
   final repository = ref.watch(capabilityRepositoryProvider);
-  return repository.getTestsForDeviceTypeBySlug(deviceTypeSlug);
+  return repository.getCommandsForDeviceTypeBySlug(deviceTypeSlug);
 });
 
 /// Provider for capability management actions
@@ -122,8 +122,8 @@ class CapabilityManagement {
     ref.invalidate(activeCapabilitiesProvider);
     // Invalidate device-type-derived providers since capability content changed
     ref.invalidate(capabilitiesForDeviceTypeProvider);
-    ref.invalidate(testsForDeviceTypeProvider);
-    ref.invalidate(testsForDeviceTypeSlugProvider);
+    ref.invalidate(commandsForDeviceTypeProvider);
+    ref.invalidate(commandsForDeviceTypeSlugProvider);
     ref.invalidate(factoryInputSchemaForDeviceTypeProvider);
     ref.invalidate(factoryOutputSchemaForDeviceTypeProvider);
     ref.invalidate(consumerInputSchemaForDeviceTypeProvider);
@@ -174,7 +174,7 @@ class CapabilityManagement {
     ref.invalidate(consumerInputSchemaForDeviceTypeProvider(deviceTypeId));
     ref.invalidate(consumerOutputSchemaForDeviceTypeProvider(deviceTypeId));
     ref.invalidate(heartbeatSchemaForDeviceTypeProvider(deviceTypeId));
-    ref.invalidate(testsForDeviceTypeProvider(deviceTypeId));
+    ref.invalidate(commandsForDeviceTypeProvider(deviceTypeId));
   }
 
   /// Remove capability from device type
@@ -194,7 +194,7 @@ class CapabilityManagement {
     ref.invalidate(consumerInputSchemaForDeviceTypeProvider(deviceTypeId));
     ref.invalidate(consumerOutputSchemaForDeviceTypeProvider(deviceTypeId));
     ref.invalidate(heartbeatSchemaForDeviceTypeProvider(deviceTypeId));
-    ref.invalidate(testsForDeviceTypeProvider(deviceTypeId));
+    ref.invalidate(commandsForDeviceTypeProvider(deviceTypeId));
   }
 
   /// Set all capabilities for a device type (replace existing)
@@ -214,7 +214,7 @@ class CapabilityManagement {
     ref.invalidate(consumerInputSchemaForDeviceTypeProvider(deviceTypeId));
     ref.invalidate(consumerOutputSchemaForDeviceTypeProvider(deviceTypeId));
     ref.invalidate(heartbeatSchemaForDeviceTypeProvider(deviceTypeId));
-    ref.invalidate(testsForDeviceTypeProvider(deviceTypeId));
+    ref.invalidate(commandsForDeviceTypeProvider(deviceTypeId));
   }
 
   /// Delete a capability

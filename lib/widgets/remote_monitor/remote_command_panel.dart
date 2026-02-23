@@ -122,10 +122,10 @@ class RemoteCommandPanel extends ConsumerWidget {
           ],
         ),
 
-        // Device-specific tests (if device type has tests)
+        // Device-specific commands (if device type has commands)
         if (primaryDevice?.deviceTypeSlug != null) ...[
           const SizedBox(height: 16),
-          _DeviceTestsSection(
+          _DeviceCommandsSection(
             unitId: unitId,
             device: primaryDevice!,
           ),
@@ -192,38 +192,30 @@ class RemoteCommandPanel extends ConsumerWidget {
   }
 }
 
-/// Section showing capability tests for a device
-class _DeviceTestsSection extends ConsumerWidget {
+/// Section showing capability commands for a device
+class _DeviceCommandsSection extends ConsumerWidget {
   final String unitId;
   final Device device;
 
-  const _DeviceTestsSection({
+  const _DeviceCommandsSection({
     required this.unitId,
     required this.device,
   });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final testsAsync =
-        ref.watch(testsForDeviceTypeSlugProvider(device.deviceTypeSlug!));
+    final commandsAsync =
+        ref.watch(commandsForDeviceTypeSlugProvider(device.deviceTypeSlug!));
 
-    return testsAsync.when(
-      data: (tests) {
-        if (tests.isEmpty) return const SizedBox.shrink();
-
-        // Group tests by capability
-        final testsByCapability = <String, List<CapabilityTest>>{};
-        for (final test in tests) {
-          // The test comes from a capability, need to find which one
-          // For now, show all tests in one group
-          testsByCapability.putIfAbsent('Tests', () => []).add(test);
-        }
+    return commandsAsync.when(
+      data: (commands) {
+        if (commands.isEmpty) return const SizedBox.shrink();
 
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Device Tests',
+              'Device Commands',
               style: Theme.of(context).textTheme.titleSmall?.copyWith(
                     fontWeight: FontWeight.bold,
                   ),
@@ -232,11 +224,11 @@ class _DeviceTestsSection extends ConsumerWidget {
             Wrap(
               spacing: 8,
               runSpacing: 8,
-              children: tests.map((test) {
+              children: commands.map((command) {
                 return _CommandButton(
-                  label: test.displayName,
-                  icon: Icons.science,
-                  onPressed: () => _runTest(ref, test),
+                  label: command.displayName,
+                  icon: Icons.terminal,
+                  onPressed: () => _runCommand(ref, command),
                 );
               }).toList(),
             ),
@@ -248,12 +240,10 @@ class _DeviceTestsSection extends ConsumerWidget {
     );
   }
 
-  void _runTest(WidgetRef ref, CapabilityTest test) {
-    // TODO: For tests with parameters, show a dialog to collect them
-    ref.read(remoteMonitorProvider(unitId).notifier).sendRunTest(
+  void _runCommand(WidgetRef ref, CapabilityCommand command) {
+    ref.read(remoteMonitorProvider(unitId).notifier).sendCapabilityCommand(
           macAddress: device.macAddress,
-          capability: test.capabilityName ?? '',
-          testName: test.name,
+          commandName: command.name,
         );
   }
 }

@@ -296,6 +296,8 @@ class DeviceTypeDetailScreen extends ConsumerWidget {
                             .protocolOverhead,
                     maxBytes: CborSizeEstimator.maxSingleFrameBytes,
                   ),
+                  const SizedBox(height: 12),
+                  _HeartbeatPayloadPreview(capabilities: capabilities),
                 ],
               ],
             );
@@ -651,16 +653,16 @@ class DeviceTypeDetailScreen extends ConsumerWidget {
                 Text(capability.description!),
               ],
               const SizedBox(height: 24),
-              if (capability.tests.isNotEmpty) ...[
+              if (capability.commands.isNotEmpty) ...[
                 Text(
-                  'Tests (${capability.tests.length})',
+                  'Commands (${capability.commands.length})',
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
                 const SizedBox(height: 8),
-                ...capability.tests.map((test) => Card(
+                ...capability.commands.map((test) => Card(
                       child: ListTile(
                         leading:
-                            Icon(Icons.science, color: SaturdayColors.info),
+                            Icon(Icons.terminal, color: SaturdayColors.info),
                         title: Text(test.displayName),
                         subtitle: test.description != null
                             ? Text(test.description!)
@@ -911,7 +913,7 @@ class DeviceTypeDetailScreen extends ConsumerWidget {
   ///     "wifi": {
   ///       "factory_input": { ... },
   ///       "consumer_input": { ... },
-  ///       "tests": { "connect": { "params": {...}, "result": {...} } }
+  ///       "commands": { "connect": { "params": {...}, "result": {...} } }
   ///     }
   ///   }
   /// }
@@ -937,20 +939,20 @@ class DeviceTypeDetailScreen extends ConsumerWidget {
       if (cap.heartbeatSchema.isNotEmpty) {
         capData['heartbeat'] = cap.heartbeatSchema;
       }
-      if (cap.tests.isNotEmpty) {
-        // Tests as object keyed by name (more compact, direct access)
-        final testsMap = <String, dynamic>{};
-        for (final t in cap.tests) {
-          final testData = <String, dynamic>{};
+      if (cap.commands.isNotEmpty) {
+        // Commands as object keyed by name (more compact, direct access)
+        final commandsMap = <String, dynamic>{};
+        for (final t in cap.commands) {
+          final commandData = <String, dynamic>{};
           if (t.parametersSchema.isNotEmpty) {
-            testData['params'] = t.parametersSchema;
+            commandData['params'] = t.parametersSchema;
           }
           if (t.resultSchema.isNotEmpty) {
-            testData['result'] = t.resultSchema;
+            commandData['result'] = t.resultSchema;
           }
-          testsMap[t.name] = testData;
+          commandsMap[t.name] = commandData;
         }
-        capData['tests'] = testsMap;
+        capData['commands'] = commandsMap;
       }
 
       if (capData.isNotEmpty) {
@@ -1179,4 +1181,233 @@ class _InfoRow extends StatelessWidget {
 
     return content;
   }
+}
+
+/// Shows the expected heartbeat payload structure with global and
+/// capability-specific attributes grouped by source.
+class _HeartbeatPayloadPreview extends StatefulWidget {
+  final List<Capability> capabilities;
+
+  const _HeartbeatPayloadPreview({required this.capabilities});
+
+  @override
+  State<_HeartbeatPayloadPreview> createState() =>
+      _HeartbeatPayloadPreviewState();
+}
+
+class _HeartbeatPayloadPreviewState extends State<_HeartbeatPayloadPreview> {
+  bool _expanded = false;
+
+  /// Standard fields sent by all devices regardless of capabilities.
+  static const _globalFields = [
+    _HeartbeatField('mac_address', 'string', 'Primary MAC address'),
+    _HeartbeatField('unit_id', 'string', 'Serial number of the unit'),
+    _HeartbeatField('device_type', 'string', 'Device type slug'),
+    _HeartbeatField('firmware_version', 'string', 'Current firmware version'),
+    _HeartbeatField('uptime_sec', 'integer', 'Seconds since boot'),
+    _HeartbeatField('free_heap', 'integer', 'Free heap memory (bytes)'),
+    _HeartbeatField('min_free_heap', 'integer', 'Min free heap since boot'),
+    _HeartbeatField(
+        'largest_free_block', 'integer', 'Largest contiguous free block'),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    // Collect capability fields grouped by capability
+    final capabilityGroups = <MapEntry<String, List<_HeartbeatField>>>[];
+    for (final cap in widget.capabilities) {
+      final fields = _parseSchemaFields(cap.heartbeatSchema);
+      if (fields.isNotEmpty) {
+        capabilityGroups.add(MapEntry(cap.displayName, fields));
+      }
+    }
+
+    return Container(
+      decoration: BoxDecoration(
+        color: SaturdayColors.secondaryGrey.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: SaturdayColors.secondaryGrey.withValues(alpha: 0.2),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header (always visible, acts as toggle)
+          InkWell(
+            onTap: () => setState(() => _expanded = !_expanded),
+            borderRadius: BorderRadius.circular(8),
+            child: Padding(
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.data_object,
+                    size: 16,
+                    color: SaturdayColors.info,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Heartbeat Payload',
+                    style: theme.textTheme.labelMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    '${_globalFields.length + capabilityGroups.fold<int>(0, (s, g) => s + g.value.length)} fields',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: SaturdayColors.secondaryGrey,
+                    ),
+                  ),
+                  const Spacer(),
+                  Icon(
+                    _expanded ? Icons.expand_less : Icons.expand_more,
+                    size: 20,
+                    color: SaturdayColors.secondaryGrey,
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          if (_expanded) ...[
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Global fields group
+                  _buildGroupHeader(context, 'Global', 'All devices'),
+                  const SizedBox(height: 4),
+                  ..._globalFields.map((f) => _buildFieldRow(context, f)),
+
+                  // Capability groups
+                  for (final group in capabilityGroups) ...[
+                    const SizedBox(height: 12),
+                    _buildGroupHeader(context, group.key, 'capability'),
+                    const SizedBox(height: 4),
+                    ...group.value.map((f) => _buildFieldRow(context, f)),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGroupHeader(
+      BuildContext context, String name, String subtitle) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 2),
+      child: Row(
+        children: [
+          Text(
+            name,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  fontWeight: FontWeight.w600,
+                  color: SaturdayColors.info,
+                ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            subtitle,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: SaturdayColors.secondaryGrey,
+                  fontStyle: FontStyle.italic,
+                ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFieldRow(BuildContext context, _HeartbeatField field) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        children: [
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 14,
+            child: Text(
+              _typeIcon(field.type),
+              style: theme.textTheme.bodySmall,
+            ),
+          ),
+          const SizedBox(width: 4),
+          Expanded(
+            flex: 3,
+            child: Text(
+              field.name,
+              style: theme.textTheme.bodySmall?.copyWith(
+                fontFamily: 'monospace',
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+          Expanded(
+            flex: 1,
+            child: Text(
+              field.type,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: SaturdayColors.secondaryGrey,
+              ),
+            ),
+          ),
+          Expanded(
+            flex: 3,
+            child: Text(
+              field.description,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: SaturdayColors.secondaryGrey,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _typeIcon(String type) {
+    switch (type) {
+      case 'integer':
+      case 'number':
+        return '#';
+      case 'boolean':
+        return '?';
+      case 'string':
+        return 'T';
+      default:
+        return '\u00b7';
+    }
+  }
+
+  List<_HeartbeatField> _parseSchemaFields(Map<String, dynamic> schema) {
+    if (schema.isEmpty) return [];
+    final properties = schema['properties'] as Map<String, dynamic>?;
+    if (properties == null) return [];
+
+    return properties.entries.map((entry) {
+      final fieldSchema = entry.value as Map<String, dynamic>;
+      final type = fieldSchema['type']?.toString() ?? 'string';
+      final description = fieldSchema['description']?.toString() ?? '';
+      return _HeartbeatField(entry.key, type, description);
+    }).toList();
+  }
+}
+
+class _HeartbeatField {
+  final String name;
+  final String type;
+  final String description;
+
+  const _HeartbeatField(this.name, this.type, this.description);
 }

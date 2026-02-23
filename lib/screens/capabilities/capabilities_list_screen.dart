@@ -280,10 +280,10 @@ class _CapabilityCard extends StatelessWidget {
                     '${_countSchemaFields(capability.consumerInputSchema)} consumer fields',
                   ),
                   const SizedBox(width: 8),
-                  if (capability.tests.isNotEmpty)
+                  if (capability.commands.isNotEmpty)
                     _buildInfoChip(
-                      Icons.science,
-                      '${capability.tests.length} tests',
+                      Icons.terminal,
+                      '${capability.commands.length} commands',
                     ),
                 ],
               ),
@@ -441,24 +441,24 @@ class _CapabilityDetailSheet extends StatelessWidget {
                 'Telemetry data from device heartbeats',
                 capability.heartbeatSchema,
               ),
-              if (capability.tests.isNotEmpty) ...[
+              if (capability.commands.isNotEmpty) ...[
                 const SizedBox(height: 24),
                 Text(
-                  'Tests',
+                  'Commands',
                   style: Theme.of(context).textTheme.titleMedium?.copyWith(
                         fontWeight: FontWeight.bold,
                       ),
                 ),
                 const SizedBox(height: 8),
-                ...capability.tests.map((test) => Card(
+                ...capability.commands.map((command) => Card(
                       margin: const EdgeInsets.only(bottom: 8),
                       child: ListTile(
                         leading: const Icon(
-                          Icons.science,
+                          Icons.terminal,
                           color: SaturdayColors.info,
                         ),
-                        title: Text(test.displayName),
-                        subtitle: Text(test.description ?? test.name),
+                        title: Text(command.displayName),
+                        subtitle: Text(command.description ?? command.name),
                       ),
                     )),
               ],

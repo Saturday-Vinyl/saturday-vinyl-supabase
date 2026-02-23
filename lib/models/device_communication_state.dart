@@ -52,19 +52,17 @@ extension DeviceCommunicationPhaseExtension on DeviceCommunicationPhase {
   }
 }
 
-/// Test result for capability tests
-class TestResult {
-  final String capability;
-  final String testName;
+/// Result of a capability command execution
+class CommandResult {
+  final String commandName;
   final bool passed;
   final String? message;
   final Map<String, dynamic> data;
   final Duration duration;
   final DateTime timestamp;
 
-  TestResult({
-    required this.capability,
-    required this.testName,
+  CommandResult({
+    required this.commandName,
     required this.passed,
     this.message,
     this.data = const {},
@@ -72,15 +70,13 @@ class TestResult {
     DateTime? timestamp,
   }) : timestamp = timestamp ?? DateTime.now();
 
-  factory TestResult.fromResponse(
-    String capability,
-    String testName,
+  factory CommandResult.fromResponse(
+    String commandName,
     CommandResponse response,
     Duration duration,
   ) {
-    return TestResult(
-      capability: capability,
-      testName: testName,
+    return CommandResult(
+      commandName: commandName,
       passed: response.isSuccess,
       message: response.message,
       data: response.data,
@@ -88,7 +84,7 @@ class TestResult {
     );
   }
 
-  String get displayKey => '$capability:$testName';
+  String get displayKey => commandName;
 }
 
 /// State for device communication session
@@ -108,8 +104,8 @@ class DeviceCommunicationState extends Equatable {
   /// Current command being executed
   final String? currentCommand;
 
-  /// Test results keyed by "capability:testName"
-  final Map<String, TestResult> testResults;
+  /// Command results keyed by command name
+  final Map<String, CommandResult> commandResults;
 
   /// Log lines from communication
   final List<String> logLines;
@@ -129,7 +125,7 @@ class DeviceCommunicationState extends Equatable {
     this.connectedDevice,
     this.associatedUnit,
     this.currentCommand,
-    this.testResults = const {},
+    this.commandResults = const {},
     this.logLines = const [],
     this.errorMessage,
     this.lastStatusAt,
@@ -159,7 +155,7 @@ class DeviceCommunicationState extends Equatable {
     ConnectedDevice? connectedDevice,
     Unit? associatedUnit,
     String? currentCommand,
-    Map<String, TestResult>? testResults,
+    Map<String, CommandResult>? commandResults,
     List<String>? logLines,
     String? errorMessage,
     DateTime? lastStatusAt,
@@ -180,7 +176,7 @@ class DeviceCommunicationState extends Equatable {
           clearAssociatedUnit ? null : (associatedUnit ?? this.associatedUnit),
       currentCommand:
           clearCurrentCommand ? null : (currentCommand ?? this.currentCommand),
-      testResults: testResults ?? this.testResults,
+      commandResults: commandResults ?? this.commandResults,
       logLines: logLines ?? this.logLines,
       errorMessage:
           clearErrorMessage ? null : (errorMessage ?? this.errorMessage),
@@ -199,10 +195,10 @@ class DeviceCommunicationState extends Equatable {
     return copyWith(logLines: []);
   }
 
-  /// Add a test result
-  DeviceCommunicationState addTestResult(TestResult result) {
+  /// Add a command result
+  DeviceCommunicationState addCommandResult(CommandResult result) {
     return copyWith(
-      testResults: {...testResults, result.displayKey: result},
+      commandResults: {...commandResults, result.displayKey: result},
     );
   }
 
@@ -213,7 +209,7 @@ class DeviceCommunicationState extends Equatable {
         connectedDevice,
         associatedUnit,
         currentCommand,
-        testResults,
+        commandResults,
         logLines,
         errorMessage,
         lastStatusAt,

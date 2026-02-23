@@ -17,7 +17,7 @@ import 'package:saturday_app/providers/firmware_provider.dart';
 /// - Global commands (reboot, factory reset, consumer reset)
 /// - OTA update (if firmware version mismatch)
 /// - Device-specific variables (factory_input from capabilities)
-/// - Device-specific tests (tests from capabilities)
+/// - Device-specific commands (commands from capabilities)
 class DeviceCommandPanel extends ConsumerStatefulWidget {
   final ConnectedDevice device;
   final DeviceCommunicationState state;
@@ -36,7 +36,7 @@ enum _FirmwareChannel { production, development }
 
 class _DeviceCommandPanelState extends ConsumerState<DeviceCommandPanel> {
   bool _isExecuting = false;
-  String? _lastTestResult;
+  String? _lastCommandResult;
   _FirmwareChannel _selectedChannel = _FirmwareChannel.production;
 
   @override
@@ -423,13 +423,13 @@ class _DeviceCommandPanelState extends ConsumerState<DeviceCommandPanel> {
           return const SizedBox.shrink();
         }
 
-        final testsSection = _buildTestsSection(capabilities);
+        final commandsSection = _buildCommandsSection(capabilities);
         final variablesSection = _buildVariablesSection(capabilities);
 
         return Column(
           children: [
-            if (testsSection != null) ...[
-              testsSection,
+            if (commandsSection != null) ...[
+              commandsSection,
               const SizedBox(height: 16),
             ],
             if (variablesSection != null) variablesSection,
@@ -441,26 +441,26 @@ class _DeviceCommandPanelState extends ConsumerState<DeviceCommandPanel> {
     );
   }
 
-  Widget? _buildTestsSection(List<Capability> capabilities) {
-    // Collect all tests from all capabilities
-    final allTests = <MapEntry<String, CapabilityTest>>[];
+  Widget? _buildCommandsSection(List<Capability> capabilities) {
+    // Collect all commands from all capabilities
+    final allCommands = <CapabilityCommand>[];
     for (final cap in capabilities) {
-      for (final test in cap.tests) {
-        allTests.add(MapEntry(cap.name, test));
+      for (final command in cap.commands) {
+        allCommands.add(command);
       }
     }
 
-    if (allTests.isEmpty) {
+    if (allCommands.isEmpty) {
       return null;
     }
 
     return _buildSection(
-      title: 'Device Tests',
-      icon: Icons.science,
+      title: 'Device Commands',
+      icon: Icons.terminal,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (_lastTestResult != null)
+          if (_lastCommandResult != null)
             Container(
               padding: const EdgeInsets.all(8),
               margin: const EdgeInsets.only(bottom: 12),
@@ -469,22 +469,20 @@ class _DeviceCommandPanelState extends ConsumerState<DeviceCommandPanel> {
                 borderRadius: BorderRadius.circular(4),
               ),
               child: Text(
-                _lastTestResult!,
+                _lastCommandResult!,
                 style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
               ),
             ),
           Wrap(
             spacing: 8,
             runSpacing: 8,
-            children: allTests.map((entry) {
-              final capability = entry.key;
-              final test = entry.value;
+            children: allCommands.map((command) {
               return _CommandButton(
-                label: test.displayName,
+                label: command.displayName,
                 icon: Icons.play_arrow,
                 color: SaturdayColors.info,
                 onPressed: widget.state.phase.canSendCommands && !_isExecuting
-                    ? () => _runTest(capability, test)
+                    ? () => _runCommand(command)
                     : null,
               );
             }).toList(),
@@ -610,21 +608,21 @@ class _DeviceCommandPanelState extends ConsumerState<DeviceCommandPanel> {
     }
   }
 
-  Future<void> _runTest(String capability, CapabilityTest test) async {
+  Future<void> _runCommand(CapabilityCommand command) async {
     setState(() {
       _isExecuting = true;
-      _lastTestResult = null;
+      _lastCommandResult = null;
     });
 
     try {
       final notifier = ref.read(deviceCommunicationStateProvider.notifier);
-      final result = await notifier.runTest(capability, test.name);
+      final result = await notifier.runCommand(command.name);
 
       if (mounted) {
         setState(() {
-          _lastTestResult = result.passed
-              ? 'PASSED: ${test.displayName}\n${result.message ?? ''}'
-              : 'FAILED: ${test.displayName}\n${result.message ?? 'Unknown error'}';
+          _lastCommandResult = result.passed
+              ? 'PASSED: ${command.displayName}\n${result.message ?? ''}'
+              : 'FAILED: ${command.displayName}\n${result.message ?? 'Unknown error'}';
         });
       }
     } finally {

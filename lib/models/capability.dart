@@ -1,17 +1,20 @@
 import 'package:equatable/equatable.dart';
 
-/// Represents a test definition within a capability
-class CapabilityTest extends Equatable {
+/// Represents a command definition within a capability
+///
+/// Commands are flat top-level operations dispatched by name (e.g., "connect", "scan").
+/// See Device Command Protocol v1.3.0.
+class CapabilityCommand extends Equatable {
   final String name;
   final String displayName;
   final String? description;
   final Map<String, dynamic> parametersSchema;
   final Map<String, dynamic> resultSchema;
 
-  /// The capability name this test belongs to (set during aggregation)
+  /// The capability name this command belongs to (set during aggregation)
   final String? capabilityName;
 
-  const CapabilityTest({
+  const CapabilityCommand({
     required this.name,
     required this.displayName,
     this.description,
@@ -20,8 +23,8 @@ class CapabilityTest extends Equatable {
     this.capabilityName,
   });
 
-  factory CapabilityTest.fromJson(Map<String, dynamic> json) {
-    return CapabilityTest(
+  factory CapabilityCommand.fromJson(Map<String, dynamic> json) {
+    return CapabilityCommand(
       name: json['name'] as String,
       displayName: json['display_name'] as String,
       description: json['description'] as String?,
@@ -44,8 +47,8 @@ class CapabilityTest extends Equatable {
     };
   }
 
-  CapabilityTest copyWithCapability(String capabilityName) {
-    return CapabilityTest(
+  CapabilityCommand copyWithCapability(String capabilityName) {
+    return CapabilityCommand(
       name: name,
       displayName: displayName,
       description: description,
@@ -64,7 +67,7 @@ class CapabilityTest extends Equatable {
 ///
 /// Capabilities define configurable features of Saturday devices.
 /// Each capability specifies schemas for factory/consumer provisioning
-/// (both input to device and output from device), heartbeat data, and tests.
+/// (both input to device and output from device), heartbeat data, and commands.
 ///
 /// Schema naming convention: {phase}_{direction}_schema
 ///   - phase: factory or consumer (provisioning phase)
@@ -97,8 +100,9 @@ class Capability extends Equatable {
   /// JSON Schema for heartbeat telemetry data
   final Map<String, dynamic> heartbeatSchema;
 
-  /// Test definitions with parameter and result schemas
-  final List<CapabilityTest> tests;
+  /// Command definitions with parameter and result schemas.
+  /// Note: DB column is still named 'tests' pending migration.
+  final List<CapabilityCommand> commands;
 
   final bool isActive;
   final DateTime createdAt;
@@ -114,7 +118,7 @@ class Capability extends Equatable {
     this.consumerInputSchema = const {},
     this.consumerOutputSchema = const {},
     this.heartbeatSchema = const {},
-    this.tests = const [],
+    this.commands = const [],
     this.isActive = true,
     required this.createdAt,
     this.updatedAt,
@@ -135,13 +139,13 @@ class Capability extends Equatable {
   /// Check if capability has heartbeat schema
   bool get hasHeartbeat => heartbeatSchema.isNotEmpty;
 
-  /// Check if capability has tests
-  bool get hasTests => tests.isNotEmpty;
+  /// Check if capability has commands
+  bool get hasCommands => commands.isNotEmpty;
 
-  /// Get test by name
-  CapabilityTest? getTest(String testName) {
+  /// Get command by name
+  CapabilityCommand? getCommand(String commandName) {
     try {
-      return tests.firstWhere((t) => t.name == testName);
+      return commands.firstWhere((c) => c.name == commandName);
     } catch (_) {
       return null;
     }
@@ -149,12 +153,13 @@ class Capability extends Equatable {
 
   /// Create from JSON
   factory Capability.fromJson(Map<String, dynamic> json) {
-    final testsJson = json['tests'];
-    List<CapabilityTest> tests = [];
+    // DB column is still named 'tests' pending migration
+    final commandsJson = json['tests'];
+    List<CapabilityCommand> commands = [];
 
-    if (testsJson != null && testsJson is List) {
-      tests = testsJson
-          .map((t) => CapabilityTest.fromJson(t as Map<String, dynamic>))
+    if (commandsJson != null && commandsJson is List) {
+      commands = commandsJson
+          .map((c) => CapabilityCommand.fromJson(c as Map<String, dynamic>))
           .toList();
     }
 
@@ -178,7 +183,7 @@ class Capability extends Equatable {
       heartbeatSchema: json['heartbeat_schema'] != null
           ? Map<String, dynamic>.from(json['heartbeat_schema'] as Map)
           : {},
-      tests: tests,
+      commands: commands,
       isActive: json['is_active'] as bool? ?? true,
       createdAt: DateTime.parse(json['created_at'] as String),
       updatedAt: json['updated_at'] != null
@@ -199,7 +204,8 @@ class Capability extends Equatable {
       'consumer_input_schema': consumerInputSchema,
       'consumer_output_schema': consumerOutputSchema,
       'heartbeat_schema': heartbeatSchema,
-      'tests': tests.map((t) => t.toJson()).toList(),
+      // DB column is still named 'tests' pending migration
+      'tests': commands.map((c) => c.toJson()).toList(),
       'is_active': isActive,
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt?.toIso8601String(),
@@ -217,7 +223,8 @@ class Capability extends Equatable {
       'consumer_input_schema': consumerInputSchema,
       'consumer_output_schema': consumerOutputSchema,
       'heartbeat_schema': heartbeatSchema,
-      'tests': tests.map((t) => t.toJson()).toList(),
+      // DB column is still named 'tests' pending migration
+      'tests': commands.map((c) => c.toJson()).toList(),
       'is_active': isActive,
     };
   }
@@ -233,7 +240,7 @@ class Capability extends Equatable {
     Map<String, dynamic>? consumerInputSchema,
     Map<String, dynamic>? consumerOutputSchema,
     Map<String, dynamic>? heartbeatSchema,
-    List<CapabilityTest>? tests,
+    List<CapabilityCommand>? commands,
     bool? isActive,
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -248,7 +255,7 @@ class Capability extends Equatable {
       consumerInputSchema: consumerInputSchema ?? this.consumerInputSchema,
       consumerOutputSchema: consumerOutputSchema ?? this.consumerOutputSchema,
       heartbeatSchema: heartbeatSchema ?? this.heartbeatSchema,
-      tests: tests ?? this.tests,
+      commands: commands ?? this.commands,
       isActive: isActive ?? this.isActive,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
@@ -266,7 +273,7 @@ class Capability extends Equatable {
         consumerInputSchema,
         consumerOutputSchema,
         heartbeatSchema,
-        tests,
+        commands,
         isActive,
         createdAt,
         updatedAt,
