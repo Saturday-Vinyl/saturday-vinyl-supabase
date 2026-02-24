@@ -7,7 +7,7 @@
 // Triggered by Database Webhook on now_playing_events INSERT
 //
 // This function:
-// 1. Finds users who own the hub (via consumer_devices.serial_number)
+// 1. Finds users who own the hub (via units.serial_number)
 // 2. Resolves the EPC to album info
 // 3. Inserts into user_now_playing_notifications
 // 4. Sends push notifications via Firebase (for 'placed' events)
@@ -156,13 +156,19 @@ async function findDevicesForHub(
   unitId: string
 ): Promise<DeviceInfo[]> {
   const { data, error } = await supabase
-    .from('consumer_devices')
-    .select('id, user_id, name')
+    .from('units')
+    .select('id, consumer_user_id, consumer_name')
     .eq('serial_number', unitId)
-    .eq('device_type', 'hub')
+    .not('consumer_user_id', 'is', null)
 
   if (error) throw error
-  return data || []
+
+  // Map units columns to DeviceInfo interface
+  return (data || []).map((unit: { id: string; consumer_user_id: string; consumer_name: string }) => ({
+    id: unit.id,
+    user_id: unit.consumer_user_id,
+    name: unit.consumer_name,
+  }))
 }
 
 async function resolveEpcToAlbum(

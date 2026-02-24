@@ -56,7 +56,7 @@ extern "C" {
 #define H2_COMM_MAX_PING_FAILURES   3       /* Reset H2 after 3 failures */
 
 /** Task configuration */
-#define H2_COMM_TASK_STACK_SIZE     4096
+#define H2_COMM_TASK_STACK_SIZE     5120
 #define H2_COMM_TASK_PRIORITY       5
 
 /*******************************************************************************
@@ -81,6 +81,7 @@ typedef enum {
     H2_COMM_EVENT_CRATE_HEARTBEAT,      /**< Crate heartbeat received */
     H2_COMM_EVENT_CRATE_TELEMETRY,      /**< CBOR telemetry from mesh node */
     H2_COMM_EVENT_CRATE_REGISTERED,     /**< Mesh node registered via CoAP */
+    H2_COMM_EVENT_MESH_CMD_RESULT,      /**< Mesh command result from H2 */
     H2_COMM_EVENT_H2_RESET,             /**< H2 was reset due to failure */
     H2_COMM_EVENT_ERROR,                /**< Communication error */
 } h2_comm_event_t;
@@ -146,6 +147,15 @@ typedef struct {
     char device_type[20];               /**< Device type slug */
     char fw_version[16];                /**< Firmware version */
 } h2_comm_crate_registered_event_t;
+
+/**
+ * @brief Mesh command result event data
+ */
+typedef struct {
+    uint8_t ext_addr[8];                /**< Target node extended address */
+    uint8_t result;                     /**< S3H2_CMD_RESULT_OK/TIMEOUT/ERROR */
+    char cmd[16];                       /**< Command name (e.g. "register") */
+} h2_comm_mesh_cmd_result_event_t;
 
 /*******************************************************************************
  * Initialization

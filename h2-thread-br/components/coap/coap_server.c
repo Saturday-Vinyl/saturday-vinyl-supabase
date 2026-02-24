@@ -396,10 +396,13 @@ static void reregister_nudge_task(void *arg)
         esp_err_t err = coap_cmd_client_send(ext_addr, cbor_buf, (uint16_t)cbor_len);
         if (err == ESP_OK) {
             ESP_LOGI(TAG, "Re-register nudge acknowledged");
+            s3_comm_send_mesh_cmd_result(ext_addr, S3H2_CMD_RESULT_OK, "register");
         } else if (err == ESP_ERR_TIMEOUT) {
             ESP_LOGW(TAG, "Re-register nudge timed out (node may not support it yet)");
+            s3_comm_send_mesh_cmd_result(ext_addr, S3H2_CMD_RESULT_TIMEOUT, "register");
         } else {
             ESP_LOGW(TAG, "Re-register nudge failed: %s", esp_err_to_name(err));
+            s3_comm_send_mesh_cmd_result(ext_addr, S3H2_CMD_RESULT_ERROR, "register");
         }
     }
 }
@@ -428,9 +431,12 @@ static void get_sender_info(const otMessageInfo *message_info,
                       peer->mFields.m8[15];
     }
 
-    /* Note: To get actual extended address, we'd need to look up the device
-     * in the neighbor table. For now, we use a placeholder. */
+    /* Extract EUI-64 from the IID portion of the IPv6 address.
+     * OpenThread flips the U/L bit (bit 1 of byte 0) when deriving the IID
+     * from the EUI-64.  We flip it back so ext_addr holds the true EUI-64.
+     * build_target_ip6() will re-flip it when constructing the target IPv6. */
     memcpy(ext_addr_out, peer->mFields.m8 + 8, 8);
+    ext_addr_out[0] ^= 0x02;
 }
 
 /*******************************************************************************

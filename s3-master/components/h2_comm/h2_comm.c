@@ -687,6 +687,38 @@ static void handle_event(uint8_t evt_type, const uint8_t *payload, uint16_t len)
             break;
         }
 
+        case S3H2_EVT_MESH_CMD_RESULT: {
+            if (len >= sizeof(s3h2_mesh_cmd_result_payload_t)) {
+                const s3h2_mesh_cmd_result_payload_t *p =
+                    (const s3h2_mesh_cmd_result_payload_t *)payload;
+                static const char *result_str[] = {"acknowledged", "timeout", "error"};
+                const char *rstr = (p->result <= 2) ? result_str[p->result] : "unknown";
+                /* Ensure cmd is null-terminated for logging */
+                char cmd_safe[17];
+                memcpy(cmd_safe, p->cmd, 16);
+                cmd_safe[16] = '\0';
+                if (p->result == S3H2_CMD_RESULT_OK) {
+                    ESP_LOGI(TAG, "Mesh cmd %02X%02X%02X%02X%02X%02X%02X%02X \"%s\": %s",
+                             p->ext_addr[0], p->ext_addr[1], p->ext_addr[2], p->ext_addr[3],
+                             p->ext_addr[4], p->ext_addr[5], p->ext_addr[6], p->ext_addr[7],
+                             cmd_safe, rstr);
+                } else {
+                    ESP_LOGW(TAG, "Mesh cmd %02X%02X%02X%02X%02X%02X%02X%02X \"%s\": %s",
+                             p->ext_addr[0], p->ext_addr[1], p->ext_addr[2], p->ext_addr[3],
+                             p->ext_addr[4], p->ext_addr[5], p->ext_addr[6], p->ext_addr[7],
+                             cmd_safe, rstr);
+                }
+                h2_comm_mesh_cmd_result_event_t event = {
+                    .result = p->result,
+                };
+                memcpy(event.ext_addr, p->ext_addr, 8);
+                memcpy(event.cmd, p->cmd, 16);
+                esp_event_post(H2_COMM_EVENTS, H2_COMM_EVENT_MESH_CMD_RESULT,
+                               &event, sizeof(event), pdMS_TO_TICKS(100));
+            }
+            break;
+        }
+
         case S3H2_EVT_ERROR: {
             if (len >= sizeof(s3h2_nak_payload_t)) {
                 const s3h2_nak_payload_t *p = (const s3h2_nak_payload_t *)payload;

@@ -103,6 +103,7 @@ typedef enum {
     /* CoAP Mesh Protocol Events */
     S3H2_EVT_CRATE_TELEMETRY   = 0xE8,     /**< CBOR telemetry from mesh node */
     S3H2_EVT_CRATE_REGISTERED  = 0xE9,     /**< Mesh node registered via CoAP */
+    S3H2_EVT_MESH_CMD_RESULT   = 0xEA,     /**< Mesh command result (H2-initiated) */
 
     S3H2_EVT_ERROR              = 0xEF,     /**< Error occurred */
 } s3h2_evt_t;
@@ -377,6 +378,23 @@ typedef struct __attribute__((packed)) {
      *   uint8_t fw_len;        char fw_version[fw_len];
      */
 } s3h2_crate_registered_header_t;
+
+/** Mesh command result codes */
+#define S3H2_CMD_RESULT_OK          0   /**< Node acknowledged (CoAP 2.xx) */
+#define S3H2_CMD_RESULT_TIMEOUT     1   /**< No CoAP response within 5s */
+#define S3H2_CMD_RESULT_ERROR       2   /**< CoAP stack or other failure */
+
+/**
+ * @brief Mesh command result event payload (EVT_MESH_CMD_RESULT)
+ *
+ * Sent after the H2 attempts a CoAP POST /cmd to a mesh node
+ * (e.g., re-register nudge, cloud-relayed command, etc.).
+ */
+typedef struct __attribute__((packed)) {
+    uint8_t ext_addr[8];            /**< Target node extended address */
+    uint8_t result;                 /**< S3H2_CMD_RESULT_* code */
+    char cmd[16];                   /**< Command name (null-terminated, e.g. "register") */
+} s3h2_mesh_cmd_result_payload_t;
 
 /*******************************************************************************
  * Frame Structure

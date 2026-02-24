@@ -319,6 +319,18 @@ esp_err_t s3_comm_send_ping_result(const uint8_t *crate_ext_addr,
                                    bool reachable,
                                    int8_t rssi);
 
+/**
+ * @brief Send mesh command result event
+ *
+ * Reports the outcome of a CoAP POST /cmd to a mesh node back to S3.
+ *
+ * @param ext_addr Target node extended address (8 bytes)
+ * @param result S3H2_CMD_RESULT_OK, S3H2_CMD_RESULT_TIMEOUT, or S3H2_CMD_RESULT_ERROR
+ * @param cmd Command name string (e.g., "register"), max 15 chars
+ * @return ESP_OK on success
+ */
+esp_err_t s3_comm_send_mesh_cmd_result(const uint8_t *ext_addr, uint8_t result, const char *cmd);
+
 /*******************************************************************************
  * Statistics and Debug
  ******************************************************************************/

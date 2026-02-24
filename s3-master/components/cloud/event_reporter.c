@@ -1127,7 +1127,16 @@ esp_err_t event_reporter_queue_crate_telemetry(const uint8_t *crate_ext_addr,
         type_str = "command_result";
     }
 
-    /* Decode CBOR into JSON telemetry object */
+    /*
+     * Decode CBOR into JSON telemetry object.
+     *
+     * Special handling for command ack/result heartbeats:
+     * - "cmd_id" → extracted to command_id_str (becomes top-level column)
+     * - "result" map → flattened: status/error→telemetry top-level, data→"result"
+     *
+     * This produces the same telemetry structure as send_command_result_heartbeat()
+     * in realtime_client.c, which the update_command_on_ack() trigger expects.
+     */
     CborParser cbor_parser;
     CborValue cbor_root;
     CborError cbor_err = cbor_parser_init(cbor_data, cbor_len, 0, &cbor_parser, &cbor_root);
@@ -1137,9 +1146,10 @@ esp_err_t event_reporter_queue_crate_telemetry(const uint8_t *crate_ext_addr,
     }
 
     /* Build telemetry JSON by iterating CBOR map */
-    char telemetry_json[512] = "{";
+    char telemetry_json[768] = "{";
     size_t tpos = 1;
     bool first = true;
+    char command_id_str[40] = {0};
 
     CborValue map_iter;
     cbor_err = cbor_value_enter_container(&cbor_root, &map_iter);
@@ -1164,6 +1174,134 @@ esp_err_t event_reporter_queue_crate_telemetry(const uint8_t *crate_ext_addr,
 
         if (cbor_value_at_end(&map_iter)) break;
 
+        /*
+         * cmd_id → extract to command_id_str for top-level column.
+         * Maps CBOR "cmd_id" to device_heartbeats.command_id column
+         * which the update_command_on_ack() trigger uses.
+         */
+        if (strcmp(key, "cmd_id") == 0 && cbor_value_is_text_string(&map_iter)) {
+            size_t val_len = sizeof(command_id_str) - 1;
+            cbor_value_copy_text_string(&map_iter, command_id_str, &val_len, NULL);
+            command_id_str[val_len] = '\0';
+            /* Clear nil UUID — S3-initiated nudges use a synthetic command_id
+             * that doesn't exist in device_commands, so omit the FK reference */
+            if (strcmp(command_id_str, "00000000-0000-0000-0000-000000000000") == 0) {
+                command_id_str[0] = '\0';
+            }
+            cbor_value_advance(&map_iter);
+            continue;
+        }
+
+        /*
+         * result map → flatten into telemetry fields.
+         * CBOR: "result": {"status":"completed","data":{...},"error":"msg"}
+         * JSON: telemetry.status, telemetry.result (from data), telemetry.error_message
+         */
+        if (strcmp(key, "result") == 0 && cbor_value_is_map(&map_iter)) {
+            CborValue result_iter;
+            if (cbor_value_enter_container(&map_iter, &result_iter) == CborNoError) {
+                while (!cbor_value_at_end(&result_iter)) {
+                    if (!cbor_value_is_text_string(&result_iter)) {
+                        cbor_value_advance(&result_iter);
+                        if (!cbor_value_at_end(&result_iter)) cbor_value_advance(&result_iter);
+                        continue;
+                    }
+
+                    char rkey[32] = {0};
+                    size_t rkey_len = sizeof(rkey) - 1;
+                    cbor_value_copy_text_string(&result_iter, rkey, &rkey_len, NULL);
+                    rkey[rkey_len] = '\0';
+                    cbor_value_advance(&result_iter);
+                    if (cbor_value_at_end(&result_iter)) break;
+
+                    if (strcmp(rkey, "status") == 0 && cbor_value_is_text_string(&result_iter)) {
+                        char val[32] = {0};
+                        size_t val_len = sizeof(val) - 1;
+                        cbor_value_copy_text_string(&result_iter, val, &val_len, NULL);
+                        val[val_len] = '\0';
+                        if (!first && tpos < sizeof(telemetry_json) - 2) telemetry_json[tpos++] = ',';
+                        first = false;
+                        tpos += snprintf(&telemetry_json[tpos], sizeof(telemetry_json) - tpos,
+                                         "\"status\":\"%s\"", val);
+                    } else if (strcmp(rkey, "error") == 0 && cbor_value_is_text_string(&result_iter)) {
+                        char val[128] = {0};
+                        size_t val_len = sizeof(val) - 1;
+                        cbor_value_copy_text_string(&result_iter, val, &val_len, NULL);
+                        val[val_len] = '\0';
+                        if (!first && tpos < sizeof(telemetry_json) - 2) telemetry_json[tpos++] = ',';
+                        first = false;
+                        tpos += snprintf(&telemetry_json[tpos], sizeof(telemetry_json) - tpos,
+                                         "\"error_message\":\"%s\"", val);
+                    } else if (strcmp(rkey, "data") == 0 && cbor_value_is_map(&result_iter)) {
+                        /* Encode data sub-map as "result" in telemetry */
+                        if (!first && tpos < sizeof(telemetry_json) - 2) telemetry_json[tpos++] = ',';
+                        first = false;
+                        tpos += snprintf(&telemetry_json[tpos], sizeof(telemetry_json) - tpos,
+                                         "\"result\":{");
+
+                        CborValue data_iter;
+                        bool data_first = true;
+                        if (cbor_value_enter_container(&result_iter, &data_iter) == CborNoError) {
+                            while (!cbor_value_at_end(&data_iter)) {
+                                if (!cbor_value_is_text_string(&data_iter)) {
+                                    cbor_value_advance(&data_iter);
+                                    if (!cbor_value_at_end(&data_iter)) cbor_value_advance(&data_iter);
+                                    continue;
+                                }
+
+                                char dkey[32] = {0};
+                                size_t dkey_len = sizeof(dkey) - 1;
+                                cbor_value_copy_text_string(&data_iter, dkey, &dkey_len, NULL);
+                                dkey[dkey_len] = '\0';
+                                cbor_value_advance(&data_iter);
+                                if (cbor_value_at_end(&data_iter)) break;
+
+                                if (!data_first && tpos < sizeof(telemetry_json) - 2)
+                                    telemetry_json[tpos++] = ',';
+                                data_first = false;
+
+                                if (cbor_value_is_integer(&data_iter)) {
+                                    int64_t val;
+                                    cbor_value_get_int64(&data_iter, &val);
+                                    tpos += snprintf(&telemetry_json[tpos],
+                                                     sizeof(telemetry_json) - tpos,
+                                                     "\"%s\":%lld", dkey, (long long)val);
+                                } else if (cbor_value_is_text_string(&data_iter)) {
+                                    char val[64] = {0};
+                                    size_t val_len = sizeof(val) - 1;
+                                    cbor_value_copy_text_string(&data_iter, val, &val_len, NULL);
+                                    val[val_len] = '\0';
+                                    tpos += snprintf(&telemetry_json[tpos],
+                                                     sizeof(telemetry_json) - tpos,
+                                                     "\"%s\":\"%s\"", dkey, val);
+                                } else if (cbor_value_is_boolean(&data_iter)) {
+                                    bool val;
+                                    cbor_value_get_boolean(&data_iter, &val);
+                                    tpos += snprintf(&telemetry_json[tpos],
+                                                     sizeof(telemetry_json) - tpos,
+                                                     "\"%s\":%s", dkey, val ? "true" : "false");
+                                }
+
+                                cbor_value_advance(&data_iter);
+                            }
+                            cbor_value_leave_container(&result_iter, &data_iter);
+                        }
+
+                        if (tpos < sizeof(telemetry_json) - 2) {
+                            telemetry_json[tpos++] = '}';
+                        }
+                        /* leave_container already advanced result_iter past the map */
+                        continue;
+                    }
+
+                    cbor_value_advance(&result_iter);
+                }
+                cbor_value_leave_container(&map_iter, &result_iter);
+            }
+            continue;
+        }
+
+        /* Normal flat key-value: add to telemetry JSON */
         if (!first && tpos < sizeof(telemetry_json) - 2) {
             telemetry_json[tpos++] = ',';
         }
@@ -1208,17 +1346,35 @@ esp_err_t event_reporter_queue_crate_telemetry(const uint8_t *crate_ext_addr,
     char hub_unit_id[SUPABASE_UNIT_ID_MAX_LEN] = "UNIT-UNKNOWN";
     supabase_get_unit_id(hub_unit_id, sizeof(hub_unit_id));
 
-    /* Build device_heartbeats JSON (created_at defaults to now() server-side) */
-    char json[1024];
-    int json_len = snprintf(json, sizeof(json),
-        "{\"mac_address\":\"%s\",\"unit_id\":\"%s\",\"device_type\":\"%s\","
-        "\"firmware_version\":\"%s\",\"type\":\"%s\","
-        "\"telemetry\":%s,"
-        "\"relay_device_type\":\"hub\",\"relay_instance_id\":\"%s\"}",
-        identity->mac, identity->unit_id, identity->device_type,
-        identity->fw_version, type_str,
-        telemetry_json,
-        hub_unit_id);
+    /*
+     * Build device_heartbeats JSON (created_at defaults to now() server-side).
+     * Include command_id as a top-level column when present (for command ack/result).
+     */
+    char json[1280];
+    int json_len;
+    if (command_id_str[0] != '\0') {
+        json_len = snprintf(json, sizeof(json),
+            "{\"mac_address\":\"%s\",\"unit_id\":\"%s\",\"device_type\":\"%s\","
+            "\"firmware_version\":\"%s\",\"type\":\"%s\","
+            "\"command_id\":\"%s\","
+            "\"telemetry\":%s,"
+            "\"relay_device_type\":\"hub\",\"relay_instance_id\":\"%s\"}",
+            identity->mac, identity->unit_id, identity->device_type,
+            identity->fw_version, type_str,
+            command_id_str,
+            telemetry_json,
+            hub_unit_id);
+    } else {
+        json_len = snprintf(json, sizeof(json),
+            "{\"mac_address\":\"%s\",\"unit_id\":\"%s\",\"device_type\":\"%s\","
+            "\"firmware_version\":\"%s\",\"type\":\"%s\","
+            "\"telemetry\":%s,"
+            "\"relay_device_type\":\"hub\",\"relay_instance_id\":\"%s\"}",
+            identity->mac, identity->unit_id, identity->device_type,
+            identity->fw_version, type_str,
+            telemetry_json,
+            hub_unit_id);
+    }
 
     if (json_len >= (int)sizeof(json)) {
         ESP_LOGE(TAG, "Crate telemetry JSON too long");

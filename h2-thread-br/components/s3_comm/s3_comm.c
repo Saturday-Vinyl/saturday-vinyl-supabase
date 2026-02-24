@@ -1133,6 +1133,26 @@ esp_err_t s3_comm_send_ping_result(const uint8_t *crate_ext_addr,
     return send_frame(S3H2_EVT_CRATE_PING_RESULT, &payload, sizeof(payload));
 }
 
+esp_err_t s3_comm_send_mesh_cmd_result(const uint8_t *ext_addr, uint8_t result, const char *cmd)
+{
+    if (ext_addr == NULL || cmd == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    s3h2_mesh_cmd_result_payload_t payload = {
+        .result = result,
+    };
+    memcpy(payload.ext_addr, ext_addr, 8);
+    strncpy(payload.cmd, cmd, sizeof(payload.cmd) - 1);
+    payload.cmd[sizeof(payload.cmd) - 1] = '\0';
+
+    ESP_LOGI(TAG, "Sending MESH_CMD_RESULT: %02X%02X%02X%02X%02X%02X%02X%02X cmd=\"%s\" result=%d",
+             ext_addr[0], ext_addr[1], ext_addr[2], ext_addr[3],
+             ext_addr[4], ext_addr[5], ext_addr[6], ext_addr[7], payload.cmd, result);
+
+    return send_frame(S3H2_EVT_MESH_CMD_RESULT, &payload, sizeof(payload));
+}
+
 /*******************************************************************************
  * CoAP Mesh Protocol Event Functions
  ******************************************************************************/

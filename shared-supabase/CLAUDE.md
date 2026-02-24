@@ -193,6 +193,16 @@ Edge functions live in `supabase/functions/`. Each function's entry file should 
 
 Deploy: `supabase functions deploy <function-name>`
 
+## Deployment Checklist
+
+Before closing out any work that includes migrations or edge function changes, ensure the Supabase CLI is linked to the remote project so changes can be deployed:
+
+1. **Verify project is linked:** Run `supabase migration list` — if it fails with "Cannot find project ref", ask the user to run `supabase link` to connect the workspace to the remote project.
+2. **Push migrations:** `supabase db push` (dry-run first with `--dry-run`)
+3. **Deploy edge functions:** `supabase functions deploy <function-name>` for each changed function
+
+Do not consider migration or edge function work complete until changes are deployed to the remote database.
+
 ## Important Notes
 
 1. **Never commit secrets** - Use environment variables or Supabase Vault

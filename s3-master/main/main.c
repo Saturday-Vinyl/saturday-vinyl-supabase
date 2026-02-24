@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
 
@@ -28,6 +29,7 @@
 #include "serial_prov.h"
 #include "h2_comm.h"
 #include "ota_manager.h"
+#include "cbor.h"
 #include "cJSON.h"
 #include "h2_flasher.h"
 #include "watchdog_manager.h"
@@ -56,6 +58,20 @@ static bool s_boot_validated = false;
 static uint32_t s_h2_error_count = 0;
 static uint32_t s_wifi_error_count = 0;
 #define MAX_SUBSYSTEM_ERRORS 10  /* After this many errors, log warning */
+
+/* Mutex to serialize crate telemetry HTTP posts (prevents heap corruption
+ * when two crate_telemetry_task instances call supabase_post() concurrently) */
+static SemaphoreHandle_t s_telem_mutex = NULL;
+
+/* Rate-limit S3-initiated re-register nudges after S3 reboot.
+ * When S3 reboots (but H2 doesn't), the identity cache is cleared.
+ * We send "register" via H2→CoAP to trigger re-registration. */
+#define NUDGE_COOLDOWN_MS   60000
+#define MAX_NUDGE_DEVICES   8
+static struct {
+    uint8_t ext_addr[8];
+    TickType_t last_tick;
+} s_nudge_cooldown[MAX_NUDGE_DEVICES];
 
 /**
  * @brief Now Playing event handler - LED feedback for tag place/remove
@@ -280,16 +296,96 @@ static void on_service_mode_state_change(serial_prov_state_t state, void *user_d
 }
 
 /**
+ * @brief Check if nudge cooldown has elapsed for a device
+ *
+ * Returns true if the device hasn't been nudged within NUDGE_COOLDOWN_MS,
+ * and records the current time as the last nudge time.
+ */
+static bool nudge_cooldown_ok(const uint8_t *ext_addr)
+{
+    TickType_t now = xTaskGetTickCount();
+    int oldest_idx = 0;
+    TickType_t oldest_time = portMAX_DELAY;
+
+    for (int i = 0; i < MAX_NUDGE_DEVICES; i++) {
+        if (memcmp(s_nudge_cooldown[i].ext_addr, ext_addr, 8) == 0) {
+            if ((now - s_nudge_cooldown[i].last_tick) < pdMS_TO_TICKS(NUDGE_COOLDOWN_MS)) {
+                return false;  /* Still in cooldown */
+            }
+            s_nudge_cooldown[i].last_tick = now;
+            return true;
+        }
+        if (s_nudge_cooldown[i].last_tick < oldest_time) {
+            oldest_time = s_nudge_cooldown[i].last_tick;
+            oldest_idx = i;
+        }
+    }
+
+    /* New device — evict oldest slot */
+    memcpy(s_nudge_cooldown[oldest_idx].ext_addr, ext_addr, 8);
+    s_nudge_cooldown[oldest_idx].last_tick = now;
+    return true;
+}
+
+/**
+ * @brief Request a mesh node to re-register (S3-initiated nudge)
+ *
+ * When the S3 reboots but H2 doesn't, the S3's identity cache is cleared
+ * while H2 still considers the crate registered (responds 2.04, not 4.01).
+ * This sends a "register" command via H2 → CoAP to trigger re-registration.
+ */
+static void request_crate_reregister(const uint8_t *ext_addr)
+{
+    uint8_t cbor_buf[80];
+    CborEncoder encoder, map_enc;
+    cbor_encoder_init(&encoder, cbor_buf, sizeof(cbor_buf), 0);
+    cbor_encoder_create_map(&encoder, &map_enc, 2);
+    cbor_encode_text_stringz(&map_enc, "id");
+    cbor_encode_text_stringz(&map_enc, "00000000-0000-0000-0000-000000000000");
+    cbor_encode_text_stringz(&map_enc, "cmd");
+    cbor_encode_text_stringz(&map_enc, "register");
+    cbor_encoder_close_container(&encoder, &map_enc);
+    uint16_t cbor_len = (uint16_t)cbor_encoder_get_buffer_size(&encoder, cbor_buf);
+
+    ESP_LOGI(TAG, "Requesting re-register for unidentified crate "
+             "%02X%02X%02X%02X%02X%02X%02X%02X",
+             ext_addr[0], ext_addr[1], ext_addr[2], ext_addr[3],
+             ext_addr[4], ext_addr[5], ext_addr[6], ext_addr[7]);
+
+    h2_comm_relay_command(ext_addr, cbor_buf, cbor_len, 2000);
+}
+
+/**
  * @brief Crate telemetry task — executes on a dedicated stack to avoid sys_evt overflow
  *
  * CBOR decoding + JSON serialization + Supabase POST need ~2KB of stack buffers.
  * The sys_evt task only has 4KB, so we offload to a one-shot task.
+ *
+ * A mutex serializes concurrent instances to prevent heap corruption from
+ * concurrent access to the shared persistent HTTP client in supabase_post().
  */
 static void crate_telemetry_task(void *arg)
 {
     h2_comm_crate_telemetry_event_t *evt = (h2_comm_crate_telemetry_event_t *)arg;
-    event_reporter_queue_crate_telemetry(evt->ext_addr, evt->hb_type,
-                                          evt->cbor_data, evt->cbor_len);
+
+    if (xSemaphoreTake(s_telem_mutex, pdMS_TO_TICKS(10000)) == pdTRUE) {
+        esp_err_t ret = event_reporter_queue_crate_telemetry(evt->ext_addr, evt->hb_type,
+                                                              evt->cbor_data, evt->cbor_len);
+
+        /* If the identity wasn't cached (ESP_ERR_NOT_FOUND while WiFi is up),
+         * request re-registration via H2 → CoAP. This handles the case where
+         * S3 rebooted (clearing its cache) but H2 didn't (still has the crate
+         * registered, so no 4.01 Unauthorized → no H2-initiated nudge). */
+        if (ret == ESP_ERR_NOT_FOUND && s_wifi_connected &&
+            nudge_cooldown_ok(evt->ext_addr)) {
+            request_crate_reregister(evt->ext_addr);
+        }
+
+        xSemaphoreGive(s_telem_mutex);
+    } else {
+        ESP_LOGW(TAG, "Telemetry mutex timeout — dropping crate telemetry");
+    }
+
     free(evt);
     vTaskDelete(NULL);
 }
@@ -413,6 +509,27 @@ static void on_h2_event(void *handler_args, esp_event_base_t base,
             event_reporter_cache_crate_identity(evt->ext_addr, evt->mac,
                                                  evt->unit_id, evt->device_type,
                                                  evt->fw_version);
+            break;
+        }
+
+        case H2_COMM_EVENT_MESH_CMD_RESULT: {
+            h2_comm_mesh_cmd_result_event_t *evt = (h2_comm_mesh_cmd_result_event_t *)event_data;
+            if (evt->result == S3H2_CMD_RESULT_OK) {
+                ESP_LOGI(TAG, "Mesh cmd %02X%02X%02X%02X%02X%02X%02X%02X \"%s\": acknowledged",
+                         evt->ext_addr[0], evt->ext_addr[1], evt->ext_addr[2], evt->ext_addr[3],
+                         evt->ext_addr[4], evt->ext_addr[5], evt->ext_addr[6], evt->ext_addr[7],
+                         evt->cmd);
+            } else if (evt->result == S3H2_CMD_RESULT_TIMEOUT) {
+                ESP_LOGW(TAG, "Mesh cmd %02X%02X%02X%02X%02X%02X%02X%02X \"%s\": timeout",
+                         evt->ext_addr[0], evt->ext_addr[1], evt->ext_addr[2], evt->ext_addr[3],
+                         evt->ext_addr[4], evt->ext_addr[5], evt->ext_addr[6], evt->ext_addr[7],
+                         evt->cmd);
+            } else {
+                ESP_LOGE(TAG, "Mesh cmd %02X%02X%02X%02X%02X%02X%02X%02X \"%s\": error",
+                         evt->ext_addr[0], evt->ext_addr[1], evt->ext_addr[2], evt->ext_addr[3],
+                         evt->ext_addr[4], evt->ext_addr[5], evt->ext_addr[6], evt->ext_addr[7],
+                         evt->cmd);
+            }
             break;
         }
 
@@ -1047,6 +1164,12 @@ void app_main(void)
                 h2_flasher_reset_normal();
             }
         }
+    }
+
+    /* Create mutex for serializing crate telemetry HTTP posts */
+    s_telem_mutex = xSemaphoreCreateMutex();
+    if (s_telem_mutex == NULL) {
+        ESP_LOGE(TAG, "Failed to create telemetry mutex");
     }
 
     /* Phase S3-7/INT-1: Initialize H2 communication interface */
