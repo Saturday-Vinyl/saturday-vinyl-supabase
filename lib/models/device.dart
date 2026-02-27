@@ -64,6 +64,10 @@ class Device extends Equatable {
   /// Status
   final DeviceStatus status;
 
+  /// MAC address of the Hub that relays commands for this device.
+  /// NULL for devices with direct cloud access (WiFi/WebSocket).
+  final String? hubMacAddress;
+
   /// Connectivity tracking
   final DateTime? lastSeenAt;
 
@@ -87,11 +91,15 @@ class Device extends Equatable {
     this.consumerProvisionedBy,
     this.provisionData = const {},
     this.status = DeviceStatus.unprovisioned,
+    this.hubMacAddress,
     this.lastSeenAt,
     this.latestTelemetry = const {},
     required this.createdAt,
     this.updatedAt,
   });
+
+  /// Whether this device receives commands through a Hub relay
+  bool get isHubRelayed => hubMacAddress != null;
 
   /// Check if device is online (last seen within 60 seconds)
   bool get isOnline {
@@ -142,6 +150,7 @@ class Device extends Equatable {
           ? Map<String, dynamic>.from(json['provision_data'] as Map)
           : {},
       status: DeviceStatusExtension.fromString(json['status'] as String?),
+      hubMacAddress: json['hub_mac_address'] as String?,
       lastSeenAt: json['last_seen_at'] != null
           ? DateTime.parse(json['last_seen_at'] as String)
           : null,
@@ -170,6 +179,7 @@ class Device extends Equatable {
       'consumer_provisioned_by': consumerProvisionedBy,
       'provision_data': provisionData,
       'status': status.databaseValue,
+      'hub_mac_address': hubMacAddress,
       'last_seen_at': lastSeenAt?.toIso8601String(),
       'latest_telemetry': latestTelemetry,
       'created_at': createdAt.toIso8601String(),
@@ -204,6 +214,7 @@ class Device extends Equatable {
     String? consumerProvisionedBy,
     Map<String, dynamic>? provisionData,
     DeviceStatus? status,
+    String? hubMacAddress,
     DateTime? lastSeenAt,
     Map<String, dynamic>? latestTelemetry,
     DateTime? createdAt,
@@ -222,6 +233,7 @@ class Device extends Equatable {
       consumerProvisionedBy: consumerProvisionedBy ?? this.consumerProvisionedBy,
       provisionData: provisionData ?? this.provisionData,
       status: status ?? this.status,
+      hubMacAddress: hubMacAddress ?? this.hubMacAddress,
       lastSeenAt: lastSeenAt ?? this.lastSeenAt,
       latestTelemetry: latestTelemetry ?? this.latestTelemetry,
       createdAt: createdAt ?? this.createdAt,
@@ -243,6 +255,7 @@ class Device extends Equatable {
         consumerProvisionedBy,
         provisionData,
         status,
+        hubMacAddress,
         lastSeenAt,
         latestTelemetry,
         createdAt,

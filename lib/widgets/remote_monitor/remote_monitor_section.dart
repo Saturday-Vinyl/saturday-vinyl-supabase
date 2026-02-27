@@ -11,14 +11,14 @@ import 'package:saturday_app/widgets/remote_monitor/remote_log_display.dart';
 ///
 /// Provides log display, command panel, and monitoring controls.
 /// All devices can view heartbeats (read-only).
-/// Only devices with websocket capability can send commands.
+/// Devices with websocket capability or hub relay can send commands.
 class RemoteMonitorSection extends ConsumerStatefulWidget {
   final String unitId;
 
   /// All devices to monitor (for heartbeats)
   final List<Device> devices;
 
-  /// Devices that can receive commands (websocket capability)
+  /// Devices that can receive commands (websocket or hub relay)
   final List<Device> commandableDevices;
 
   const RemoteMonitorSection({
@@ -140,7 +140,7 @@ class _RemoteMonitorSectionState extends ConsumerState<RemoteMonitorSection> {
                     Icon(Icons.info_outline, color: Colors.grey[500], size: 18),
                     const SizedBox(width: 8),
                     Text(
-                      'Commands unavailable - no devices with websocket capability',
+                      'Commands unavailable - no devices with remote command capability',
                       style: TextStyle(
                         color: Colors.grey[500],
                         fontSize: 12,

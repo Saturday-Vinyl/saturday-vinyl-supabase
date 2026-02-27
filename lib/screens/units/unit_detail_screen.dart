@@ -449,7 +449,9 @@ class UnitDetailScreen extends ConsumerWidget {
           Row(
             children: [
               Icon(
-                device.isOnline ? Icons.wifi : Icons.wifi_off,
+                device.isHubRelayed
+                    ? (device.isOnline ? Icons.hub : Icons.hub_outlined)
+                    : (device.isOnline ? Icons.wifi : Icons.wifi_off),
                 size: 16,
                 color: device.isOnline ? SaturdayColors.success : SaturdayColors.secondaryGrey,
               ),
@@ -463,6 +465,24 @@ class UnitDetailScreen extends ConsumerWidget {
                   ),
                 ),
               ),
+              if (device.isHubRelayed) ...[
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: SaturdayColors.info.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    'via Hub',
+                    style: TextStyle(
+                      color: SaturdayColors.info,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+              ],
               _buildDeviceStatusChip(device.status),
             ],
           ),
@@ -540,21 +560,21 @@ class UnitDetailScreen extends ConsumerWidget {
       data: (devices) {
         if (devices.isEmpty) return const SizedBox.shrink();
 
-        // Check which devices have websocket capability (for command sending)
-        final devicesWithWebsocketAsync =
-            ref.watch(unitDevicesWithWebsocketProvider(unitId));
+        // Check which devices can receive commands (websocket or hub-relayed)
+        final commandableDevicesAsync =
+            ref.watch(unitCommandableDevicesProvider(unitId));
 
-        return devicesWithWebsocketAsync.when(
-          data: (devicesWithWebsocket) {
+        return commandableDevicesAsync.when(
+          data: (commandableDevices) {
             // Show Remote Monitor for all devices (heartbeats are read-only)
-            // Commands are only available for devices with websocket capability
+            // Commands available for devices with websocket or hub relay
             return Column(
               children: [
                 const SizedBox(height: 24),
                 RemoteMonitorSection(
                   unitId: unitId,
                   devices: devices,
-                  commandableDevices: devicesWithWebsocket,
+                  commandableDevices: commandableDevices,
                 ),
               ],
             );

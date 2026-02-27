@@ -432,24 +432,31 @@ final deviceTypeHasWebsocketProvider =
   return capabilities.contains('websocket');
 });
 
-/// Provider to get devices with websocket capability for a unit
-final unitDevicesWithWebsocketProvider =
+/// Provider to get commandable devices for a unit.
+///
+/// A device is commandable if it either:
+/// 1. Has websocket capability (direct cloud connection), OR
+/// 2. Has a hub_mac_address set (commands routed through Hub relay)
+final unitCommandableDevicesProvider =
     FutureProvider.family<List<Device>, String>((ref, unitId) async {
-  // Get devices for unit
   final devices = await ref.watch(devicesByUnitProvider(unitId).future);
-
-  // Filter to devices with websocket capability
-  final devicesWithWebsocket = <Device>[];
+  final commandable = <Device>[];
 
   for (final device in devices) {
-    if (device.deviceTypeSlug == null) continue;
+    // Hub-relayed devices are commandable (DB trigger routes through Hub)
+    if (device.isHubRelayed) {
+      commandable.add(device);
+      continue;
+    }
 
-    final hasWebsocket =
-        await ref.watch(deviceTypeHasWebsocketProvider(device.deviceTypeSlug!).future);
+    // Devices with direct websocket capability are commandable
+    if (device.deviceTypeSlug == null) continue;
+    final hasWebsocket = await ref
+        .watch(deviceTypeHasWebsocketProvider(device.deviceTypeSlug!).future);
     if (hasWebsocket) {
-      devicesWithWebsocket.add(device);
+      commandable.add(device);
     }
   }
 
-  return devicesWithWebsocket;
+  return commandable;
 });

@@ -64,6 +64,35 @@ class RemoteCommandPanel extends ConsumerWidget {
         ),
         const SizedBox(height: 12),
 
+        // Relay indicator
+        if (primaryDevice != null && primaryDevice.isHubRelayed)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: SaturdayColors.info.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(4),
+                border:
+                    Border.all(color: SaturdayColors.info.withValues(alpha: 0.3)),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.hub, size: 14, color: SaturdayColors.info),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Commands relayed via Hub (${primaryDevice.hubMacAddress})',
+                    style: TextStyle(
+                      color: SaturdayColors.info,
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
         // Global commands
         Wrap(
           spacing: 8,

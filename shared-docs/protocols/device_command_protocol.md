@@ -1,7 +1,7 @@
 # Saturday Device Command Protocol
 
-**Version:** 1.3.0
-**Last Updated:** 2026-02-20
+**Version:** 1.4.0
+**Last Updated:** 2026-02-23
 **Audience:** Saturday Admin App developers, Firmware engineers, Consumer App developers
 
 ---
@@ -21,15 +21,16 @@
    - [factory_reset](#factory_reset)
 6. [Heartbeat Protocol](#heartbeat-protocol)
 7. [Command Acknowledgement Protocol](#command-acknowledgement-protocol)
-8. [Capability Model](#capability-model)
-9. [Firmware JSON Schema](#firmware-json-schema)
-10. [ESP-IDF Implementation Guide](#esp-idf-implementation-guide)
-11. [Attribute Schema Reference](#attribute-schema-reference)
-12. [Thread Network Diagnostics](#thread-network-diagnostics)
-13. [Error Codes](#error-codes)
-14. [Migration from Service Mode Protocol](#migration-from-service-mode-protocol)
-15. [Implementation Reference](#implementation-reference)
-16. [Version History](#version-history)
+8. [Mesh Command Relay](#mesh-command-relay)
+9. [Capability Model](#capability-model)
+10. [Firmware JSON Schema](#firmware-json-schema)
+11. [ESP-IDF Implementation Guide](#esp-idf-implementation-guide)
+12. [Attribute Schema Reference](#attribute-schema-reference)
+13. [Thread Network Diagnostics](#thread-network-diagnostics)
+14. [Error Codes](#error-codes)
+15. [Migration from Service Mode Protocol](#migration-from-service-mode-protocol)
+16. [Implementation Reference](#implementation-reference)
+17. [Version History](#version-history)
 
 ---
 
@@ -40,7 +41,7 @@ This document defines the **Device Command Protocol** for Saturday devices. This
 ### Key Concepts
 
 - **Always-Listening**: Devices continuously listen for commands when connected (no entry window required)
-- **MAC Address Identification**: Devices are identified by their MAC address (primary SoC)
+- **MAC Address Identification**: Devices are identified by their 48-bit MAC address (MAC-48) of the primary SoC, formatted as `XX:XX:XX:XX:XX:XX`. Thread devices must use their base MAC-48, **not** the EUI-64 extended address (which inserts `FF:FE` in the middle). The same MAC-48 must be used consistently across `get_status`, `factory_provision` responses, and heartbeats.
 - **Unified Commands**: Same command set works across UART (factory) and Supabase Realtime (remote)
 - **Capability-Driven**: Commands are scoped to device capabilities defined in the admin app
 
@@ -291,6 +292,8 @@ The device responds with data defined by its `factory_output` capability schemas
 }
 ```
 
+**Important:** The `mac_address` in the response must be the device's 48-bit base MAC (MAC-48), not an EUI-64 address. This value becomes the device's primary identifier in the cloud database and must match the `mac_address` used in heartbeats. For ESP32 devices, use `esp_read_mac()` with `ESP_MAC_BASE` or `ESP_MAC_WIFI_STA` — do not use the 802.15.4 EUI-64 address (which contains `FF:FE` inserted in the middle).
+
 **Validation:** The admin app **must** validate that the response `data` contains all fields marked as `required` in the device type's `factory_output` schemas. If any required fields are missing, provisioning should fail and the user should be notified. This ensures the device firmware is correctly implementing the capability contract.
 
 **Cloud Storage:** The admin app stores **only** the response `data` (minus `serial_number` and `name`) in the `devices.provision_data` JSONB column. Input parameters sent to the device are **not** stored — only the device's response data is persisted. See [Cloud Provision Data](#cloud-provision-data) for details.
@@ -346,7 +349,7 @@ Returns current device status including firmware version, connectivity state, an
 |-------|------|-------------|
 | `device_type` | string | Device type identifier (e.g., "hub", "crate") |
 | `firmware_version` | string | Current firmware version |
-| `mac_address` | string | Primary MAC address (hardware identifier) |
+| `mac_address` | string | Primary MAC-48 address (hardware identifier). Must be the 48-bit base MAC, not EUI-64. See [Key Concepts](#key-concepts). |
 | `serial_number` | string | Device serial number (null if not provisioned) |
 | `name` | string | Human-friendly product name (null if not provisioned) |
 | `uptime_sec` | number | Seconds since boot |
@@ -529,7 +532,7 @@ All devices must include these fields in every heartbeat, regardless of capabili
 
 | Field | Type | Description | ESP-IDF Function |
 |-------|------|-------------|------------------|
-| `mac_address` | string | Primary MAC address (device identifier) | `esp_read_mac()` |
+| `mac_address` | string | Primary MAC-48 address (device identifier). Must be the 48-bit base MAC, not EUI-64. Use `ESP_MAC_BASE` or `ESP_MAC_WIFI_STA` type. | `esp_read_mac()` |
 | `unit_id` | string | Serial number of the unit (from provisioning) | NVS lookup |
 | `device_type` | string | Device type slug (from firmware schema) | Compile-time constant |
 | `firmware_version` | string | Current firmware version | Compile-time constant |
@@ -685,7 +688,7 @@ All standard heartbeat fields should also be included.
 
 ### Result Heartbeat Format
 
-After command execution, send a result heartbeat:
+After command execution, send a result heartbeat. The command result fields (`status`, `result`, `error_message`) are included inside the `telemetry` JSONB column alongside standard telemetry metrics. The database trigger `update_command_on_ack()` extracts what it needs from this single column.
 
 ```json
 {
@@ -693,19 +696,19 @@ After command execution, send a result heartbeat:
   "unit_id": "SV-CRT-000001",
   "device_type": "crate",
   "firmware_version": "1.2.0",
-  "uptime_sec": 123460,
-  "free_heap": 245760,
-  "min_free_heap": 180224,
-  "largest_free_block": 114688,
   "type": "command_result",
   "command_id": "550e8400-e29b-41d4-a716-446655440000",
-  "heartbeat_data": {
+  "telemetry": {
     "status": "completed",
     "result": {
       "device_type": "crate",
       "firmware_version": "1.2.0",
       "mac_address": "AA:BB:CC:DD:EE:FF"
-    }
+    },
+    "uptime_sec": 123460,
+    "free_heap": 245760,
+    "min_free_heap": 180224,
+    "largest_free_block": 114688
   }
 }
 ```
@@ -718,15 +721,15 @@ After command execution, send a result heartbeat:
   "unit_id": "SV-CRT-000001",
   "device_type": "crate",
   "firmware_version": "1.2.0",
-  "uptime_sec": 123460,
-  "free_heap": 245760,
-  "min_free_heap": 180224,
-  "largest_free_block": 114688,
   "type": "command_result",
   "command_id": "550e8400-e29b-41d4-a716-446655440000",
-  "heartbeat_data": {
+  "telemetry": {
     "status": "failed",
-    "error_message": "WiFi connection timed out"
+    "error_message": "WiFi connection timed out",
+    "uptime_sec": 123460,
+    "free_heap": 245760,
+    "min_free_heap": 180224,
+    "largest_free_block": 114688
   }
 }
 ```
@@ -737,9 +740,11 @@ After command execution, send a result heartbeat:
 |-------|------|-------------|
 | `type` | string | Must be `"command_result"` |
 | `command_id` | uuid | The `id` field from the received command |
-| `heartbeat_data.status` | string | `"completed"` or `"failed"` |
-| `heartbeat_data.result` | object | Command result data (for successful commands) |
-| `heartbeat_data.error_message` | string | Error description (for failed commands) |
+| `telemetry.status` | string | `"completed"` or `"failed"` |
+| `telemetry.result` | object | Command result data (for successful commands) |
+| `telemetry.error_message` | string | Error description (for failed commands) |
+
+Note: The `telemetry` object contains **both** the command result fields and the standard telemetry metrics (uptime, heap, battery, etc.). The `type` and `command_id` fields are top-level columns on `device_heartbeats`, not nested inside `telemetry`.
 
 ### Database Status Updates
 
@@ -772,21 +777,33 @@ void send_command_ack(const char *command_id) {
 // Send command result
 void send_command_result(const char *command_id, bool success,
                          cJSON *result, const char *error_message) {
-    cJSON *heartbeat = create_standard_heartbeat();
+    cJSON *heartbeat = cJSON_CreateObject();
+    cJSON_AddStringToObject(heartbeat, "mac_address", get_mac_address());
+    cJSON_AddStringToObject(heartbeat, "unit_id", get_unit_id());
+    cJSON_AddStringToObject(heartbeat, "device_type", DEVICE_TYPE);
+    cJSON_AddStringToObject(heartbeat, "firmware_version", FIRMWARE_VERSION);
     cJSON_AddStringToObject(heartbeat, "type", "command_result");
     cJSON_AddStringToObject(heartbeat, "command_id", command_id);
 
-    cJSON *data = cJSON_CreateObject();
-    cJSON_AddStringToObject(data, "status", success ? "completed" : "failed");
+    // Build telemetry JSONB: command result fields + standard metrics
+    cJSON *telemetry = cJSON_CreateObject();
+    cJSON_AddStringToObject(telemetry, "status", success ? "completed" : "failed");
 
     if (success && result) {
-        cJSON_AddItemToObject(data, "result", cJSON_Duplicate(result, true));
+        cJSON_AddItemToObject(telemetry, "result", cJSON_Duplicate(result, true));
     }
     if (!success && error_message) {
-        cJSON_AddStringToObject(data, "error_message", error_message);
+        cJSON_AddStringToObject(telemetry, "error_message", error_message);
     }
 
-    cJSON_AddItemToObject(heartbeat, "heartbeat_data", data);
+    // Include standard telemetry metrics alongside result
+    cJSON_AddNumberToObject(telemetry, "uptime_sec", esp_timer_get_time() / 1000000);
+    cJSON_AddNumberToObject(telemetry, "free_heap", esp_get_free_heap_size());
+    cJSON_AddNumberToObject(telemetry, "min_free_heap", esp_get_minimum_free_heap_size());
+    cJSON_AddNumberToObject(telemetry, "largest_free_block",
+        heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
+
+    cJSON_AddItemToObject(heartbeat, "telemetry", telemetry);
 
     char *json_str = cJSON_PrintUnformatted(heartbeat);
     post_to_supabase("/rest/v1/device_heartbeats", json_str);
@@ -816,6 +833,72 @@ void handle_websocket_command(const char *json_str) {
     cJSON_Delete(cmd);
 }
 ```
+
+---
+
+## Mesh Command Relay
+
+Thread mesh devices (Crates, Speakers, etc.) lack direct cloud connectivity — they communicate exclusively over 802.15.4 radio through a Hub acting as Thread Border Router. Commands targeting these devices are automatically routed through their Hub.
+
+### How It Works
+
+The admin app does **not** need special handling for mesh devices. The database trigger `broadcast_device_command()` handles routing automatically:
+
+```
+1. Admin App → INSERT into device_commands with target device's mac_address
+2. DB trigger checks devices.hub_mac_address for the target device
+3a. If hub_mac_address is set → broadcast to Hub's channel with target_mac field
+3b. If hub_mac_address is NULL → broadcast directly to device's channel (normal path)
+4. Hub receives command on its WebSocket channel
+5. Hub resolves target_mac → Thread extended address from identity cache
+6. Hub encodes command as CBOR and sends via UART → H2 → CoAP POST /cmd
+7. Mesh node processes command, sends ack/result telemetry back
+8. Telemetry flows: CoAP → H2 → UART → Hub → Supabase POST device_heartbeats
+```
+
+### Hub MAC Auto-Population
+
+The `devices.hub_mac_address` column is automatically populated from relayed heartbeats. When a Hub relays a heartbeat for a mesh device (with `relay_device_type: "hub"`), the `sync_heartbeat_to_device_and_unit()` trigger resolves the Hub's MAC from `relay_instance_id` and stores it in `devices.hub_mac_address`. No manual configuration is needed — as soon as a mesh device sends its first heartbeat through a Hub, the routing relationship is established.
+
+If a device sends a direct heartbeat (no relay fields), `hub_mac_address` is cleared — the device has direct cloud access and doesn't need relay routing.
+
+### WebSocket Payload for Relayed Commands
+
+When a command is routed through a Hub, the broadcast payload includes a `target_mac` field identifying the actual target device:
+
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "command": "get_dataset",
+  "capability": null,
+  "test_name": null,
+  "parameters": null,
+  "target_mac": "74:4D:BD:60:29:76"
+}
+```
+
+The Hub firmware:
+1. Detects the `target_mac` field (different from its own MAC)
+2. Looks up the Thread extended address for that MAC in its identity cache
+3. Encodes the command as CBOR: `{"id":"<uuid>","cmd":"<command>","params":{...}}`
+4. Sends via UART → H2 → CoAP POST to the mesh node
+
+### Command Acknowledgement for Relayed Commands
+
+Ack and result telemetry flows back as `device_heartbeats` rows with the **mesh device's** identity (`mac_address`, `unit_id`), not the Hub's. The `command_id` column links back to the original `device_commands` row. The `update_command_on_ack()` trigger updates command status as normal — no special handling for relayed commands.
+
+The Hub adds `relay_device_type: "hub"` and `relay_instance_id` to these heartbeats, same as for regular telemetry.
+
+### Hub-Initiated Re-registration
+
+When a Hub reboots, its in-memory identity cache (mapping Thread extended addresses to MAC/unit_id) is cleared. The Hub detects unidentified mesh devices when their telemetry arrives without a cached identity, and automatically sends a `register` command via H2 → CoAP to trigger re-registration. This is transparent to the admin app.
+
+### Admin App Requirements
+
+- **No special handling needed**: INSERT commands into `device_commands` with the target device's own `mac_address`, regardless of whether it connects directly or through a Hub
+- **Hub routing is automatic**: The `hub_mac_address` column is maintained by heartbeat triggers; the broadcast trigger uses it for routing
+- **Commands to offline devices**: If the Hub is offline or the mesh device has never sent a heartbeat (`hub_mac_address` is NULL), the command will be broadcast to a channel with no listener. The `device_commands` row remains in `pending` status
+- **Status tracking works normally**: Ack/result heartbeats reference `command_id`, and the `update_command_on_ack()` trigger updates `device_commands.status` the same way as for directly-connected devices
 
 ---
 
@@ -1356,6 +1439,7 @@ static void heartbeat_task(void *arg) {
         cJSON *heartbeat = cJSON_CreateObject();
 
         // Standard fields (required for all devices)
+        // IMPORTANT: Use base MAC-48 (esp_read_mac with ESP_MAC_BASE), not EUI-64
         cJSON_AddStringToObject(heartbeat, "mac_address", get_mac_address());
         cJSON_AddStringToObject(heartbeat, "unit_id", get_unit_id());  // From NVS (provisioning)
         cJSON_AddStringToObject(heartbeat, "device_type", DEVICE_TYPE);  // From firmware schema
@@ -1622,6 +1706,8 @@ Key components:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.4.0 | 2026-02-23 | Added Mesh Command Relay section: documents automatic routing of commands through Hubs to Thread mesh devices via `devices.hub_mac_address`; covers WebSocket `target_mac` field, hub MAC auto-population from relayed heartbeats, ack/result flow, and admin app integration (no special handling needed) |
+| 1.3.1 | 2026-02-22 | Fixed Command Acknowledgement Protocol: command result heartbeats use `telemetry` JSONB column (not `heartbeat_data`); `type` and `command_id` are top-level columns; `status`, `result`, and `error_message` go inside `telemetry` alongside standard metrics; updated ESP-IDF example to match |
 | 1.3.0 | 2026-02-20 | Replaced `run_test` meta-command with flat capability commands (`connect`, `scan`, `get_dataset`, `register`, etc.); renamed `tests` → `commands` in schema references; `run_test` kept as deprecated alias; added `register` command for hub-initiated re-registration |
 | 1.2.7 | 2026-02-18 | Added Thread Network Diagnostics section with `get_dataset` test command and troubleshooting workflow for debugging Thread join failures |
 | 1.2.6 | 2026-02-06 | Clarified that `provision_data` stores only device response data (`_output` schemas), not input params; added validation requirement - provisioning must fail if required `factory_output` fields are missing |
