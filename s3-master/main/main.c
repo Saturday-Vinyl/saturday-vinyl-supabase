@@ -9,6 +9,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
+#include "freertos/queue.h"
 #include "esp_log.h"
 #include "nvs_flash.h"
 
@@ -59,9 +60,13 @@ static uint32_t s_h2_error_count = 0;
 static uint32_t s_wifi_error_count = 0;
 #define MAX_SUBSYSTEM_ERRORS 10  /* After this many errors, log warning */
 
-/* Mutex to serialize crate telemetry HTTP posts (prevents heap corruption
- * when two crate_telemetry_task instances call supabase_post() concurrently) */
-static SemaphoreHandle_t s_telem_mutex = NULL;
+/* Queue + worker task for crate telemetry processing.
+ * A single persistent task drains the queue sequentially, eliminating the
+ * need for a mutex and avoiding per-event task creation (saves ~8KB per
+ * concurrent crate vs. the old spawn-per-event pattern). */
+#define CRATE_TELEM_QUEUE_DEPTH  4   /* 4 x ~524B = ~2KB heap */
+static QueueHandle_t s_telem_queue = NULL;
+static TaskHandle_t  s_telem_task  = NULL;
 
 /* Rate-limit S3-initiated re-register nudges after S3 reboot.
  * When S3 reboots (but H2 doesn't), the identity cache is cleared.
@@ -356,38 +361,48 @@ static void request_crate_reregister(const uint8_t *ext_addr)
 }
 
 /**
- * @brief Crate telemetry task — executes on a dedicated stack to avoid sys_evt overflow
+ * @brief Persistent crate telemetry worker — drains s_telem_queue sequentially
  *
- * CBOR decoding + JSON serialization + Supabase POST need ~2KB of stack buffers.
- * The sys_evt task only has 4KB, so we offload to a one-shot task.
+ * A single instance runs for the lifetime of the application. Events arrive
+ * via xQueueReceive (blocking wait). Processing is identical to the old
+ * one-shot crate_telemetry_task: CBOR decode, JSON, HTTP POST, re-register
+ * nudge on cache miss.
  *
- * A mutex serializes concurrent instances to prevent heap corruption from
- * concurrent access to the shared persistent HTTP client in supabase_post().
+ * Stack budget (worst-case):
+ *   event_reporter_queue_crate_telemetry:  ~2.5 KB  (768+1280 byte JSON buffers,
+ *                                                     CBOR parser, loop locals)
+ *   supabase_post:                         ~0.6 KB  (256 URL + 264 auth header)
+ *   mbedTLS / esp_http_client_perform:     ~2.0 KB  (TLS handshake, cert verify)
+ *   h2_comm_crate_telemetry_event_t local: ~0.5 KB  (on-stack copy from queue)
+ *   ─────────────────────────────────────────────────
+ *   Total:                                 ~5.6 KB → 8 KB stack (30% margin)
+ *
+ * Because a single task processes events sequentially, there is no concurrent
+ * access to the shared persistent HTTP client — no mutex needed.
  */
-static void crate_telemetry_task(void *arg)
+static void crate_telemetry_worker(void *arg)
 {
-    h2_comm_crate_telemetry_event_t *evt = (h2_comm_crate_telemetry_event_t *)arg;
+    h2_comm_crate_telemetry_event_t evt;
 
-    if (xSemaphoreTake(s_telem_mutex, pdMS_TO_TICKS(10000)) == pdTRUE) {
-        esp_err_t ret = event_reporter_queue_crate_telemetry(evt->ext_addr, evt->hb_type,
-                                                              evt->cbor_data, evt->cbor_len);
+    ESP_LOGI(TAG, "Crate telemetry worker started (queue depth=%d)", CRATE_TELEM_QUEUE_DEPTH);
+
+    while (true) {
+        if (xQueueReceive(s_telem_queue, &evt, portMAX_DELAY) != pdTRUE) {
+            continue;
+        }
+
+        esp_err_t ret = event_reporter_queue_crate_telemetry(
+            evt.ext_addr, evt.hb_type, evt.cbor_data, evt.cbor_len);
 
         /* If the identity wasn't cached (ESP_ERR_NOT_FOUND while WiFi is up),
          * request re-registration via H2 → CoAP. This handles the case where
          * S3 rebooted (clearing its cache) but H2 didn't (still has the crate
          * registered, so no 4.01 Unauthorized → no H2-initiated nudge). */
         if (ret == ESP_ERR_NOT_FOUND && s_wifi_connected &&
-            nudge_cooldown_ok(evt->ext_addr)) {
-            request_crate_reregister(evt->ext_addr);
+            nudge_cooldown_ok(evt.ext_addr)) {
+            request_crate_reregister(evt.ext_addr);
         }
-
-        xSemaphoreGive(s_telem_mutex);
-    } else {
-        ESP_LOGW(TAG, "Telemetry mutex timeout — dropping crate telemetry");
     }
-
-    free(evt);
-    vTaskDelete(NULL);
 }
 
 /**
@@ -489,14 +504,15 @@ static void on_h2_event(void *handler_args, esp_event_base_t base,
             h2_comm_crate_telemetry_event_t *evt = (h2_comm_crate_telemetry_event_t *)event_data;
             ESP_LOGI(TAG, "Crate telemetry: type=%d, cbor_len=%d",
                      evt->hb_type, evt->cbor_len);
-            /* Offload to dedicated task — CBOR+JSON+HTTP needs more stack than sys_evt has */
-            h2_comm_crate_telemetry_event_t *evt_copy = malloc(sizeof(*evt_copy));
-            if (evt_copy != NULL) {
-                memcpy(evt_copy, evt, sizeof(*evt_copy));
-                if (xTaskCreate(crate_telemetry_task, "crate_telem", 6144,
-                                evt_copy, 5, NULL) != pdPASS) {
-                    ESP_LOGE(TAG, "Failed to create crate_telem task");
-                    free(evt_copy);
+            /* Enqueue for persistent worker — no malloc, no task spawn */
+            if (s_telem_queue != NULL) {
+                if (xQueueSend(s_telem_queue, evt, 0) != pdTRUE) {
+                    ESP_LOGW(TAG, "Crate telemetry queue full — dropping event "
+                             "%02X%02X%02X%02X%02X%02X%02X%02X",
+                             evt->ext_addr[0], evt->ext_addr[1],
+                             evt->ext_addr[2], evt->ext_addr[3],
+                             evt->ext_addr[4], evt->ext_addr[5],
+                             evt->ext_addr[6], evt->ext_addr[7]);
                 }
             }
             break;
@@ -1166,10 +1182,20 @@ void app_main(void)
         }
     }
 
-    /* Create mutex for serializing crate telemetry HTTP posts */
-    s_telem_mutex = xSemaphoreCreateMutex();
-    if (s_telem_mutex == NULL) {
-        ESP_LOGE(TAG, "Failed to create telemetry mutex");
+    /* Create queue + persistent worker for crate telemetry processing.
+     * Replaces per-event task spawning to cap memory usage at one 8KB stack
+     * + ~2KB queue regardless of concurrent crate count. */
+    s_telem_queue = xQueueCreate(CRATE_TELEM_QUEUE_DEPTH,
+                                  sizeof(h2_comm_crate_telemetry_event_t));
+    if (s_telem_queue == NULL) {
+        ESP_LOGE(TAG, "Failed to create crate telemetry queue");
+    } else {
+        if (xTaskCreate(crate_telemetry_worker, "crate_telem",
+                        8192, NULL, 5, &s_telem_task) != pdPASS) {
+            ESP_LOGE(TAG, "Failed to create crate telemetry worker task");
+            vQueueDelete(s_telem_queue);
+            s_telem_queue = NULL;
+        }
     }
 
     /* Phase S3-7/INT-1: Initialize H2 communication interface */

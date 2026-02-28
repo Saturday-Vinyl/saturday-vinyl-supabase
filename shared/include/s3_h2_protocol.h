@@ -128,6 +128,7 @@ typedef enum {
     S3H2_ERR_OTA_FLASH          = 0x13,     /**< OTA flash write failed */
     S3H2_ERR_OTA_NO_SESSION     = 0x14,     /**< No active OTA session */
     S3H2_ERR_OTA_SEQUENCE       = 0x15,     /**< Invalid OTA chunk sequence */
+    S3H2_ERR_CRATE_REJECTED     = 0x16,     /**< Crate responded with CoAP error (4.xx/5.xx) */
     S3H2_ERR_INTERNAL           = 0xFF,     /**< Internal error */
 } s3h2_error_t;
 

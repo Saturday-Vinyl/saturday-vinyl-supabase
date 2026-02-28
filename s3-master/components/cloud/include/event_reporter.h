@@ -288,6 +288,26 @@ void event_reporter_cache_crate_identity(const uint8_t *ext_addr,
  */
 bool event_reporter_lookup_crate_ext_addr(const char *mac, uint8_t *ext_addr_out);
 
+/**
+ * @brief Look up crate identity fields by MAC
+ *
+ * Searches the crate identity cache and copies unit_id, device_type,
+ * and fw_version into caller-provided buffers.
+ *
+ * @param mac MAC address string (e.g., "AA:BB:CC:DD:EE:FF")
+ * @param unit_id Output buffer for unit ID (may be NULL to skip)
+ * @param unit_id_len Size of unit_id buffer
+ * @param device_type Output buffer for device type (may be NULL to skip)
+ * @param device_type_len Size of device_type buffer
+ * @param fw_version Output buffer for firmware version (may be NULL to skip)
+ * @param fw_version_len Size of fw_version buffer
+ * @return true if found, false if not in cache
+ */
+bool event_reporter_lookup_crate_identity(const char *mac,
+                                           char *unit_id, size_t unit_id_len,
+                                           char *device_type, size_t device_type_len,
+                                           char *fw_version, size_t fw_version_len);
+
 #ifdef __cplusplus
 }
 #endif

@@ -1063,6 +1063,9 @@ static void handle_relay_cmd(const uint8_t *payload, uint16_t len)
     } else if (ret == ESP_ERR_TIMEOUT) {
         ESP_LOGW(TAG, "Crate not reachable for command relay");
         s3_comm_send_nak(S3H2_ERR_CRATE_UNREACHABLE);
+    } else if (ret == ESP_ERR_NOT_FOUND) {
+        ESP_LOGW(TAG, "Crate rejected command (CoAP 4.xx/5.xx)");
+        s3_comm_send_nak(S3H2_ERR_CRATE_REJECTED);
     } else {
         ESP_LOGE(TAG, "Command relay failed: %s", esp_err_to_name(ret));
         s3_comm_send_nak(S3H2_ERR_INTERNAL);

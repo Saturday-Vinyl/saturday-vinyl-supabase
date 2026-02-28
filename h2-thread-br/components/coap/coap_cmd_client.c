@@ -32,6 +32,7 @@ static const char *TAG = "COAP_CMD";
 
 static EventGroupHandle_t s_events = NULL;
 static bool s_response_ok = false;
+static bool s_response_rejected = false;  /* Crate responded with non-2.xx CoAP code */
 
 /*******************************************************************************
  * Initialization
@@ -101,6 +102,7 @@ static void cmd_response_handler(void *context, otMessage *message,
              (code >> 5), (code & 0x1F));
 
     s_response_ok = ((code >> 5) == 2);
+    s_response_rejected = !s_response_ok;  /* Non-2.xx = crate rejected the command */
     xEventGroupSetBits(s_events, EVT_RESPONSE);
 }
 
@@ -131,6 +133,7 @@ esp_err_t coap_cmd_client_send(const uint8_t *target_ext_addr,
     /* Clear events */
     xEventGroupClearBits(s_events, EVT_RESPONSE | EVT_TIMEOUT);
     s_response_ok = false;
+    s_response_rejected = false;
 
     otInstance *instance = esp_openthread_get_instance();
     if (instance == NULL) {
@@ -209,7 +212,11 @@ esp_err_t coap_cmd_client_send(const uint8_t *target_ext_addr,
                                             pdMS_TO_TICKS(CMD_TIMEOUT_MS));
 
     if (bits & EVT_RESPONSE) {
-        return s_response_ok ? ESP_OK : ESP_FAIL;
+        if (s_response_ok) {
+            return ESP_OK;
+        }
+        /* Crate responded but with a non-2.xx code (e.g., 4.04 Not Found) */
+        return s_response_rejected ? ESP_ERR_NOT_FOUND : ESP_FAIL;
     }
 
     ESP_LOGW(TAG, "Command timed out");

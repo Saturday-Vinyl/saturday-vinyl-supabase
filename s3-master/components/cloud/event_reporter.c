@@ -1076,6 +1076,24 @@ bool event_reporter_lookup_crate_ext_addr(const char *mac, uint8_t *ext_addr_out
     return false;
 }
 
+bool event_reporter_lookup_crate_identity(const char *mac,
+                                           char *unit_id, size_t unit_id_len,
+                                           char *device_type, size_t device_type_len,
+                                           char *fw_version, size_t fw_version_len)
+{
+    if (mac == NULL) return false;
+
+    for (int i = 0; i < MAX_CACHED_CRATES; i++) {
+        if (s_crate_cache[i].valid && strcmp(s_crate_cache[i].mac, mac) == 0) {
+            if (unit_id) strncpy(unit_id, s_crate_cache[i].unit_id, unit_id_len - 1);
+            if (device_type) strncpy(device_type, s_crate_cache[i].device_type, device_type_len - 1);
+            if (fw_version) strncpy(fw_version, s_crate_cache[i].fw_version, fw_version_len - 1);
+            return true;
+        }
+    }
+    return false;
+}
+
 static const crate_identity_t *crate_identity_lookup(const uint8_t *ext_addr)
 {
     for (int i = 0; i < MAX_CACHED_CRATES; i++) {

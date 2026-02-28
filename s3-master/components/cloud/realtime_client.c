@@ -127,7 +127,8 @@ static void get_mac_address_dashed(char *mac_str, size_t len);
 static void get_mac_address_colon(char *mac_str, size_t len);
 static esp_err_t send_command_ack_heartbeat(const char *command_id);
 static esp_err_t send_command_result_heartbeat(const char *command_id, bool success,
-                                                const cJSON *result, const char *error_message);
+                                                const cJSON *result, const char *error_message,
+                                                const char *target_mac);
 
 /*******************************************************************************
  * MAC Address Helper
@@ -313,10 +314,14 @@ static esp_err_t send_command_ack_heartbeat(const char *command_id)
  * @param success true if command completed successfully
  * @param result Optional result data (cJSON object, only for success)
  * @param error_message Optional error message (only for failure)
+ * @param target_mac If non-NULL, this is a mesh-relayed command — use the
+ *                   crate's identity and add relay fields pointing to the Hub.
+ *                   If NULL, use the Hub's own identity (local command).
  * @return ESP_OK on success, error code otherwise
  */
 static esp_err_t send_command_result_heartbeat(const char *command_id, bool success,
-                                                const cJSON *result, const char *error_message)
+                                                const cJSON *result, const char *error_message,
+                                                const char *target_mac)
 {
     if (command_id == NULL) {
         return ESP_ERR_INVALID_ARG;
@@ -330,8 +335,39 @@ static esp_err_t send_command_result_heartbeat(const char *command_id, bool succ
         return ESP_ERR_NO_MEM;
     }
 
-    /* Add standard heartbeat fields and get telemetry sub-object */
-    cJSON *telemetry = build_standard_heartbeat_fields(heartbeat);
+    cJSON *telemetry;
+
+    if (target_mac != NULL) {
+        /* Mesh-relayed command: use crate identity + relay fields */
+        cJSON_AddStringToObject(heartbeat, "mac_address", target_mac);
+
+        char unit_id[24] = "";
+        char device_type[20] = "";
+        char fw_version[16] = "";
+        event_reporter_lookup_crate_identity(target_mac,
+                                              unit_id, sizeof(unit_id),
+                                              device_type, sizeof(device_type),
+                                              fw_version, sizeof(fw_version));
+        cJSON_AddStringToObject(heartbeat, "unit_id",
+                                unit_id[0] ? unit_id : "UNKNOWN");
+        cJSON_AddStringToObject(heartbeat, "device_type",
+                                device_type[0] ? device_type : "crate");
+        cJSON_AddStringToObject(heartbeat, "firmware_version",
+                                fw_version[0] ? fw_version : "unknown");
+
+        /* Relay fields: this heartbeat came through the Hub */
+        cJSON_AddStringToObject(heartbeat, "relay_device_type", "hub");
+        char hub_unit_id[SUPABASE_UNIT_ID_MAX_LEN] = "";
+        supabase_get_unit_id(hub_unit_id, sizeof(hub_unit_id));
+        cJSON_AddStringToObject(heartbeat, "relay_instance_id", hub_unit_id);
+
+        /* Minimal telemetry — no Hub metrics for mesh-relayed results */
+        telemetry = cJSON_AddObjectToObject(heartbeat, "telemetry");
+    } else {
+        /* Local command: use Hub's own identity and metrics */
+        telemetry = build_standard_heartbeat_fields(heartbeat);
+    }
+
     if (telemetry == NULL) {
         cJSON_Delete(heartbeat);
         return ESP_ERR_NO_MEM;
@@ -708,14 +744,14 @@ esp_err_t realtime_client_ack_command(const char *command_id, const char *status
         if (result_json != NULL) {
             result = cJSON_Parse(result_json);
         }
-        esp_err_t err = send_command_result_heartbeat(command_id, true, result, NULL);
+        esp_err_t err = send_command_result_heartbeat(command_id, true, result, NULL, NULL);
         if (result != NULL) {
             cJSON_Delete(result);
         }
         return err;
     } else if (strcmp(status, "failed") == 0) {
         /* For failed status, result_json is treated as error message */
-        return send_command_result_heartbeat(command_id, false, NULL, result_json);
+        return send_command_result_heartbeat(command_id, false, NULL, result_json, NULL);
     } else {
         ESP_LOGW(TAG, "Unknown ack status: %s", status);
         return ESP_ERR_INVALID_ARG;
@@ -1266,22 +1302,36 @@ static int encode_command_cbor(const char *command_id, const char *command,
     /* Count map entries: id + cmd + optional params */
     int map_entries = 2;  /* id, cmd always present */
     const cJSON *params = cJSON_GetObjectItem(payload, "parameters");
+    cJSON *parsed_params = NULL;  /* owned; must free if allocated */
+    if (cJSON_IsString(params) && params->valuestring[0] != '\0') {
+        /* parameters column arrives as a JSON-encoded string from Supabase;
+         * parse it into an object so we can encode each key-value as CBOR. */
+        parsed_params = cJSON_Parse(params->valuestring);
+        if (cJSON_IsObject(parsed_params)) {
+            params = parsed_params;
+        } else {
+            cJSON_Delete(parsed_params);
+            parsed_params = NULL;
+        }
+    }
     if (cJSON_IsObject(params)) map_entries++;
 
+    int result = -1;
+
     CborError err = cbor_encoder_create_map(&encoder, &map_encoder, map_entries);
-    if (err != CborNoError) return -1;
+    if (err != CborNoError) goto cleanup;
 
     /* "id" */
     err = cbor_encode_text_stringz(&map_encoder, "id");
-    if (err != CborNoError) return -1;
+    if (err != CborNoError) goto cleanup;
     err = cbor_encode_text_stringz(&map_encoder, command_id);
-    if (err != CborNoError) return -1;
+    if (err != CborNoError) goto cleanup;
 
     /* "cmd" — flat command name */
     err = cbor_encode_text_stringz(&map_encoder, "cmd");
-    if (err != CborNoError) return -1;
+    if (err != CborNoError) goto cleanup;
     err = cbor_encode_text_stringz(&map_encoder, effective_cmd);
-    if (err != CborNoError) return -1;
+    if (err != CborNoError) goto cleanup;
 
     /* "params" (optional) — encode JSON object as CBOR map */
     if (cJSON_IsObject(params)) {
@@ -1289,16 +1339,16 @@ static int encode_command_cbor(const char *command_id, const char *command,
         int param_count = cJSON_GetArraySize(params);
 
         err = cbor_encode_text_stringz(&map_encoder, "params");
-        if (err != CborNoError) return -1;
+        if (err != CborNoError) goto cleanup;
 
         CborEncoder params_encoder;
         err = cbor_encoder_create_map(&map_encoder, &params_encoder, param_count);
-        if (err != CborNoError) return -1;
+        if (err != CborNoError) goto cleanup;
 
         cJSON *item;
         cJSON_ArrayForEach(item, params) {
             err = cbor_encode_text_stringz(&params_encoder, item->string);
-            if (err != CborNoError) return -1;
+            if (err != CborNoError) goto cleanup;
 
             if (cJSON_IsNumber(item)) {
                 if (item->valuedouble == (double)(int64_t)item->valuedouble) {
@@ -1314,17 +1364,21 @@ static int encode_command_cbor(const char *command_id, const char *command,
                 /* Encode as null for unsupported types */
                 err = cbor_encode_null(&params_encoder);
             }
-            if (err != CborNoError) return -1;
+            if (err != CborNoError) goto cleanup;
         }
 
         err = cbor_encoder_close_container(&map_encoder, &params_encoder);
-        if (err != CborNoError) return -1;
+        if (err != CborNoError) goto cleanup;
     }
 
     err = cbor_encoder_close_container(&encoder, &map_encoder);
-    if (err != CborNoError) return -1;
+    if (err != CborNoError) goto cleanup;
 
-    return (int)cbor_encoder_get_buffer_size(&encoder, out_buf);
+    result = (int)cbor_encoder_get_buffer_size(&encoder, out_buf);
+
+cleanup:
+    cJSON_Delete(parsed_params);  /* safe on NULL */
+    return result;
 }
 
 /**
@@ -1437,7 +1491,8 @@ static void handle_command(const cJSON *payload)
                 ESP_LOGE(TAG, "Mesh relay failed: %s", esp_err_to_name(relay_err));
                 /* Send failure result on behalf of the unreachable node */
                 send_command_result_heartbeat(event.command_id, false, NULL,
-                                              "mesh_relay_failed");
+                                              "mesh_relay_failed",
+                                              target_mac->valuestring);
             }
             /* Don't handle locally — mesh node handles ack/result */
             return;
@@ -1473,7 +1528,7 @@ static void handle_command(const cJSON *payload)
         cJSON_AddNumberToObject(result, "delay_ms", 2000);
 
         if (event.command_id[0] != '\0') {
-            send_command_result_heartbeat(event.command_id, true, result, NULL);
+            send_command_result_heartbeat(event.command_id, true, result, NULL, NULL);
         }
         cJSON_Delete(result);
 
@@ -1491,7 +1546,7 @@ static void handle_command(const cJSON *payload)
         cJSON_AddStringToObject(result, "action", "update_check_started");
 
         if (event.command_id[0] != '\0') {
-            send_command_result_heartbeat(event.command_id, true, result, NULL);
+            send_command_result_heartbeat(event.command_id, true, result, NULL, NULL);
         }
         cJSON_Delete(result);
 
@@ -1512,7 +1567,7 @@ static void handle_command(const cJSON *payload)
         cJSON_AddNumberToObject(result, "free_heap", esp_get_free_heap_size());
 
         if (event.command_id[0] != '\0') {
-            send_command_result_heartbeat(event.command_id, true, result, NULL);
+            send_command_result_heartbeat(event.command_id, true, result, NULL, NULL);
         }
         cJSON_Delete(result);
 

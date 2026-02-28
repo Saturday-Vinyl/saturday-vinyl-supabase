@@ -56,6 +56,29 @@ static s3h2_error_t s_last_nak_error = S3H2_ERR_NONE;
 /* Statistics */
 static h2_comm_stats_t s_stats = {0};
 
+static const char *s3h2_error_str(s3h2_error_t err)
+{
+    switch (err) {
+        case S3H2_ERR_NONE:              return "NONE";
+        case S3H2_ERR_INVALID_CMD:       return "INVALID_CMD";
+        case S3H2_ERR_INVALID_PARAM:     return "INVALID_PARAM";
+        case S3H2_ERR_NOT_READY:         return "NOT_READY";
+        case S3H2_ERR_BUSY:              return "BUSY";
+        case S3H2_ERR_TIMEOUT:           return "TIMEOUT";
+        case S3H2_ERR_NO_CREDENTIALS:    return "NO_CREDENTIALS";
+        case S3H2_ERR_NOT_ATTACHED:      return "NOT_ATTACHED";
+        case S3H2_ERR_CRATE_UNREACHABLE: return "CRATE_UNREACHABLE";
+        case S3H2_ERR_CRATE_REJECTED:    return "CRATE_REJECTED";
+        case S3H2_ERR_OTA_IN_PROGRESS:   return "OTA_IN_PROGRESS";
+        case S3H2_ERR_OTA_CHECKSUM:      return "OTA_CHECKSUM";
+        case S3H2_ERR_OTA_FLASH:         return "OTA_FLASH";
+        case S3H2_ERR_OTA_NO_SESSION:    return "OTA_NO_SESSION";
+        case S3H2_ERR_OTA_SEQUENCE:      return "OTA_SEQUENCE";
+        case S3H2_ERR_INTERNAL:          return "INTERNAL";
+        default:                         return "UNKNOWN";
+    }
+}
+
 /* Frame parser state */
 typedef enum {
     PARSE_STATE_HEADER,
@@ -851,7 +874,8 @@ static esp_err_t send_command_wait_response(uint8_t cmd_type, const void *payloa
         }
         ret = ESP_OK;
     } else if (bits & EVT_NAK_RECEIVED) {
-        ESP_LOGW(TAG, "Command 0x%02X NAK'd: error=%d", cmd_type, s_last_nak_error);
+        ESP_LOGW(TAG, "Command 0x%02X NAK'd: %s (%d)", cmd_type,
+                 s3h2_error_str(s_last_nak_error), s_last_nak_error);
         ret = ESP_FAIL;
     } else {
         /* Timeout */
