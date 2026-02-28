@@ -27,6 +27,7 @@ import 'package:saturday_consumer_app/screens/account/notification_settings_scre
 import 'package:saturday_consumer_app/screens/onboarding/quick_start_screen.dart';
 import 'package:saturday_consumer_app/screens/onboarding/add_album_intro_screen.dart';
 import 'package:saturday_consumer_app/screens/search/search_screen.dart';
+import 'package:saturday_consumer_app/screens/tags/tag_resolution_screen.dart';
 import 'package:saturday_consumer_app/widgets/common/scaffold_with_nav.dart';
 
 /// Route paths for the app.
@@ -66,6 +67,9 @@ class RoutePaths {
   // Invitation routes (top-level for deep linking)
   static const String inviteAccept = '/invite/:code';
 
+  // Tag resolution routes (top-level for deep linking)
+  static const String tagResolution = '/tags/:epc';
+
   // Now Playing nested routes
   static const String setNowPlaying = 'set';
 
@@ -102,6 +106,7 @@ class RouteNames {
   static const String settings = 'settings';
   static const String search = 'search';
   static const String setNowPlaying = 'set-now-playing';
+  static const String tagResolution = 'tag-resolution';
   static const String onboardingQuickStart = 'onboarding-quick-start';
   static const String onboardingAddAlbumIntro = 'onboarding-add-album-intro';
 }
@@ -336,6 +341,16 @@ GoRouter createAppRouter(Ref ref) {
         builder: (context, state) {
           final code = state.pathParameters['code']!;
           return InvitationAcceptScreen(inviteCode: code);
+        },
+      ),
+
+      // Tag resolution route (top-level for deep linking)
+      GoRoute(
+        path: RoutePaths.tagResolution,
+        name: RouteNames.tagResolution,
+        builder: (context, state) {
+          final epc = state.pathParameters['epc']!;
+          return TagResolutionScreen(epc: epc);
         },
       ),
     ],

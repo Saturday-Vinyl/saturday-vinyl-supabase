@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:saturday_consumer_app/models/library_album.dart';
 import 'package:saturday_consumer_app/models/tag.dart';
 import 'package:saturday_consumer_app/providers/auth_provider.dart';
 import 'package:saturday_consumer_app/providers/repository_providers.dart';
@@ -200,6 +201,16 @@ class TagAssociationNotifier extends StateNotifier<TagAssociationState> {
 final tagAssociationProvider =
     StateNotifierProvider<TagAssociationNotifier, TagAssociationState>((ref) {
   return TagAssociationNotifier(ref);
+});
+
+/// Provider that resolves an EPC identifier to its associated LibraryAlbum.
+///
+/// Returns the full LibraryAlbum with nested Album data if found and associated.
+/// Returns null if the tag doesn't exist or isn't associated.
+final libraryAlbumByEpcProvider =
+    FutureProvider.family<LibraryAlbum?, String>((ref, epc) async {
+  final tagRepo = ref.watch(tagRepositoryProvider);
+  return tagRepo.getLibraryAlbumByEpc(epc);
 });
 
 /// Provider for whether a library album has any associated tags.

@@ -138,6 +138,10 @@ class DeepLinkHandler {
   ///
   /// URL format: /tags/{epc}
   /// Where epc is the EPC code from the Saturday tag QR code.
+  ///
+  /// Navigates to the tag resolution screen which handles looking up the
+  /// album by EPC and either redirecting to it or prompting the user to
+  /// link the tag to an album.
   void _handleTagLink(List<String> segments) {
     if (segments.length < 2) {
       // Missing EPC - go to library.
@@ -151,12 +155,7 @@ class DeepLinkHandler {
       print('DeepLinkHandler: Tag link with EPC: $epc');
     }
 
-    // Navigate to tag association with the scanned EPC.
-    // The tag association flow will look up the album by tag or prompt to associate.
-    // For now, we'll go to now playing and let the tag lookup happen.
-    // In a real implementation, this would trigger tag lookup.
-    _router!.go(RoutePaths.nowPlaying);
-    // TODO: Implement tag lookup by EPC and navigate to album or associate.
+    _router!.go('/tags/$epc');
   }
 
   /// Handle album detail deep link.
