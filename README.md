@@ -1,205 +1,116 @@
-# Saturday Consumer App
+# Saturday Vinyl Shared Documentation
 
-A mobile companion application for Saturday's line of vinyl record furniture. The app enables vinyl enthusiasts to manage their record collections, track what's currently playing, locate albums in their physical storage, and manage their Saturday devices.
+Central repository for Saturday Vinyl technical documentation shared across all projects.
 
-## Getting Started
+## Contents
 
-### Prerequisites
+### Concepts
+- **[Data Model](concepts/data_model.md)** - Core entity relationships (Units, Devices, Products, Device Types, Capabilities, Firmware)
 
-- **Flutter SDK**: Version 3.35.0 or higher
-- **Dart SDK**: Version 3.9.0 or higher (included with Flutter)
-- **Xcode**: 15.0 or higher (for iOS development)
-- **Android Studio**: Latest version with Android SDK (for Android development)
-- **CocoaPods**: For iOS dependency management
+### Protocols
+- **[BLE Provisioning Protocol](protocols/ble_provisioning_protocol.md)** - BLE GATT interface for mobile app device provisioning
+- **[CoAP Mesh Protocol](protocols/coap_mesh_protocol.md)** - CoAP communication over Thread mesh (Hub ↔ Node)
+- **[Device Command Protocol](protocols/device_command_protocol.md)** - Unified command interface for device communication
+- **[Service Mode Protocol](protocols/service_mode_protocol.md)** - USB serial interface for factory provisioning and diagnostics
 
-### Installation
+### Schemas
+- **[Capability Schema](schemas/capability_schema.md)** - Capability definition and attribute schema specification
 
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd saturday-consumer-app
-   ```
+### Templates
+- **[Claude Command Templates](templates/claude-commands/)** - Slash command wrappers for Claude Code integration
 
-2. **Install Flutter dependencies**
-   ```bash
-   flutter pub get
-   ```
+## Usage
 
-3. **Set up environment variables**
+### Adding to a New Project
 
-   Copy the example environment file and fill in your values:
-   ```bash
-   cp .env.example .env
-   ```
-
-   Required environment variables:
-   - `SUPABASE_URL`: Your Supabase project URL
-   - `SUPABASE_ANON_KEY`: Your Supabase anonymous key
-   - `APP_BASE_URL`: Base URL for Saturday services (https://saturdayvinyl.com)
-   - `DISCOGS_API_KEY`: Your Discogs API key
-   - `DISCOGS_API_SECRET`: Your Discogs API secret
-
-4. **Run the app**
-   ```bash
-   # iOS
-   flutter run -d ios
-
-   # Android
-   flutter run -d android
-   ```
-
-### iOS Setup
-
-1. Navigate to the iOS directory and install CocoaPods:
-   ```bash
-   cd ios
-   pod install
-   cd ..
-   ```
-
-2. Open `ios/Runner.xcworkspace` in Xcode to configure signing if needed.
-
-### Android Setup
-
-1. Ensure you have the Android SDK installed with API level 24 or higher.
-2. Accept Android licenses if prompted:
-   ```bash
-   flutter doctor --android-licenses
-   ```
-
-## Project Structure
-
-```
-lib/
-├── main.dart                 # App entry point
-├── app.dart                  # Root widget and MaterialApp configuration
-│
-├── config/
-│   ├── constants.dart        # App-wide constants
-│   ├── env_config.dart       # Environment configuration loader
-│   ├── routes.dart           # Navigation routes
-│   └── theme.dart            # Saturday brand theme
-│
-├── models/                   # Data models
-├── services/                 # External service integrations
-├── repositories/             # Data access layer
-├── providers/                # Riverpod state management
-│
-├── screens/
-│   ├── auth/                 # Authentication screens
-│   ├── now_playing/          # Now Playing feature
-│   ├── library/              # Library management
-│   ├── account/              # Account & device management
-│   └── search/               # Global search
-│
-├── widgets/
-│   ├── common/               # Shared widgets
-│   ├── now_playing/          # Now Playing widgets
-│   ├── library/              # Library widgets
-│   ├── devices/              # Device management widgets
-│   └── scanner/              # QR/barcode scanner widgets
-│
-└── utils/                    # Utility functions
-```
-
-## Platform Configuration
-
-| Platform | Minimum Version | Package/Bundle ID |
-|----------|-----------------|-------------------|
-| iOS | 14.0 | `com.saturdayvinyl.consumer` |
-| Android | API 24 (Android 7.0) | `com.saturdayvinyl.consumer` |
-
-## Deep Linking Setup
-
-The app supports Universal Links (iOS) and App Links (Android) for the domain `app.saturdayvinyl.com`.
-
-### Supported Deep Link Paths
-
-| Path | Description |
-|------|-------------|
-| `/tags/{epc}` | Opens tag association flow with scanned EPC |
-| `/albums/{id}` | Opens album detail screen |
-| `/invite/{code}` | Opens library invitation acceptance |
-
-### Server Configuration
-
-The deep link verification files are located in `deep-link-files/.well-known/` and must be hosted at `https://app.saturdayvinyl.com/.well-known/`:
-
-1. **apple-app-site-association** - iOS Universal Links verification
-2. **assetlinks.json** - Android App Links verification
-
-#### Hosting Setup (Cloudflare Pages)
-
-1. Create a Cloudflare Pages project and upload the `deep-link-files/` contents
-2. Add custom domain `app.saturdayvinyl.com` in Cloudflare Pages settings
-3. DNS is managed through Cloudflare - the CNAME is configured automatically
-
-To update the files:
+**Step 1:** Clone this repo locally (one-time, anywhere on your machine):
 ```bash
-cd deep-link-files
-wrangler pages deploy . --project-name=YOUR_PROJECT_NAME
+git clone https://github.com/Saturday-Vinyl/saturday-vinyl-shared-docs.git ~/saturday-vinyl-shared-docs
+chmod +x ~/saturday-vinyl-shared-docs/scripts/setup-shared-docs.sh
 ```
 
-Or use the Cloudflare Dashboard → Pages → your project → Create deployment → Upload assets.
-
-#### Android SHA256 Fingerprint
-
-After building the app, get the debug fingerprint:
+**Step 2:** Run the setup script from your project root:
 ```bash
-keytool -list -v -keystore ~/.android/debug.keystore -alias androiddebugkey -storepass android | grep SHA256
+# From your project directory (e.g., ~/projects/my-saturday-app)
+~/saturday-vinyl-shared-docs/scripts/setup-shared-docs.sh
 ```
 
-For release builds, get the fingerprint from Google Play Console → App signing.
-
-Update `assetlinks.json` with the fingerprint(s).
-
-### Testing Deep Links
-
-**iOS Simulator:**
+**Alternative: Manual setup**
 ```bash
-xcrun simctl openurl booted "https://app.saturdayvinyl.com/albums/123"
-xcrun simctl openurl booted "https://app.saturdayvinyl.com/tags/abc123"
+git remote add shared-docs https://github.com/Saturday-Vinyl/saturday-vinyl-shared-docs.git
+git subtree add --prefix=shared-docs shared-docs main --squash
+mkdir -p ./.claude/commands
+cp ./shared-docs/templates/claude-commands/*.md ./.claude/commands/
 ```
 
-**Android Emulator:**
-```bash
-adb shell am start -a android.intent.action.VIEW -d "https://app.saturdayvinyl.com/albums/123"
-```
+### Pulling Updates
 
-## Brand Colors
-
-| Name | Hex | Usage |
-|------|-----|-------|
-| Primary Dark | `#3F3A34` | Main brand color, text, icons |
-| Success | `#30AA47` | Success states, confirmations |
-| Error | `#F35345` | Errors, destructive actions |
-| Info | `#6AC5F4` | Informational states |
-| Secondary | `#B2AAA3` | Secondary text, borders |
-| Light | `#E2DAD0` | Backgrounds, cards |
-
-## Development
-
-### Running Tests
+When the central docs are updated, pull changes into your project:
 
 ```bash
-flutter test
+git subtree pull --prefix=shared-docs shared-docs main --squash -m "Merge shared-docs updates"
 ```
 
-### Analyzing Code
+### Contributing Changes
+
+Edit docs locally in the `./shared-docs/` directory, commit as usual, then push upstream:
 
 ```bash
-flutter analyze
+# 1. Edit the doc
+vim ./shared-docs/protocols/ble_provisioning_protocol.md
+
+# 2. Commit locally
+git add ./shared-docs/
+git commit -m "Update BLE protocol: add new characteristic"
+
+# 3. Push to central repo
+git subtree push --prefix=shared-docs shared-docs main
 ```
 
-### Code Generation
+## Claude Code Integration
 
-When modifying models or other files that use code generation:
+After setup, these slash commands are available:
 
-```bash
-flutter pub run build_runner build --delete-conflicting-outputs
+| Command | Description |
+|---------|-------------|
+| `/ble-provisioning` | Load BLE Provisioning Protocol into context |
+| `/service-mode` | Load Service Mode Protocol into context |
+
+You can also reference docs directly in prompts:
+```
+Read @./shared-docs/protocols/ble_provisioning_protocol.md and implement the Status characteristic handler.
 ```
 
-## Documentation
+## Directory Structure
 
-- [Developer's Guide](docs/DEVELOPERS_GUIDE.md) - Comprehensive technical documentation
-- [Implementation Plan](docs/IMPLEMENTATION_PLAN.md) - Phased development roadmap
+```
+saturday-vinyl-shared-docs/
+├── README.md                    # This file
+├── concepts/                    # Architectural concepts
+│   └── data_model.md            # Core entity relationships
+├── protocols/                   # Protocol specifications
+│   ├── ble_provisioning_protocol.md
+│   ├── coap_mesh_protocol.md
+│   ├── device_command_protocol.md
+│   ├── led_status_protocol.md
+│   └── service_mode_protocol.md
+├── schemas/                     # Schema specifications
+│   └── capability_schema.md
+├── templates/
+│   └── claude-commands/         # Claude Code command templates
+│       ├── ble-provisioning.md
+│       └── service-mode.md
+└── scripts/
+    └── setup-shared-docs.sh     # Project setup script
+```
+
+## Projects Using This
+
+- **sv-hub-firmware** - Saturday Vinyl Hub (ESP32-S3 + ESP32-H2)
+- **saturday-mobile-app** - Consumer mobile app (Flutter)
+- **saturday-admin-app** - Factory/technician desktop app (Flutter)
+- (Future firmware projects)
+
+---
+
+*This repository is proprietary to Saturday Vinyl. Do not distribute externally.*
