@@ -41,7 +41,7 @@ This document defines the **Device Command Protocol** for Saturday devices. This
 ### Key Concepts
 
 - **Always-Listening**: Devices continuously listen for commands when connected (no entry window required)
-- **MAC Address Identification**: Devices are identified by their 48-bit MAC address (MAC-48) of the primary SoC, formatted as `XX:XX:XX:XX:XX:XX`. Thread devices must use their base MAC-48, **not** the EUI-64 extended address (which inserts `FF:FE` in the middle). The same MAC-48 must be used consistently across `get_status`, `factory_provision` responses, and heartbeats.
+- **MAC Address Identification**: Devices are identified by their MAC address (primary SoC)
 - **Unified Commands**: Same command set works across UART (factory) and Supabase Realtime (remote)
 - **Capability-Driven**: Commands are scoped to device capabilities defined in the admin app
 
@@ -292,8 +292,6 @@ The device responds with data defined by its `factory_output` capability schemas
 }
 ```
 
-**Important:** The `mac_address` in the response must be the device's 48-bit base MAC (MAC-48), not an EUI-64 address. This value becomes the device's primary identifier in the cloud database and must match the `mac_address` used in heartbeats. For ESP32 devices, use `esp_read_mac()` with `ESP_MAC_BASE` or `ESP_MAC_WIFI_STA` — do not use the 802.15.4 EUI-64 address (which contains `FF:FE` inserted in the middle).
-
 **Validation:** The admin app **must** validate that the response `data` contains all fields marked as `required` in the device type's `factory_output` schemas. If any required fields are missing, provisioning should fail and the user should be notified. This ensures the device firmware is correctly implementing the capability contract.
 
 **Cloud Storage:** The admin app stores **only** the response `data` (minus `serial_number` and `name`) in the `devices.provision_data` JSONB column. Input parameters sent to the device are **not** stored — only the device's response data is persisted. See [Cloud Provision Data](#cloud-provision-data) for details.
@@ -349,7 +347,7 @@ Returns current device status including firmware version, connectivity state, an
 |-------|------|-------------|
 | `device_type` | string | Device type identifier (e.g., "hub", "crate") |
 | `firmware_version` | string | Current firmware version |
-| `mac_address` | string | Primary MAC-48 address (hardware identifier). Must be the 48-bit base MAC, not EUI-64. See [Key Concepts](#key-concepts). |
+| `mac_address` | string | Primary MAC address (hardware identifier) |
 | `serial_number` | string | Device serial number (null if not provisioned) |
 | `name` | string | Human-friendly product name (null if not provisioned) |
 | `uptime_sec` | number | Seconds since boot |
@@ -532,7 +530,7 @@ All devices must include these fields in every heartbeat, regardless of capabili
 
 | Field | Type | Description | ESP-IDF Function |
 |-------|------|-------------|------------------|
-| `mac_address` | string | Primary MAC-48 address (device identifier). Must be the 48-bit base MAC, not EUI-64. Use `ESP_MAC_BASE` or `ESP_MAC_WIFI_STA` type. | `esp_read_mac()` |
+| `mac_address` | string | Primary MAC address (device identifier) | `esp_read_mac()` |
 | `unit_id` | string | Serial number of the unit (from provisioning) | NVS lookup |
 | `device_type` | string | Device type slug (from firmware schema) | Compile-time constant |
 | `firmware_version` | string | Current firmware version | Compile-time constant |
@@ -1439,7 +1437,6 @@ static void heartbeat_task(void *arg) {
         cJSON *heartbeat = cJSON_CreateObject();
 
         // Standard fields (required for all devices)
-        // IMPORTANT: Use base MAC-48 (esp_read_mac with ESP_MAC_BASE), not EUI-64
         cJSON_AddStringToObject(heartbeat, "mac_address", get_mac_address());
         cJSON_AddStringToObject(heartbeat, "unit_id", get_unit_id());  // From NVS (provisioning)
         cJSON_AddStringToObject(heartbeat, "device_type", DEVICE_TYPE);  // From firmware schema

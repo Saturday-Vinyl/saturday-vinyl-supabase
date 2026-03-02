@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:saturday_app/config/theme.dart';
 import 'package:saturday_app/models/capability.dart';
+import 'package:saturday_app/widgets/common/command_parameter_dialog.dart';
 import 'package:saturday_app/models/connected_device.dart';
 import 'package:saturday_app/models/device_communication_state.dart';
 import 'package:saturday_app/models/device_type.dart';
@@ -609,6 +610,16 @@ class _DeviceCommandPanelState extends ConsumerState<DeviceCommandPanel> {
   }
 
   Future<void> _runCommand(CapabilityCommand command) async {
+    // If command has parameters, show dialog to collect them
+    Map<String, dynamic>? params;
+    if (command.hasParameters) {
+      params = await CommandParameterDialog.show(
+        context: context,
+        command: command,
+      );
+      if (params == null) return; // User cancelled
+    }
+
     setState(() {
       _isExecuting = true;
       _lastCommandResult = null;
@@ -616,7 +627,7 @@ class _DeviceCommandPanelState extends ConsumerState<DeviceCommandPanel> {
 
     try {
       final notifier = ref.read(deviceCommunicationStateProvider.notifier);
-      final result = await notifier.runCommand(command.name);
+      final result = await notifier.runCommand(command.name, params: params);
 
       if (mounted) {
         setState(() {

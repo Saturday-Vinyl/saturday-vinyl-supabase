@@ -63,7 +63,7 @@ CREATE TABLE capabilities (
   consumer_input_schema JSONB DEFAULT '{}',       -- Data sent TO device (consumer/BLE)
   consumer_output_schema JSONB DEFAULT '{}',      -- Data returned FROM device (consumer)
   heartbeat_schema JSONB DEFAULT '{}',            -- Telemetry data
-  tests JSONB DEFAULT '[]',                          -- NOTE: column remains "tests" for backwards compat; conceptually "commands"
+  commands JSONB DEFAULT '[]',                        -- Command definitions with parameter and result schemas
   is_active BOOLEAN DEFAULT true,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -856,10 +856,8 @@ In practice, the current command set has no conflicts across capabilities, and w
 
 ## Database Migration Note
 
-- The database column remains `tests` (JSONB) for backwards compatibility
-- The firmware JSON schema key output by the admin app remains `tests` until an admin app migration renames it
+- The database column has been renamed from `tests` to `commands` (JSONB)
 - Firmware accepts `run_test` as a deprecated alias that extracts `test_name` and re-dispatches as a flat command
-- Documentation uses `commands` to reflect the conceptual rename
 
 ---
 
@@ -873,7 +871,7 @@ When adding a new capability command to the Saturday ecosystem:
 
 3. **Update protocol documentation** — If the command introduces new protocol behavior (like `register` being hub-initiated), document it in `device_command_protocol.md` and/or `coap_mesh_protocol.md`.
 
-4. **Update admin app** — Add the command to the capability's `tests` array (column rename pending) in the admin app's capability editor. This makes it available in firmware JSON schemas.
+4. **Update admin app** — Add the command to the capability's `commands` array in the admin app's capability editor. This makes it available in firmware JSON schemas.
 
 5. **Implement in firmware** — Add a `strcmp` entry for the command name in the firmware's flat command dispatch table (see `serial_prov.c`). The command name on the wire is just the flat name (e.g., `"register"`, `"get_dataset"`).
 

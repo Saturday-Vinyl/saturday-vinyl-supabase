@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:saturday_app/config/theme.dart';
 import 'package:saturday_app/models/capability.dart';
+import 'package:saturday_app/widgets/common/command_parameter_dialog.dart';
 import 'package:saturday_app/models/device.dart';
 import 'package:saturday_app/providers/capability_provider.dart';
 import 'package:saturday_app/providers/remote_monitor_provider.dart';
@@ -257,7 +258,7 @@ class _DeviceCommandsSection extends ConsumerWidget {
                 return _CommandButton(
                   label: command.displayName,
                   icon: Icons.terminal,
-                  onPressed: () => _runCommand(ref, command),
+                  onPressed: () => _runCommand(context, ref, command),
                 );
               }).toList(),
             ),
@@ -269,10 +270,25 @@ class _DeviceCommandsSection extends ConsumerWidget {
     );
   }
 
-  void _runCommand(WidgetRef ref, CapabilityCommand command) {
+  Future<void> _runCommand(
+    BuildContext context,
+    WidgetRef ref,
+    CapabilityCommand command,
+  ) async {
+    // If command has parameters, show dialog to collect them
+    Map<String, dynamic>? parameters;
+    if (command.hasParameters) {
+      parameters = await CommandParameterDialog.show(
+        context: context,
+        command: command,
+      );
+      if (parameters == null) return; // User cancelled
+    }
+
     ref.read(remoteMonitorProvider(unitId).notifier).sendCapabilityCommand(
           macAddress: device.macAddress,
           commandName: command.name,
+          parameters: parameters,
         );
   }
 }

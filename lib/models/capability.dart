@@ -47,6 +47,13 @@ class CapabilityCommand extends Equatable {
     };
   }
 
+  /// Whether this command has parameters the user can fill in
+  bool get hasParameters {
+    if (parametersSchema.isEmpty) return false;
+    final properties = parametersSchema['properties'] as Map<String, dynamic>?;
+    return properties != null && properties.isNotEmpty;
+  }
+
   CapabilityCommand copyWithCapability(String capabilityName) {
     return CapabilityCommand(
       name: name,
@@ -101,7 +108,6 @@ class Capability extends Equatable {
   final Map<String, dynamic> heartbeatSchema;
 
   /// Command definitions with parameter and result schemas.
-  /// Note: DB column is still named 'tests' pending migration.
   final List<CapabilityCommand> commands;
 
   final bool isActive;
@@ -153,8 +159,8 @@ class Capability extends Equatable {
 
   /// Create from JSON
   factory Capability.fromJson(Map<String, dynamic> json) {
-    // DB column is still named 'tests' pending migration
-    final commandsJson = json['tests'];
+    // Support both 'commands' (new) and 'tests' (legacy) column names
+    final commandsJson = json['commands'] ?? json['tests'];
     List<CapabilityCommand> commands = [];
 
     if (commandsJson != null && commandsJson is List) {
@@ -204,8 +210,7 @@ class Capability extends Equatable {
       'consumer_input_schema': consumerInputSchema,
       'consumer_output_schema': consumerOutputSchema,
       'heartbeat_schema': heartbeatSchema,
-      // DB column is still named 'tests' pending migration
-      'tests': commands.map((c) => c.toJson()).toList(),
+      'commands': commands.map((c) => c.toJson()).toList(),
       'is_active': isActive,
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt?.toIso8601String(),
@@ -223,8 +228,7 @@ class Capability extends Equatable {
       'consumer_input_schema': consumerInputSchema,
       'consumer_output_schema': consumerOutputSchema,
       'heartbeat_schema': heartbeatSchema,
-      // DB column is still named 'tests' pending migration
-      'tests': commands.map((c) => c.toJson()).toList(),
+      'commands': commands.map((c) => c.toJson()).toList(),
       'is_active': isActive,
     };
   }
