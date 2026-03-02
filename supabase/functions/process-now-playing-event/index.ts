@@ -51,6 +51,7 @@ interface AlbumInfo {
   title: string
   artist: string
   cover_image_url: string | null
+  colors: Record<string, unknown> | null
   library_id: string
   library_name: string
 }
@@ -188,7 +189,8 @@ async function resolveEpcToAlbum(
           id,
           title,
           artist,
-          cover_image_url
+          cover_image_url,
+          colors
         ),
         libraries!inner (
           id,
@@ -216,7 +218,7 @@ async function resolveEpcToAlbum(
   const la = tag.library_albums as {
     id: string
     library_id: string
-    albums: { id: string; title: string; artist: string; cover_image_url: string | null }
+    albums: { id: string; title: string; artist: string; cover_image_url: string | null; colors: Record<string, unknown> | null }
     libraries: { id: string; name: string }
   }
 
@@ -226,6 +228,7 @@ async function resolveEpcToAlbum(
     title: la.albums.title,
     artist: la.albums.artist,
     cover_image_url: la.albums.cover_image_url,
+    colors: la.albums.colors,
     library_id: la.library_id,
     library_name: la.libraries.name,
   }
@@ -250,6 +253,7 @@ async function createUserNotifications(
     album_title: albumInfo?.title || null,
     album_artist: albumInfo?.artist || null,
     cover_image_url: albumInfo?.cover_image_url || null,
+    album_colors: albumInfo?.colors || null,
     library_id: albumInfo?.library_id || null,
     library_name: albumInfo?.library_name || null,
     device_id: device.id,
