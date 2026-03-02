@@ -452,7 +452,7 @@ RFID inventory snapshots from Thread-connected crates, relayed via the Hub.
 |--------|------|----------|---------|-------|
 | id | uuid | NOT NULL | gen_random_uuid() | PK |
 | unit_id | text | NOT NULL |  | Hub serial number |
-| crate_id | text | NOT NULL |  | 16-char hex extended MAC |
+| mac_address | character varying(17) | NOT NULL |  | WiFi MAC of the crate (matches devices.mac_address) |
 | epcs | text[] | NOT NULL |  | Array of 24-char hex EPCs |
 | epc_count | integer | NOT NULL |  |  |
 | timestamp | timestamp with time zone | NOT NULL |  |  |
@@ -869,14 +869,14 @@ Maps old QR code UUIDs to new unit IDs during migration.
 ### latest_crate_inventory
 
 ```sql
- SELECT DISTINCT ON (crate_id) crate_id,
+ SELECT DISTINCT ON (mac_address) mac_address,
     unit_id,
     epcs,
     epc_count,
     "timestamp" AS last_scan_time,
     created_at
    FROM crate_inventory_events
-  ORDER BY crate_id, "timestamp" DESC;
+  ORDER BY mac_address, "timestamp" DESC;
 ```
 
 ### production_units_compat
