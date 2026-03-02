@@ -123,6 +123,10 @@ serve(async (req) => {
     )
     console.log('Created notifications:', notifications.length)
 
+    // Step 3.5: Update album location
+    const hubUnitId = devices[0].id  // units.id from findDevicesForHub
+    await updateAlbumLocation(supabase, event, hubUnitId, albumInfo)
+
     // Step 4: Send push notifications for placed events
     let pushResults: { user_id: string; success: boolean }[] = []
     if (event.event_type === 'placed') {
@@ -271,6 +275,61 @@ async function createUserNotifications(
   if (error) throw error
 
   return notifications.map(n => ({ user_id: n.user_id }))
+}
+
+async function updateAlbumLocation(
+  supabase: ReturnType<typeof createClient>,
+  event: NowPlayingEventRecord,
+  unitId: string,
+  albumInfo: AlbumInfo | null
+): Promise<void> {
+  if (!albumInfo) {
+    console.log('No album info, skipping location update')
+    return
+  }
+
+  try {
+    if (event.event_type === 'placed') {
+      // Close any existing open location for this album on this device (defensive)
+      await supabase
+        .from('album_locations')
+        .update({ removed_at: event.timestamp })
+        .eq('library_album_id', albumInfo.library_album_id)
+        .eq('device_id', unitId)
+        .is('removed_at', null)
+
+      // Insert new location record
+      const { error } = await supabase
+        .from('album_locations')
+        .insert({
+          library_album_id: albumInfo.library_album_id,
+          device_id: unitId,
+          detected_at: event.timestamp,
+        })
+
+      if (error) {
+        console.error('Error inserting album location:', error)
+      } else {
+        console.log('Album location created: placed on', unitId)
+      }
+    } else if (event.event_type === 'removed') {
+      const { error } = await supabase
+        .from('album_locations')
+        .update({ removed_at: event.timestamp })
+        .eq('library_album_id', albumInfo.library_album_id)
+        .eq('device_id', unitId)
+        .is('removed_at', null)
+
+      if (error) {
+        console.error('Error updating album location:', error)
+      } else {
+        console.log('Album location updated: removed from', unitId)
+      }
+    }
+  } catch (error) {
+    // Don't let location tracking failures block the main pipeline
+    console.error('Album location update failed:', error)
+  }
 }
 
 async function sendPushNotifications(
