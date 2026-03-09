@@ -5,7 +5,7 @@ import 'package:saturday_app/models/capability.dart';
 
 /// Dialog that generates form fields from a command's JSON Schema parameters.
 ///
-/// Supports: string, string+enum, integer, and array of integer fields.
+/// Supports: string, string+enum, integer, number, and array of integer fields.
 /// Pre-populates defaults and validates required fields.
 class CommandParameterDialog extends StatefulWidget {
   final CapabilityCommand command;
@@ -156,6 +156,27 @@ class _CommandParameterDialogState extends State<CommandParameterDialog> {
           validator: (v) {
             if (isRequired && (v == null || v.isEmpty)) return 'Required';
             if (v != null && v.isNotEmpty && int.tryParse(v) == null) {
+              return 'Must be an integer';
+            }
+            return null;
+          },
+        );
+
+      case _FieldType.number:
+        field = TextFormField(
+          controller: _controllers[name],
+          decoration: InputDecoration(
+            labelText: label,
+            helperText: description,
+            helperMaxLines: 3,
+            border: const OutlineInputBorder(),
+            isDense: true,
+          ),
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.\-]'))],
+          validator: (v) {
+            if (isRequired && (v == null || v.isEmpty)) return 'Required';
+            if (v != null && v.isNotEmpty && num.tryParse(v) == null) {
               return 'Must be a number';
             }
             return null;
@@ -230,6 +251,12 @@ class _CommandParameterDialogState extends State<CommandParameterDialog> {
             params[name] = int.parse(text);
           }
 
+        case _FieldType.number:
+          final text = _controllers[name]!.text.trim();
+          if (text.isNotEmpty) {
+            params[name] = num.parse(text);
+          }
+
         case _FieldType.intArray:
           final text = _controllers[name]!.text.trim();
           if (text.isNotEmpty) {
@@ -258,6 +285,9 @@ class _CommandParameterDialogState extends State<CommandParameterDialog> {
     if (type == 'integer') {
       return _FieldType.integer;
     }
+    if (type == 'number') {
+      return _FieldType.number;
+    }
     if (type == 'array') {
       return _FieldType.intArray;
     }
@@ -272,4 +302,4 @@ class _CommandParameterDialogState extends State<CommandParameterDialog> {
   }
 }
 
-enum _FieldType { string, enumDropdown, integer, intArray }
+enum _FieldType { string, enumDropdown, integer, number, intArray }
