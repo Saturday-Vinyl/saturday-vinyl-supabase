@@ -377,8 +377,9 @@ static void request_crate_reregister(const uint8_t *ext_addr)
  *   ─────────────────────────────────────────────────
  *   Total:                                 ~5.6 KB → 8 KB stack (30% margin)
  *
- * Because a single task processes events sequentially, there is no concurrent
- * access to the shared persistent HTTP client — no mutex needed.
+ * The persistent HTTP client in supabase_client.c is shared across tasks
+ * (sync_task, this worker, event loop). A mutex in supabase_post() serializes
+ * access — see s_client_mutex in supabase_client.c.
  */
 static void crate_telemetry_worker(void *arg)
 {

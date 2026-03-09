@@ -82,6 +82,41 @@ typedef struct {
 } ring_buffer_t;
 
 /*******************************************************************************
+ * Pending Inventory Event
+ *
+ * Inventory POSTs are deferred to the sync_task (12 KB stack) to avoid
+ * overflowing the sys_evt task stack (~4 KB).  The event loop handler
+ * copies data here and sets the pending flag; sync_task drains it.
+ ******************************************************************************/
+
+#define MAX_INVENTORY_EPCS 75
+
+typedef struct {
+    uint8_t ext_addr[8];
+    uint8_t epc_count;
+    uint8_t epcs[MAX_INVENTORY_EPCS][12];
+} pending_inventory_t;
+
+/*******************************************************************************
+ * Crate Identity Cache Types (used by inventory and telemetry paths)
+ ******************************************************************************/
+
+#define MAX_CACHED_CRATES  20
+
+typedef struct {
+    bool valid;
+    uint8_t ext_addr[8];
+    char mac[18];
+    char unit_id[24];
+    char device_type[20];
+    char fw_version[16];
+} crate_identity_t;
+
+static crate_identity_t s_crate_cache[MAX_CACHED_CRATES];
+
+static const crate_identity_t *crate_identity_lookup(const uint8_t *ext_addr);
+
+/*******************************************************************************
  * Internal State
  ******************************************************************************/
 
@@ -103,6 +138,10 @@ typedef struct {
     esp_timer_handle_t heartbeat_timer;
     int64_t last_heartbeat_time;
     volatile bool heartbeat_pending;  /* Flag for sync task to send heartbeat */
+
+    /* Inventory (deferred from event loop to sync_task) */
+    volatile bool inventory_pending;
+    pending_inventory_t pending_inventory;
 
     /* Statistics */
     uint32_t events_sent;
@@ -541,6 +580,9 @@ static void process_queue(void)
              (unsigned long)synced, (unsigned long)failed, s_state.queue.count);
 }
 
+/* Forward declaration — defined after format helpers */
+static esp_err_t send_inventory_internal(const pending_inventory_t *inv);
+
 /**
  * @brief Background sync task
  */
@@ -553,6 +595,16 @@ static void sync_task(void *arg)
         if (s_state.heartbeat_pending) {
             s_state.heartbeat_pending = false;
             send_heartbeat_internal();
+        }
+
+        /* Check for pending inventory (deferred from event loop) */
+        if (s_state.inventory_pending) {
+            pending_inventory_t inv;
+            xSemaphoreTake(s_state.queue_mutex, portMAX_DELAY);
+            memcpy(&inv, &s_state.pending_inventory, sizeof(inv));
+            s_state.inventory_pending = false;
+            xSemaphoreGive(s_state.queue_mutex);
+            send_inventory_internal(&inv);
         }
 
         /* Process queued events */
@@ -868,19 +920,10 @@ static void format_ext_addr(const uint8_t *ext_addr, char *buf, size_t buf_len)
 }
 
 /**
- * @brief Send crate inventory event to Supabase directly
- *
- * Note: This is called from main context when H2 event is received.
- * For simplicity, we send immediately rather than queuing.
+ * @brief Send a pending inventory event to Supabase (runs in sync_task context)
  */
-esp_err_t event_reporter_queue_inventory(const uint8_t *crate_ext_addr,
-                                          const uint8_t (*epcs)[12],
-                                          uint8_t epc_count)
+static esp_err_t send_inventory_internal(const pending_inventory_t *inv)
 {
-    if (!s_state.initialized) {
-        return ESP_ERR_INVALID_STATE;
-    }
-
     if (!s_state.wifi_connected || !supabase_is_configured()) {
         ESP_LOGW(TAG, "Cannot send inventory - WiFi or Supabase not ready");
         return ESP_ERR_NOT_FOUND;
@@ -891,11 +934,17 @@ esp_err_t event_reporter_queue_inventory(const uint8_t *crate_ext_addr,
         return ESP_ERR_NOT_FINISHED;
     }
 
+    /* Resolve crate identity from cache (populated during CoAP registration) */
+    const crate_identity_t *identity = crate_identity_lookup(inv->ext_addr);
+    if (identity == NULL) {
+        char addr_str[20];
+        format_ext_addr(inv->ext_addr, addr_str, sizeof(addr_str));
+        ESP_LOGW(TAG, "No identity cached for crate %s, dropping inventory", addr_str);
+        return ESP_ERR_NOT_FOUND;
+    }
+
     char unit_id[SUPABASE_UNIT_ID_MAX_LEN] = "UNIT-UNKNOWN";
     supabase_get_unit_id(unit_id, sizeof(unit_id));
-
-    char crate_id[20];
-    format_ext_addr(crate_ext_addr, crate_id, sizeof(crate_id));
 
     char timestamp[32];
     format_timestamp(esp_timer_get_time(), timestamp, sizeof(timestamp));
@@ -903,10 +952,10 @@ esp_err_t event_reporter_queue_inventory(const uint8_t *crate_ext_addr,
     /* Build EPC array JSON */
     char epcs_json[1024] = "[";
     size_t epcs_len = 1;
-    for (uint8_t i = 0; i < epc_count && epcs_len < sizeof(epcs_json) - 30; i++) {
+    for (uint8_t i = 0; i < inv->epc_count && epcs_len < sizeof(epcs_json) - 30; i++) {
         char epc_hex[25];
         for (int j = 0; j < 12; j++) {
-            snprintf(&epc_hex[j * 2], 3, "%02X", epcs[i][j]);
+            snprintf(&epc_hex[j * 2], 3, "%02X", inv->epcs[i][j]);
         }
         if (i > 0) {
             epcs_len += snprintf(&epcs_json[epcs_len], sizeof(epcs_json) - epcs_len, ",");
@@ -915,19 +964,19 @@ esp_err_t event_reporter_queue_inventory(const uint8_t *crate_ext_addr,
     }
     snprintf(&epcs_json[epcs_len], sizeof(epcs_json) - epcs_len, "]");
 
-    /* Build full JSON */
+    /* Build full JSON — use mac_address to match devices table convention */
     char json[1500];
     int len = snprintf(json, sizeof(json),
-        "{\"unit_id\":\"%s\",\"crate_id\":\"%s\",\"epcs\":%s,"
+        "{\"unit_id\":\"%s\",\"mac_address\":\"%s\",\"epcs\":%s,"
         "\"epc_count\":%d,\"timestamp\":\"%s\"}",
-        unit_id, crate_id, epcs_json, epc_count, timestamp);
+        unit_id, identity->mac, epcs_json, inv->epc_count, timestamp);
 
     if (len >= sizeof(json)) {
         ESP_LOGE(TAG, "Inventory JSON too long");
         return ESP_ERR_INVALID_SIZE;
     }
 
-    ESP_LOGI(TAG, "Sending inventory update: crate=%s, epcs=%d", crate_id, epc_count);
+    ESP_LOGI(TAG, "Sending inventory update: mac=%s, epcs=%d", identity->mac, inv->epc_count);
 
     supabase_response_t response;
     esp_err_t err = supabase_post("crate_inventory_events", json, &response, 0);
@@ -944,6 +993,39 @@ esp_err_t event_reporter_queue_inventory(const uint8_t *crate_ext_addr,
     }
     supabase_response_free(&response);
     return err;
+}
+
+/**
+ * @brief Queue a crate inventory event for deferred posting
+ *
+ * Called from the event loop (sys_evt task). Copies data into s_state and
+ * sets a flag so the sync_task (with adequate stack) performs the POST.
+ */
+esp_err_t event_reporter_queue_inventory(const uint8_t *crate_ext_addr,
+                                          const uint8_t (*epcs)[12],
+                                          uint8_t epc_count)
+{
+    if (!s_state.initialized) {
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    if (epc_count > MAX_INVENTORY_EPCS) {
+        epc_count = MAX_INVENTORY_EPCS;
+    }
+
+    xSemaphoreTake(s_state.queue_mutex, portMAX_DELAY);
+    memcpy(s_state.pending_inventory.ext_addr, crate_ext_addr, 8);
+    s_state.pending_inventory.epc_count = epc_count;
+    if (epc_count > 0) {
+        memcpy(s_state.pending_inventory.epcs, epcs, epc_count * 12);
+    }
+    s_state.inventory_pending = true;
+    xSemaphoreGive(s_state.queue_mutex);
+
+    char crate_id[20];
+    format_ext_addr(crate_ext_addr, crate_id, sizeof(crate_id));
+    ESP_LOGI(TAG, "Inventory queued: crate=%s, epcs=%d", crate_id, epc_count);
+    return ESP_OK;
 }
 
 esp_err_t event_reporter_queue_crate_heartbeat(const uint8_t *crate_ext_addr,
@@ -1007,19 +1089,6 @@ esp_err_t event_reporter_queue_crate_heartbeat(const uint8_t *crate_ext_addr,
 /*******************************************************************************
  * CoAP Mesh Protocol — Crate Identity Cache
  ******************************************************************************/
-
-#define MAX_CACHED_CRATES  20
-
-typedef struct {
-    bool valid;
-    uint8_t ext_addr[8];
-    char mac[18];
-    char unit_id[24];
-    char device_type[20];
-    char fw_version[16];
-} crate_identity_t;
-
-static crate_identity_t s_crate_cache[MAX_CACHED_CRATES];
 
 void event_reporter_cache_crate_identity(const uint8_t *ext_addr,
                                           const char *mac,

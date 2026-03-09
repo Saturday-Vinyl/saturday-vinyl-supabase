@@ -19,6 +19,7 @@
 #include <stdlib.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 
 static const char *TAG = "SUPABASE";
 
@@ -87,6 +88,20 @@ static supabase_state_t s_state = {0};
  ******************************************************************************/
 
 static esp_http_client_handle_t s_persistent_client = NULL;
+
+/*
+ * Mutex protecting the persistent client handle.
+ *
+ * supabase_post() is called from multiple FreeRTOS task contexts:
+ *   - sync_task          (hub heartbeats, now_playing events)
+ *   - crate_telemetry_worker (crate telemetry via CBOR → JSON → POST)
+ *   - default event loop (inventory updates, crate heartbeats)
+ *
+ * Without serialization, concurrent esp_http_client_perform() calls on
+ * the shared handle corrupt internal state (post-field pointer, TLS
+ * buffers) and crash in memcpy with a LoadProhibited exception.
+ */
+static SemaphoreHandle_t s_client_mutex = NULL;
 
 /*******************************************************************************
  * HTTP Response Buffer
@@ -249,6 +264,15 @@ esp_err_t supabase_init(void)
 
     memset(&s_state, 0, sizeof(s_state));
 
+    /* Create mutex for persistent client access */
+    if (s_client_mutex == NULL) {
+        s_client_mutex = xSemaphoreCreateMutex();
+        if (s_client_mutex == NULL) {
+            ESP_LOGE(TAG, "Failed to create client mutex");
+            return ESP_ERR_NO_MEM;
+        }
+    }
+
     /* Try to load configuration from NVS */
     esp_err_t err = load_config_from_nvs();
     if (err == ESP_OK) {
@@ -261,7 +285,8 @@ esp_err_t supabase_init(void)
     return ESP_OK;
 }
 
-void supabase_close_connection(void)
+/* Internal: close persistent client without taking the mutex (caller must hold it) */
+static void close_connection_locked(void)
 {
     if (s_persistent_client != NULL) {
         esp_http_client_cleanup(s_persistent_client);
@@ -270,9 +295,24 @@ void supabase_close_connection(void)
     }
 }
 
+void supabase_close_connection(void)
+{
+    if (s_client_mutex != NULL) {
+        xSemaphoreTake(s_client_mutex, portMAX_DELAY);
+    }
+    close_connection_locked();
+    if (s_client_mutex != NULL) {
+        xSemaphoreGive(s_client_mutex);
+    }
+}
+
 esp_err_t supabase_deinit(void)
 {
     supabase_close_connection();
+    if (s_client_mutex != NULL) {
+        vSemaphoreDelete(s_client_mutex);
+        s_client_mutex = NULL;
+    }
     memset(&s_state, 0, sizeof(s_state));
     ESP_LOGI(TAG, "Supabase client deinitialized");
     return ESP_OK;
@@ -391,6 +431,15 @@ esp_err_t supabase_post(const char *table, const char *json_body,
     int64_t overall_start = esp_timer_get_time();
     esp_err_t err = ESP_FAIL;
 
+    /* Serialize access to the shared persistent HTTP client handle.
+     * Multiple tasks (sync_task, crate_telemetry_worker, event loop)
+     * may call supabase_post() concurrently. */
+    if (s_client_mutex == NULL) {
+        ESP_LOGE(TAG, "Client mutex not initialized");
+        return ESP_ERR_INVALID_STATE;
+    }
+    xSemaphoreTake(s_client_mutex, portMAX_DELAY);
+
     /* Retry loop — on the first attempt we try to reuse the persistent
      * connection.  If that fails (server closed idle connection, etc.)
      * we tear it down and create a fresh one for subsequent attempts. */
@@ -404,6 +453,7 @@ esp_err_t supabase_post(const char *table, const char *json_body,
         };
         if (resp_buf.buffer == NULL) {
             ESP_LOGE(TAG, "Failed to allocate response buffer");
+            xSemaphoreGive(s_client_mutex);
             return ESP_ERR_NO_MEM;
         }
         resp_buf.buffer[0] = '\0';
@@ -425,6 +475,7 @@ esp_err_t supabase_post(const char *table, const char *json_body,
             if (s_persistent_client == NULL) {
                 ESP_LOGE(TAG, "Failed to initialize HTTP client");
                 free(resp_buf.buffer);
+                xSemaphoreGive(s_client_mutex);
                 return ESP_FAIL;
             }
             ESP_LOGI(TAG, "Created persistent HTTP client");
@@ -465,13 +516,14 @@ esp_err_t supabase_post(const char *table, const char *json_body,
                          table, response->status_code, response->request_time_ms,
                          response->body ? response->body : "(no body)");
             }
+            xSemaphoreGive(s_client_mutex);
             return ESP_OK;
         }
 
         /* Request failed — tear down the persistent client so the next
          * attempt creates a fresh TLS session. */
         free(resp_buf.buffer);
-        supabase_close_connection();
+        close_connection_locked();
 
         if (attempt < MAX_RETRIES) {
             ESP_LOGW(TAG, "Attempt %d failed (%s), retrying in %dms...",
@@ -484,6 +536,7 @@ esp_err_t supabase_post(const char *table, const char *json_body,
     }
 
     /* All retries exhausted */
+    xSemaphoreGive(s_client_mutex);
     response->request_time_ms = (esp_timer_get_time() - overall_start) / 1000;
     return err;
 }
