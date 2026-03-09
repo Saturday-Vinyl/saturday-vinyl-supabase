@@ -1,13 +1,13 @@
 /**
  * @file led_manager.c
- * @brief RGB LED control implementation using WS2812 addressable LED
+ * @brief RGB LED strip control implementation using WS2812B addressable LEDs
  *
- * Uses the ESP32-S3 RMT peripheral via the led_strip driver to control
- * the onboard WS2812 addressable RGB LED.
+ * Uses the ESP32-S3 RMT peripheral (with DMA) via the led_strip driver to
+ * control an external WS2812B LED strip.
  *
  * Hardware Notes:
- * - ESP32-S3 has onboard WS2812 on GPIO48 (configured in app_config.h)
- * - Single addressable LED, controlled via RMT peripheral
+ * - External WS2812B strip on GPIO configured in app_config.h
+ * - LED count configured via LED_STRIP_LENGTH in app_config.h
  * - Protocol: 800kHz single-wire (NeoPixel compatible)
  */
 
@@ -28,13 +28,13 @@ static const char *TAG = "LED_MGR";
  * Configuration
  ******************************************************************************/
 
-/* WS2812 LED GPIO from app_config.h */
-#define LED_STRIP_GPIO          PIN_LED_WS2812
-#define LED_STRIP_NUM_LEDS      1
-#define LED_STRIP_RMT_RES_HZ    (10 * 1000 * 1000)  /* 10 MHz resolution */
+/* WS2812B LED strip from app_config.h */
+#define LED_STRIP_GPIO          PIN_LED_STRIP
+#define LED_STRIP_NUM_LEDS      LED_STRIP_LENGTH
+#define LED_STRIP_RMT_RES_HZ   (10 * 1000 * 1000)  /* 10 MHz resolution */
 
 /* Pattern task configuration */
-#define LED_TASK_STACK_SIZE     2048
+#define LED_TASK_STACK_SIZE     4096
 #define LED_TASK_PRIORITY       2
 #define LED_PATTERN_TICK_MS     20  /* Update interval for smooth patterns */
 
@@ -127,7 +127,35 @@ static void led_apply_color(uint8_t r, uint8_t g, uint8_t b)
 
     /* Protect RMT access with mutex to prevent concurrent refresh calls */
     if (s_rmt_mutex != NULL && xSemaphoreTake(s_rmt_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
-        led_strip_set_pixel(s_led.strip, 0, br, bg, bb);
+        for (int i = 0; i < LED_STRIP_NUM_LEDS; i++) {
+            led_strip_set_pixel(s_led.strip, i, br, bg, bb);
+        }
+        led_strip_refresh(s_led.strip);
+        xSemaphoreGive(s_rmt_mutex);
+    }
+}
+
+/**
+ * @brief Apply individual pixel colors and refresh the strip
+ *
+ * Used by multi-LED patterns (wave, chase, rainbow) where each LED
+ * has a different color. Brightness scaling is applied per pixel.
+ *
+ * @param pixels Array of rgb_t values, one per LED (LED_STRIP_NUM_LEDS entries)
+ */
+static void led_apply_strip(const rgb_t *pixels)
+{
+    if (s_led.strip == NULL) {
+        return;
+    }
+
+    if (s_rmt_mutex != NULL && xSemaphoreTake(s_rmt_mutex, pdMS_TO_TICKS(50)) == pdTRUE) {
+        for (int i = 0; i < LED_STRIP_NUM_LEDS; i++) {
+            uint32_t br = (pixels[i].r * s_led.brightness) / 255;
+            uint32_t bg = (pixels[i].g * s_led.brightness) / 255;
+            uint32_t bb = (pixels[i].b * s_led.brightness) / 255;
+            led_strip_set_pixel(s_led.strip, i, br, bg, bb);
+        }
         led_strip_refresh(s_led.strip);
         xSemaphoreGive(s_rmt_mutex);
     }
@@ -211,6 +239,88 @@ static void led_pattern_task(void *arg)
                     vTaskDelay(pdMS_TO_TICKS(100));
                     break;
 
+                case LED_PATTERN_FLASH_DOUBLE: {
+                    /* Two quick flashes: 100ms on, 100ms off, 100ms on, 700ms off */
+                    uint32_t phase = tick % 1000;
+                    if (phase < 100 || (phase >= 200 && phase < 300)) {
+                        led_apply_color(r, g, b);
+                    } else {
+                        led_apply_color(0, 0, 0);
+                    }
+                    vTaskDelay(pdMS_TO_TICKS(LED_PATTERN_TICK_MS));
+                    tick += LED_PATTERN_TICK_MS;
+                    if (tick >= 1000) tick = 0;
+                    break;
+                }
+
+                case LED_PATTERN_WAVE: {
+                    /* Sequential LED animation, 100ms per LED */
+                    rgb_t pixels[LED_STRIP_NUM_LEDS];
+                    uint32_t wave_period = LED_STRIP_NUM_LEDS * 100;
+                    uint32_t phase = tick % wave_period;
+                    int active_led = phase / 100;
+
+                    for (int i = 0; i < LED_STRIP_NUM_LEDS; i++) {
+                        if (i == active_led) {
+                            pixels[i] = (rgb_t){r, g, b};
+                        } else if (i == ((active_led + LED_STRIP_NUM_LEDS - 1) % LED_STRIP_NUM_LEDS)) {
+                            /* Trailing LED at ~40% for smooth wave effect */
+                            pixels[i] = (rgb_t){(r * 100) / 255, (g * 100) / 255, (b * 100) / 255};
+                        } else {
+                            pixels[i] = (rgb_t){0, 0, 0};
+                        }
+                    }
+                    led_apply_strip(pixels);
+                    vTaskDelay(pdMS_TO_TICKS(LED_PATTERN_TICK_MS));
+                    tick += LED_PATTERN_TICK_MS;
+                    if (tick >= wave_period) tick = 0;
+                    break;
+                }
+
+                case LED_PATTERN_CHASE: {
+                    /* Single LED moving through strip, 50ms per LED */
+                    rgb_t pixels[LED_STRIP_NUM_LEDS];
+                    uint32_t chase_period = LED_STRIP_NUM_LEDS * 50;
+                    uint32_t phase = tick % chase_period;
+                    int active_led = phase / 50;
+
+                    for (int i = 0; i < LED_STRIP_NUM_LEDS; i++) {
+                        pixels[i] = (i == active_led) ? (rgb_t){r, g, b} : (rgb_t){0, 0, 0};
+                    }
+                    led_apply_strip(pixels);
+                    vTaskDelay(pdMS_TO_TICKS(LED_PATTERN_TICK_MS));
+                    tick += LED_PATTERN_TICK_MS;
+                    if (tick >= chase_period) tick = 0;
+                    break;
+                }
+
+                case LED_PATTERN_RAINBOW: {
+                    /* Color cycling through hue wheel, 5s full cycle */
+                    rgb_t pixels[LED_STRIP_NUM_LEDS];
+                    uint32_t rainbow_period = 5000;
+                    uint32_t base_hue = (tick * 360) / rainbow_period;
+
+                    for (int i = 0; i < LED_STRIP_NUM_LEDS; i++) {
+                        uint16_t hue = (base_hue + (i * 360 / LED_STRIP_NUM_LEDS)) % 360;
+                        uint8_t region = hue / 60;
+                        uint8_t remainder = (hue % 60) * 255 / 60;
+                        uint8_t q = 255 - remainder;
+                        switch (region) {
+                            case 0:  pixels[i] = (rgb_t){255, remainder, 0}; break;
+                            case 1:  pixels[i] = (rgb_t){q, 255, 0}; break;
+                            case 2:  pixels[i] = (rgb_t){0, 255, remainder}; break;
+                            case 3:  pixels[i] = (rgb_t){0, q, 255}; break;
+                            case 4:  pixels[i] = (rgb_t){remainder, 0, 255}; break;
+                            default: pixels[i] = (rgb_t){255, 0, q}; break;
+                        }
+                    }
+                    led_apply_strip(pixels);
+                    vTaskDelay(pdMS_TO_TICKS(LED_PATTERN_TICK_MS));
+                    tick += LED_PATTERN_TICK_MS;
+                    if (tick >= rainbow_period) tick = 0;
+                    break;
+                }
+
                 default:
                     vTaskDelay(pdMS_TO_TICKS(100));
                     break;
@@ -234,7 +344,8 @@ esp_err_t led_init(void)
         return ESP_OK;
     }
 
-    ESP_LOGI(TAG, "Initializing LED manager (WS2812 on GPIO%d)", LED_STRIP_GPIO);
+    ESP_LOGI(TAG, "Initializing LED manager (%d-LED WS2812B strip on GPIO%d)",
+             LED_STRIP_NUM_LEDS, LED_STRIP_GPIO);
 
     /* Create mutex for thread-safe access */
     s_led.mutex = xSemaphoreCreateMutex();
@@ -268,7 +379,7 @@ esp_err_t led_init(void)
         .resolution_hz = LED_STRIP_RMT_RES_HZ,
         .mem_block_symbols = 64,
         .flags = {
-            .with_dma = false,
+            .with_dma = true,
         },
     };
 
@@ -374,11 +485,19 @@ void led_set_pattern(led_pattern_t pattern, uint16_t period_ms)
         period_ms = 1000;  /* Default to 1 second */
     }
 
-    /* Set appropriate period for preset patterns */
+    /* Set appropriate period for preset patterns (when caller uses default 1000ms) */
     if (pattern == LED_PATTERN_BLINK_SLOW && period_ms == 1000) {
         period_ms = 1000;  /* 1Hz = 1s period */
     } else if (pattern == LED_PATTERN_BLINK_FAST && period_ms == 1000) {
         period_ms = 500;   /* 2Hz = 0.5s period */
+    } else if (pattern == LED_PATTERN_FLASH_DOUBLE) {
+        period_ms = 1000;  /* Fixed: 100+100+100+700ms */
+    } else if (pattern == LED_PATTERN_WAVE) {
+        period_ms = LED_STRIP_NUM_LEDS * 100;  /* 100ms per LED */
+    } else if (pattern == LED_PATTERN_CHASE) {
+        period_ms = LED_STRIP_NUM_LEDS * 50;   /* 50ms per LED */
+    } else if (pattern == LED_PATTERN_RAINBOW) {
+        period_ms = 5000;  /* 5s full hue cycle */
     }
 
     if (xSemaphoreTake(s_led.mutex, pdMS_TO_TICKS(100)) == pdTRUE) {

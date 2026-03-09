@@ -1,9 +1,10 @@
 /**
  * @file led_manager.h
- * @brief RGB LED control interface for Saturday Vinyl Hub
+ * @brief RGB LED strip control interface for Saturday Vinyl Hub
  *
- * Provides functions for controlling the RGB status LED including
+ * Provides functions for controlling the external WS2812B LED strip including
  * color setting, brightness control, and pattern generation.
+ * LED count and GPIO are configured in app_config.h.
  */
 
 #ifndef LED_MANAGER_H
@@ -20,11 +21,15 @@ extern "C" {
  * @brief LED pattern types
  */
 typedef enum {
-    LED_PATTERN_SOLID,      /**< Solid color, no blinking */
-    LED_PATTERN_BLINK_SLOW, /**< Slow blink (1Hz) */
-    LED_PATTERN_BLINK_FAST, /**< Fast blink (2Hz) */
-    LED_PATTERN_PULSE,      /**< Smooth pulsing effect */
-    LED_PATTERN_FLASH,      /**< Brief flash then off */
+    LED_PATTERN_SOLID,          /**< Solid color, no blinking */
+    LED_PATTERN_BLINK_SLOW,     /**< Slow blink (1Hz) */
+    LED_PATTERN_BLINK_FAST,     /**< Fast blink (2Hz) */
+    LED_PATTERN_PULSE,          /**< Smooth pulsing effect */
+    LED_PATTERN_FLASH,          /**< Brief flash then off */
+    LED_PATTERN_FLASH_DOUBLE,   /**< Two quick flashes (100/100/100/700ms) */
+    LED_PATTERN_WAVE,           /**< Sequential LED animation, 100ms per LED */
+    LED_PATTERN_CHASE,          /**< Single LED moving through strip, 50ms per LED */
+    LED_PATTERN_RAINBOW,        /**< Color cycling through hue wheel, 5s cycle */
 } led_pattern_t;
 
 /**

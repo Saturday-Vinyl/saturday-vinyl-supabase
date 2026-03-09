@@ -50,9 +50,10 @@
 #define RFID_UART_NUM           UART_NUM_1
 #define RFID_UART_BAUD          115200
 
-/* RGB LED (WS2812 addressable LED)
- * Note: ESP32-S3-DevKitC-1 v1.0 uses GPIO48, v1.1 uses GPIO38 */
-#define PIN_LED_WS2812          38  /* Onboard addressable RGB LED (v1.1 DevKit) */
+/* External WS2812B LED Strip
+ * Note: GPIO38 was the onboard LED on DevKit v1.1; now using external strip on GPIO10. */
+#define PIN_LED_STRIP           10  /* External WS2812B LED strip data pin */
+#define LED_STRIP_LENGTH        26  /* Number of LEDs on external strip */
 
 /*******************************************************************************
  * RFID Configuration Defaults

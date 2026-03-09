@@ -41,9 +41,9 @@ The two SoCs communicate via UART. The S3 controls the H2's power and boot mode.
 │             │◄──── EN ───────────►│  │  GPIO16 ◄──── H2 TX (UART2 RX)                    │  │
 └─────────────┘                     │  │  GPIO17 ────► RFID RX (UART1 TX)                  │  │
                                     │  │  GPIO18 ◄──── RFID TX (UART1 RX)                  │  │
-┌─────────────┐                     │  │  GPIO48 ────► WS2812 RGB LED (onboard)            │  │
-│  WS2812     │◄── Onboard ────────►│  │                                                   │  │
-│  RGB LED    │     (GPIO48)        │  └───────────────────────────────────────────────────┘  │
+┌─────────────┐                     │  │  GPIO10 ────► WS2812B LED Strip (external, 26 LEDs)│  │
+│  WS2812B    │◄── GPIO10 ─────────►│  │                                                   │  │
+│  LED Strip  │     (26 LEDs)       │  └───────────────────────────────────────────────────┘  │
 └─────────────┘                     │                            │                            │
                                     │                      UART  │                            │
                                     │                            ▼                            │
@@ -82,9 +82,10 @@ The two SoCs communicate via UART. The S3 controls the H2's power and boot mode.
 | 18   | UART1_RX      | Input     | YRM100 Pin 4 (TXD)      | RFID responses                 |
 | 19   | USB_D-        | Bidir     | USB-C connector         | Native USB data minus          |
 | 20   | USB_D+        | Bidir     | USB-C connector         | Native USB data plus           |
-| 48   | LED_DATA      | Output    | Onboard WS2812          | Addressable RGB LED            |
+| 10   | LED_STRIP_DATA| Output    | WS2812B Strip DIN       | External LED strip, 26 LEDs    |
 
-> **Note:** GPIO48 on ESP32-S3-DevKitC-1 has an onboard WS2812 RGB LED.
+> **Note:** An external WS2812B LED strip (26 LEDs) is connected to GPIO10.
+> The onboard WS2812 on GPIO38/48 (DevKit v1.0/v1.1) is no longer used.
 > The BOOT button is on GPIO0.
 
 ---
@@ -195,33 +196,47 @@ Both modules share identical electrical specifications:
 
 ---
 
-## RGB LED (Onboard WS2812)
+## RGB LED Strip (External WS2812B)
 
-The ESP32-S3-DevKitC-1 includes an onboard WS2812 addressable RGB LED on **GPIO48**.
-**No external wiring is required.**
+An external WS2812B LED strip (26 LEDs) is connected to **GPIO10** of the ESP32-S3.
+
+### Wiring
+
+| Strip Wire | Connect To           | Notes                          |
+|------------|----------------------|--------------------------------|
+| DIN        | ESP32-S3 GPIO10      | Data input (3.3V logic OK for short runs) |
+| VCC        | 5V rail              | 5V supply (2A+ recommended)    |
+| GND        | Common GND           | Shared ground with ESP32-S3    |
 
 ### Specifications
 
 | Parameter       | Value                                    |
 |-----------------|------------------------------------------|
-| Type            | WS2812 (addressable RGB)                 |
-| GPIO            | 48                                       |
+| Type            | WS2812B (addressable RGB)                |
+| GPIO            | 10                                       |
 | Protocol        | Single-wire, 800 kHz                     |
-| Driver          | ESP-IDF RMT peripheral + `led_strip`     |
-| LED Count       | 1                                        |
+| Driver          | ESP-IDF RMT peripheral (DMA) + `led_strip` |
+| LED Count       | 26                                       |
+| Peak Current    | ~1.56A (all white, full brightness)      |
 
 ### LED Status Indicators
+
+See `shared-docs/protocols/led_status_protocol.md` for the full LED status protocol.
 
 | Color | Pattern | Meaning |
 |-------|---------|---------|
 | White | Pulse | Service mode (awaiting provisioning) |
-| Blue | Slow blink | BLE advertising |
+| White | Chase | Boot sequence |
+| Blue | Pulse | BLE advertising |
 | Blue | Solid | BLE connected |
-| Blue | Fast blink | Connecting to WiFi |
-| Cyan | Flash | WiFi connected |
-| Green | Pulse | Normal operation (WiFi connected) |
-| Yellow | Slow blink | WiFi disconnected |
+| Cyan | Fast blink | Connecting to WiFi/Thread |
+| Cyan | Flash | WiFi/Thread connected |
+| Cyan | Wave | RFID scanning / data transfer |
+| Green | Flash | Success confirmation |
+| Yellow | Slow blink | WiFi/network disconnected |
 | Red | Fast blink | Error / Factory reset |
+| Purple | Pulse | OTA firmware update |
+| Rainbow | Cycling | Party mode / special events |
 
 ---
 
@@ -263,32 +278,32 @@ button can be wired the same way.
 ## Power Distribution
 
 ```
-                                    USB-C 5V Input (S3 DevKit)
+                                    USB-C 5V Input (S3 DevKit) — 2A+ recommended
                                           │
-                          ┌───────────────┼───────────────┐
-                          │               │               │
-                          ▼               ▼               │
-                    ┌───────────┐   ┌───────────┐        │
-                    │  ESP32-S3 │   │  YRM100   │        │
-                    │  Onboard  │   │  (direct) │        │
-                    │    LDO    │   │           │        │
-                    └─────┬─────┘   └───────────┘        │
-                          │                              │
-                          ▼                              │
-                    ┌───────────┐                        │
-                    │   3.3V    │                        │
-                    │   Rail    │                        │
-                    └─────┬─────┘                        │
-                          │                              │
-          ┌───────────────┼───────────────┐              │
-          │               │               │              │
-          ▼               ▼               ▼              │
-    ┌───────────┐   ┌───────────┐   ┌───────────┐       │
-    │  ESP32-S3 │   │  WS2812   │   │  ESP32-H2 │       │
-    │   (MCU)   │   │ (onboard) │   │  (3V3 in) │       │
-    └───────────┘   └───────────┘   └───────────┘       │
-                                                         │
-                                    Common GND ◄─────────┘
+                          ┌───────────────┼───────────────┬───────────────┐
+                          │               │               │               │
+                          ▼               ▼               ▼               │
+                    ┌───────────┐   ┌───────────┐   ┌───────────┐        │
+                    │  ESP32-S3 │   │  YRM100   │   │  WS2812B  │        │
+                    │  Onboard  │   │  (direct) │   │  Strip    │        │
+                    │    LDO    │   │           │   │  (26 LEDs)│        │
+                    └─────┬─────┘   └───────────┘   └───────────┘        │
+                          │                                              │
+                          ▼                                              │
+                    ┌───────────┐                                        │
+                    │   3.3V    │                                        │
+                    │   Rail    │                                        │
+                    └─────┬─────┘                                        │
+                          │                                              │
+          ┌───────────────┼───────────────┐                              │
+          │               │               │                              │
+          ▼               ▼               ▼                              │
+    ┌───────────┐   ┌───────────┐   ┌───────────┐                       │
+    │  ESP32-S3 │   │  GPIO10   │   │  ESP32-H2 │                       │
+    │   (MCU)   │   │ (LED data)│   │  (3V3 in) │                       │
+    └───────────┘   └───────────┘   └───────────┘                       │
+                                                                         │
+                                    Common GND ◄─────────────────────────┘
 ```
 
 ### Power Budget
@@ -299,12 +314,14 @@ button can be wired the same way.
 | ESP32-H2        | 3.3V | 25mA              | 80mA           | Thread active            |
 | YRM100 (idle)   | 5V   | 30mA              | 30mA           | Direct from USB 5V       |
 | YRM100 (TX)     | 5V   | 200mA             | 260mA          | At 26 dBm output         |
-| WS2812 LED      | 3.3V | 1mA               | 60mA           | Onboard, max ~20mA/color |
-| **Total 3.3V**  |      | **~126mA**        | **~490mA**     | Within LDO capacity      |
-| **Total 5V**    |      | **~330mA**        | **~650mA**     | Need good USB source     |
+| WS2812B Strip   | 5V   | 40mA              | 1560mA         | 26 LEDs, ~60mA/LED max   |
+| **Total 3.3V**  |      | **~125mA**        | **~430mA**     | Within LDO capacity      |
+| **Total 5V**    |      | **~370mA**        | **~2080mA**    | 2A+ supply recommended   |
 
-> **Note:** A quality USB-C cable and 1A+ source is recommended. For development with
-> both DevKits, each can be powered from separate USB ports.
+> **Note:** A quality USB-C cable and **2A+ source** is recommended due to the 26-LED
+> strip. In practice, status patterns use ~50% brightness and don't light all LEDs
+> simultaneously, so typical draw is well under 1A. For development with both DevKits,
+> each can be powered from separate USB ports.
 
 ---
 
@@ -330,6 +347,10 @@ For development, use two separate DevKits connected via jumper wires:
     GPIO18 ◄─────┤              (5V from S3 DevKit 5V pin)
     5V     ──────┤
     GND    ──────┘
+
+    GPIO10 ──────────────────► WS2812B LED Strip DIN
+    5V     ──────────────────► WS2812B LED Strip VCC (2A+ supply recommended)
+    GND    ──────────────────► WS2812B LED Strip GND
 ```
 
 ### Breadboard Layout
@@ -356,6 +377,10 @@ For development, use two separate DevKits connected via jumper wires:
 │  │  5V     ───┼─────┼───────►│ 1  2  3  4  5 │                          │
 │  │  GND    ───┴─────┼───────►│GND EN RX TX VCC                          │
 │  │                  │        └───────────────┘                          │
+│  │  GPIO10 ─────────┼──────► WS2812B Strip                              │
+│  │  5V     ─────────┼───────►  ┌─────────────────────────┐              │
+│  │  GND    ─────────┼───────►  │ DIN  VCC  GND  (26 LEDs)│              │
+│  │                  │          └─────────────────────────┘              │
 │  └──────────────────┘                                                    │
 │                                                                          │
 └──────────────────────────────────────────────────────────────────────────┘
@@ -373,6 +398,7 @@ For development, use two separate DevKits connected via jumper wires:
 | 1   | Breadboard             | Half-size or full-size        | For prototyping           |
 | 2   | USB-C Cables           | Data-capable                  | Power and programming     |
 | 10  | Jumper Wires           | Male-to-male                  | Various colors            |
+| 1   | WS2812B LED Strip      | 26-LED, 5V, addressable RGB   | With JST or bare wires    |
 | 1   | RFID Test Tag          | UHF EPC Gen2                  | Saturday prefix: 5356...  |
 
 ---
@@ -401,10 +427,13 @@ For development, use two separate DevKits connected via jumper wires:
 - Verify S3 GPIO7 is LOW (normal boot, not download mode)
 - Check common GND connection
 
-### LED Not Working (S3 Onboard WS2812)
-- Verify using correct GPIO (GPIO48)
+### LED Strip Not Working
+- Verify GPIO10 is connected to strip DIN (data in, not DOUT)
+- Check 5V power to LED strip (separate from 3.3V logic)
+- Ensure common GND between ESP32-S3 and strip
 - Check that `led_strip` component is enabled
-- Ensure RMT peripheral is not conflicting
+- Verify LED count matches physical strip (26 LEDs in app_config.h)
+- For long data wire runs (>30cm), consider a 3.3V→5V level shifter
 
 ### Button Not Detected
 - Verify internal pull-up is enabled in code
