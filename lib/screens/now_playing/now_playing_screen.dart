@@ -11,11 +11,14 @@ import 'package:saturday_consumer_app/widgets/common/loading_indicator.dart';
 import 'package:saturday_consumer_app/widgets/common/saturday_app_bar.dart';
 import 'package:saturday_consumer_app/widgets/now_playing/album_art_hero.dart';
 import 'package:saturday_consumer_app/widgets/now_playing/auto_detected_badge.dart';
+import 'package:saturday_consumer_app/providers/track_timing_provider.dart';
 import 'package:saturday_consumer_app/widgets/now_playing/flip_timer.dart';
 import 'package:saturday_consumer_app/widgets/now_playing/now_playing_empty_state.dart';
 import 'package:saturday_consumer_app/widgets/now_playing/now_playing_info.dart';
 import 'package:saturday_consumer_app/widgets/now_playing/now_playing_track_list.dart';
 import 'package:saturday_consumer_app/widgets/now_playing/side_selector.dart';
+import 'package:saturday_consumer_app/widgets/now_playing/track_timing_banner.dart';
+import 'package:saturday_consumer_app/widgets/now_playing/track_timing_session.dart';
 import 'package:saturday_consumer_app/widgets/now_playing/up_next_carousel.dart';
 
 /// Now Playing screen - shows the currently playing record.
@@ -58,6 +61,9 @@ class NowPlayingScreen extends ConsumerWidget {
   ) {
     final album = state.currentAlbum!.album;
     final hasSides = state.hasSides;
+    final timingState = ref.watch(trackTimingProvider);
+    final isTimingActive = timingState.isActive;
+    final hasMissingDurations = state.currentSideHasMissingDurations;
 
     return SingleChildScrollView(
       padding: Spacing.pagePadding,
@@ -102,17 +108,34 @@ class NowPlayingScreen extends ConsumerWidget {
             const SizedBox(height: Spacing.lg),
           ],
 
-          // Flip timer (only if we have duration info and a start time)
-          if (state.startedAt != null && state.currentSideDurationSeconds > 0)
+          // Flip timer OR track timing banner/session
+          if (isTimingActive)
+            // Active timing session replaces the timer + track list
+            const TrackTimingSession()
+          else if (state.startedAt != null &&
+              state.currentSideDurationSeconds > 0)
+            // Normal flip timer when durations are known
             FlipTimer(
               startedAt: state.startedAt!,
               totalDurationSeconds: state.currentSideDurationSeconds,
+            )
+          else if (hasMissingDurations && state.currentSideTracks.isNotEmpty)
+            // Prompt to record track times when durations are missing
+            TrackTimingBanner(
+              onStart: () {
+                ref.read(trackTimingProvider.notifier).start(
+                      side: state.currentSide,
+                      tracks: state.currentSideTracks,
+                    );
+              },
             ),
 
           Spacing.sectionGap,
 
-          // Track list
-          if (album != null && album.tracks.isNotEmpty)
+          // Track list (hidden during active timing session)
+          if (!isTimingActive &&
+              album != null &&
+              album.tracks.isNotEmpty)
             NowPlayingTrackList(
               sideATracks: state.sideATracks,
               sideBTracks: state.sideBTracks,

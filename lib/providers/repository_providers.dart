@@ -53,3 +53,9 @@ final albumLocationRepositoryProvider =
 final invitationRepositoryProvider = Provider<InvitationRepository>((ref) {
   return InvitationRepository();
 });
+
+/// Provider for TrackDurationRepository.
+final trackDurationRepositoryProvider =
+    Provider<TrackDurationRepository>((ref) {
+  return TrackDurationRepository();
+});

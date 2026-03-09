@@ -128,6 +128,13 @@ class NowPlayingState extends Equatable {
     });
   }
 
+  /// Whether the current side has tracks with missing durations.
+  bool get currentSideHasMissingDurations {
+    final tracks = currentSideTracks;
+    if (tracks.isEmpty) return false;
+    return tracks.any((track) => track.durationSeconds == null);
+  }
+
   /// Whether this was auto-detected by a hub.
   bool get isAutoDetected => source == NowPlayingSource.autoDetected;
 
@@ -296,6 +303,16 @@ class NowPlayingNotifier extends StateNotifier<NowPlayingState> {
         startedAt: DateTime.now(),
       );
       await _persistState();
+    }
+  }
+
+  /// Refresh the album data in the current state.
+  ///
+  /// Called after track durations are contributed to update the UI
+  /// with the newly recorded durations.
+  void refreshAlbum(LibraryAlbum updatedAlbum) {
+    if (state.currentAlbum?.id == updatedAlbum.id) {
+      state = state.copyWith(currentAlbum: updatedAlbum);
     }
   }
 
