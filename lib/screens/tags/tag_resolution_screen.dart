@@ -185,9 +185,11 @@ class _TagResolutionScreenState extends ConsumerState<TagResolutionScreen> {
     final userId = ref.read(currentUserIdProvider);
     if (userId == null) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Please sign in to link tags')),
-        );
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(
+            const SnackBar(content: Text('Please sign in to link tags')),
+          );
       }
       return;
     }
@@ -208,9 +210,11 @@ class _TagResolutionScreenState extends ConsumerState<TagResolutionScreen> {
     } catch (e) {
       if (mounted) {
         setState(() => _isAssociating = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to link tag: $e')),
-        );
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(
+            SnackBar(content: Text('Failed to link tag: $e')),
+          );
       }
     }
   }

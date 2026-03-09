@@ -61,9 +61,11 @@ class _CreateLibraryScreenState extends ConsumerState<CreateLibraryScreen> {
       ref.read(currentLibraryIdProvider.notifier).state = library.id;
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Created "${library.name}"')),
-        );
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(
+            SnackBar(content: Text('Created "${library.name}"')),
+          );
         context.pop();
       }
     } catch (e) {

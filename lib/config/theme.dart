@@ -289,6 +289,9 @@ class SaturdayTheme {
         ),
         actionTextColor: SaturdayColors.info,
         behavior: SnackBarBehavior.floating,
+        showCloseIcon: true,
+        closeIconColor: SaturdayColors.white,
+        dismissDirection: DismissDirection.horizontal,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(8),
         ),

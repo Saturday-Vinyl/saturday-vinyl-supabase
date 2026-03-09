@@ -251,9 +251,11 @@ class _WifiReprovisionScreenState extends ConsumerState<WifiReprovisionScreen> {
     } catch (e) {
       debugPrint('[WiFi Reprovision] Error updating provision data: $e');
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Network updated but failed to save: $e')),
-        );
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(
+            SnackBar(content: Text('Network updated but failed to save: $e')),
+          );
       }
     }
 
@@ -653,9 +655,11 @@ class _WifiConfigureStepState extends ConsumerState<_WifiConfigureStep> {
     final password = _passwordController.text;
 
     if (ssid.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter a network name')),
-      );
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+          const SnackBar(content: Text('Please enter a network name')),
+        );
       return;
     }
 

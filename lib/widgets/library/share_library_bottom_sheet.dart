@@ -303,13 +303,15 @@ class _ShareLibraryBottomSheetState
 
         Navigator.pop(context);
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Invitation sent to ${_emailController.text.trim()}',
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(
+            SnackBar(
+              content: Text(
+                'Invitation sent to ${_emailController.text.trim()}',
+              ),
             ),
-          ),
-        );
+          );
       } else if (mounted) {
         final errorState = ref.read(invitationNotifierProvider);
         setState(() {

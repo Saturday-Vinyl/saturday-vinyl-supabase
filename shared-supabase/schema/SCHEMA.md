@@ -445,6 +445,19 @@ Real-time record placement/removal events from RFID readers.
 | timestamp | timestamp with time zone | NOT NULL | now() |  |
 | created_at | timestamp with time zone | NOT NULL | now() |  |
 
+### crate_inventory_events
+RFID inventory snapshots from Thread-connected crates, relayed via the Hub.
+
+| Column | Type | Nullable | Default | Notes |
+|--------|------|----------|---------|-------|
+| id | uuid | NOT NULL | gen_random_uuid() | PK |
+| unit_id | text | NOT NULL |  | Hub serial number |
+| mac_address | character varying(17) | NOT NULL |  | WiFi MAC of the crate (matches devices.mac_address) |
+| epcs | text[] | NOT NULL |  | Array of 24-char hex EPCs |
+| epc_count | integer | NOT NULL |  |  |
+| timestamp | timestamp with time zone | NOT NULL |  |  |
+| created_at | timestamp with time zone | NOT NULL | now() |  |
+
 ---
 
 ## Orders & Customers
@@ -851,6 +864,19 @@ Maps old QR code UUIDs to new unit IDs during migration.
         END AS is_playing
    FROM now_playing_events
   ORDER BY unit_id, "timestamp" DESC;
+```
+
+### latest_crate_inventory
+
+```sql
+ SELECT DISTINCT ON (mac_address) mac_address,
+    unit_id,
+    epcs,
+    epc_count,
+    "timestamp" AS last_scan_time,
+    created_at
+   FROM crate_inventory_events
+  ORDER BY mac_address, "timestamp" DESC;
 ```
 
 ### production_units_compat

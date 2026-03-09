@@ -268,19 +268,21 @@ class ConfirmAlbumScreen extends ConsumerWidget {
       final addedAlbum = ref.read(addAlbumProvider).addedAlbum;
 
       // Show success message
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Added "${addedAlbum?.album?.title}" to your library'),
-          action: SnackBarAction(
-            label: 'View',
-            onPressed: () {
-              if (addedAlbum != null) {
-                context.go('/library/album/${addedAlbum.id}');
-              }
-            },
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+          SnackBar(
+            content: Text('Added "${addedAlbum?.album?.title}" to your library'),
+            action: SnackBarAction(
+              label: 'View',
+              onPressed: () {
+                if (addedAlbum != null) {
+                  context.go('/library/album/${addedAlbum.id}');
+                }
+              },
+            ),
           ),
-        ),
-      );
+        );
 
       // Invalidate library albums to refresh the list
       ref.invalidate(libraryAlbumsProvider);

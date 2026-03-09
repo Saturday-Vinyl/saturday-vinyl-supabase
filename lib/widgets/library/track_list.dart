@@ -11,6 +11,7 @@ class TrackList extends StatelessWidget {
     super.key,
     required this.tracks,
     this.showSideDurations = true,
+    this.accentColor,
   });
 
   /// The tracks to display.
@@ -18,6 +19,9 @@ class TrackList extends StatelessWidget {
 
   /// Whether to show total duration for each side.
   final bool showSideDurations;
+
+  /// Optional accent color for track positions and durations.
+  final Color? accentColor;
 
   @override
   Widget build(BuildContext context) {
@@ -32,7 +36,7 @@ class TrackList extends StatelessWidget {
       children: [
         for (final entry in sides.entries) ...[
           if (sides.length > 1) _buildSideHeader(context, entry.key, entry.value),
-          ...entry.value.map((track) => _TrackTile(track: track)),
+          ...entry.value.map((track) => _TrackTile(track: track, accentColor: accentColor)),
           if (showSideDurations && sides.length > 1)
             _buildSideDuration(context, entry.value),
           if (entry.key != sides.keys.last) const SizedBox(height: Spacing.lg),
@@ -139,12 +143,15 @@ class TrackList extends StatelessWidget {
 
 /// A single track row.
 class _TrackTile extends StatelessWidget {
-  const _TrackTile({required this.track});
+  const _TrackTile({required this.track, this.accentColor});
 
   final Track track;
+  final Color? accentColor;
 
   @override
   Widget build(BuildContext context) {
+    final metaColor = accentColor ?? SaturdayColors.secondary;
+
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: Spacing.xs),
       child: Row(
@@ -155,7 +162,8 @@ class _TrackTile extends StatelessWidget {
             child: Text(
               track.position,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: SaturdayColors.secondary,
+                    color: metaColor,
+                    fontWeight: accentColor != null ? FontWeight.w600 : null,
                   ),
             ),
           ),
@@ -176,7 +184,7 @@ class _TrackTile extends StatelessWidget {
           Text(
             track.formattedDuration,
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: SaturdayColors.secondary,
+                  color: metaColor,
                 ),
           ),
         ],

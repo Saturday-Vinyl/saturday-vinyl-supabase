@@ -137,15 +137,17 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
     // Check if vision service is available
     final visionService = ref.read(claudeVisionServiceProvider);
     if (visionService == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Album cover recognition requires an Anthropic API key. '
-            'Please add ANTHROPIC_API_KEY to your .env file.',
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Album cover recognition requires an Anthropic API key. '
+              'Please add ANTHROPIC_API_KEY to your .env file.',
+            ),
+            duration: Duration(seconds: 4),
           ),
-          duration: Duration(seconds: 4),
-        ),
-      );
+        );
       return;
     }
 
@@ -247,12 +249,14 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
         _isSearching = false;
       });
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to capture photo: $e'),
-          duration: const Duration(seconds: 3),
-        ),
-      );
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+          SnackBar(
+            content: Text('Failed to capture photo: $e'),
+            duration: const Duration(seconds: 3),
+          ),
+        );
     }
   }
 
@@ -397,20 +401,22 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
   }
 
   void _showErrorSnackbar(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        action: SnackBarAction(
-          label: 'Retry',
-          onPressed: () {
-            setState(() {
-              _isSearching = false;
-              _detectedBarcode = null;
-            });
-          },
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          action: SnackBarAction(
+            label: 'Retry',
+            onPressed: () {
+              setState(() {
+                _isSearching = false;
+                _detectedBarcode = null;
+              });
+            },
+          ),
         ),
-      ),
-    );
+      );
   }
 
   void _showNoResultsDialog(String barcode) {

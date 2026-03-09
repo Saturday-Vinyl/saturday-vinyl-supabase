@@ -85,15 +85,17 @@ void showAlbumQuickActions(
             onTap: () {
               Navigator.pop(context);
               ref.read(nowPlayingProvider.notifier).setNowPlaying(libraryAlbum);
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text('Now playing: "${album?.title}"'),
-                  action: SnackBarAction(
-                    label: 'View',
-                    onPressed: () => context.go(RoutePaths.nowPlaying),
+              ScaffoldMessenger.of(context)
+                ..clearSnackBars()
+                ..showSnackBar(
+                  SnackBar(
+                    content: Text('Now playing: "${album?.title}"'),
+                    action: SnackBarAction(
+                      label: 'View',
+                      onPressed: () => context.go(RoutePaths.nowPlaying),
+                    ),
                   ),
-                ),
-              );
+                );
             },
           ),
 

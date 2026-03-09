@@ -556,9 +556,11 @@ class LibraryDetailsScreen extends ConsumerWidget {
 
     if (confirmed == true && context.mounted) {
       // TODO: Implement member removal via repository
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${member.displayName} has been removed')),
-      );
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+          SnackBar(content: Text('${member.displayName} has been removed')),
+        );
       ref.invalidate(libraryDetailsProvider(libraryId));
     }
   }
@@ -599,14 +601,18 @@ class LibraryDetailsScreen extends ConsumerWidget {
 
       if (context.mounted) {
         if (success) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Invitation revoked')),
-          );
+          ScaffoldMessenger.of(context)
+            ..clearSnackBars()
+            ..showSnackBar(
+              const SnackBar(content: Text('Invitation revoked')),
+            );
         } else {
           final error = ref.read(invitationNotifierProvider).error;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(error ?? 'Failed to revoke invitation')),
-          );
+          ScaffoldMessenger.of(context)
+            ..clearSnackBars()
+            ..showSnackBar(
+              SnackBar(content: Text(error ?? 'Failed to revoke invitation')),
+            );
         }
       }
     }

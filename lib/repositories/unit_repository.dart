@@ -217,6 +217,22 @@ class UnitRepository extends BaseRepository {
     return hubs.isNotEmpty ? hubs.first : null;
   }
 
+  /// Sends a command to a device by inserting into the device_commands table.
+  ///
+  /// The database broadcast trigger automatically routes the command to the
+  /// device (directly or through its Hub for Thread mesh devices).
+  Future<void> sendDeviceCommand({
+    required String macAddress,
+    required String command,
+    Map<String, dynamic>? parameters,
+  }) async {
+    await client.from('device_commands').insert({
+      'mac_address': macAddress,
+      'command': command,
+      'parameters': parameters ?? {},
+    });
+  }
+
   /// Gets the Thread credentials from a hub's linked device provision data.
   ///
   /// This is used during crate provisioning to get the Thread network

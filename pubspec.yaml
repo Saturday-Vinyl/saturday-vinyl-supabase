@@ -33,6 +33,7 @@ dependencies:
 
   # Image Loading & Caching
   cached_network_image: ^3.3.0
+  palette_generator: ^0.3.3+4
 
   # Animations
   lottie: ^3.1.0

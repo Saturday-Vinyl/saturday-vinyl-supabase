@@ -527,13 +527,15 @@ class _InvitationAcceptScreenState
               invitation.libraryId;
 
           // Show success and navigate to library
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'You\'ve joined ${invitation.libraryName ?? 'the library'}!',
+          ScaffoldMessenger.of(context)
+            ..clearSnackBars()
+            ..showSnackBar(
+              SnackBar(
+                content: Text(
+                  'You\'ve joined ${invitation.libraryName ?? 'the library'}!',
+                ),
               ),
-            ),
-          );
+            );
 
           _navigateToLibrary(invitation.libraryId);
         } else {
@@ -593,9 +595,11 @@ class _InvitationAcceptScreenState
           .rejectInvitation(widget.inviteCode);
 
       if (success && mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Invitation declined')),
-        );
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(
+            const SnackBar(content: Text('Invitation declined')),
+          );
         _navigateAway();
       } else if (mounted) {
         final errorState = ref.read(invitationNotifierProvider);

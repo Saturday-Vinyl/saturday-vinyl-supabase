@@ -245,7 +245,9 @@ class ErrorSnackBar {
     String retryLabel = 'Retry',
     Duration duration = const Duration(seconds: 4),
   }) {
-    ScaffoldMessenger.of(context).showSnackBar(
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.clearSnackBars();
+    messenger.showSnackBar(
       SnackBar(
         content: Row(
           children: [
@@ -286,7 +288,9 @@ class SuccessSnackBar {
     VoidCallback? onAction,
     String? actionLabel,
   }) {
-    ScaffoldMessenger.of(context).showSnackBar(
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.clearSnackBars();
+    messenger.showSnackBar(
       SnackBar(
         content: Row(
           children: [
@@ -327,7 +331,9 @@ class InfoSnackBar {
     VoidCallback? onAction,
     String? actionLabel,
   }) {
-    ScaffoldMessenger.of(context).showSnackBar(
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.clearSnackBars();
+    messenger.showSnackBar(
       SnackBar(
         content: Row(
           children: [

@@ -8,6 +8,7 @@ import 'package:saturday_consumer_app/providers/auth_provider.dart';
 import 'package:saturday_consumer_app/providers/library_provider.dart';
 import 'package:saturday_consumer_app/providers/repository_providers.dart';
 import 'package:saturday_consumer_app/services/claude_vision_service.dart';
+import 'package:saturday_consumer_app/services/color_extraction_service.dart';
 import 'package:saturday_consumer_app/services/discogs_service.dart';
 
 /// Provider for the Discogs service.
@@ -15,6 +16,11 @@ final discogsServiceProvider = Provider<DiscogsService>((ref) {
   return DiscogsService(
     personalAccessToken: EnvConfig.discogsPersonalAccessToken,
   );
+});
+
+/// Provider for the color extraction service.
+final colorExtractionServiceProvider = Provider<ColorExtractionService>((ref) {
+  return ColorExtractionService();
 });
 
 /// Provider for the Claude Vision service (album cover recognition).
@@ -258,6 +264,7 @@ class AddAlbumNotifier extends StateNotifier<AddAlbumState> {
 
     try {
       final albumRepo = _ref.read(albumRepositoryProvider);
+      final colorService = _ref.read(colorExtractionServiceProvider);
 
       // Check if album already exists (by Discogs ID)
       Album? existingAlbum;
@@ -265,8 +272,26 @@ class AddAlbumNotifier extends StateNotifier<AddAlbumState> {
         existingAlbum = await albumRepo.getAlbumByDiscogsId(album.discogsId!);
       }
 
-      // Create canonical album if it doesn't exist
-      final canonicalAlbum = existingAlbum ?? await albumRepo.createAlbum(album);
+      // Extract colors from cover image (non-blocking on failure)
+      final colors = album.coverImageUrl != null
+          ? await colorService.extractFromUrl(album.coverImageUrl!)
+          : null;
+
+      Album canonicalAlbum;
+      if (existingAlbum != null) {
+        canonicalAlbum = existingAlbum;
+        // Lazy backfill: update colors if the existing album doesn't have them
+        if (existingAlbum.colors == null && colors != null) {
+          await albumRepo.updateAlbumColors(
+              existingAlbum.id, colors.toJson());
+          canonicalAlbum = existingAlbum.copyWith(colors: colors);
+        }
+      } else {
+        // New album: include colors in creation
+        final albumWithColors =
+            colors != null ? album.copyWith(colors: colors) : album;
+        canonicalAlbum = await albumRepo.createAlbum(albumWithColors);
+      }
 
       // Add to library
       final libraryAlbum = await albumRepo.addAlbumToLibrary(

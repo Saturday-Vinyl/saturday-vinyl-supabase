@@ -1,4 +1,5 @@
 import 'package:equatable/equatable.dart';
+import 'package:saturday_consumer_app/models/album_colors.dart';
 import 'package:saturday_consumer_app/models/track.dart';
 
 /// Represents a canonical album in the Saturday system.
@@ -16,6 +17,7 @@ class Album extends Equatable {
   final String? label;
   final String? coverImageUrl;
   final List<Track> tracks;
+  final AlbumColors? colors;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -30,6 +32,7 @@ class Album extends Equatable {
     this.label,
     this.coverImageUrl,
     this.tracks = const [],
+    this.colors,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -55,6 +58,9 @@ class Album extends Equatable {
               ?.map((e) => Track.fromJson(e as Map<String, dynamic>))
               .toList() ??
           [],
+      colors: json['colors'] != null
+          ? AlbumColors.fromJson(json['colors'] as Map<String, dynamic>)
+          : null,
       createdAt: DateTime.parse(json['created_at'] as String),
       updatedAt: DateTime.parse(json['updated_at'] as String),
     );
@@ -72,6 +78,7 @@ class Album extends Equatable {
       'label': label,
       'cover_image_url': coverImageUrl,
       'tracks': tracks.map((t) => t.toJson()).toList(),
+      'colors': colors?.toJson(),
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt.toIso8601String(),
     };
@@ -88,6 +95,7 @@ class Album extends Equatable {
     String? label,
     String? coverImageUrl,
     List<Track>? tracks,
+    AlbumColors? colors,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) {
@@ -102,6 +110,7 @@ class Album extends Equatable {
       label: label ?? this.label,
       coverImageUrl: coverImageUrl ?? this.coverImageUrl,
       tracks: tracks ?? this.tracks,
+      colors: colors ?? this.colors,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
     );
@@ -137,6 +146,7 @@ class Album extends Equatable {
         label,
         coverImageUrl,
         tracks,
+        colors,
         createdAt,
         updatedAt,
       ];

@@ -162,12 +162,14 @@ class NowPlayingScreen extends ConsumerWidget {
               },
               onPhotoOfCover: () {
                 // Photo recognition coming soon - show snackbar
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Photo recognition coming soon!'),
-                    behavior: SnackBarBehavior.floating,
-                  ),
-                );
+                ScaffoldMessenger.of(context)
+                  ..clearSnackBars()
+                  ..showSnackBar(
+                    const SnackBar(
+                      content: Text('Photo recognition coming soon!'),
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
               },
             ),
           ),

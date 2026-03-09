@@ -1,6 +1,8 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:saturday_consumer_app/models/album.dart';
+import 'package:saturday_consumer_app/models/album_colors.dart';
 import 'package:saturday_consumer_app/models/library_album.dart';
+import 'package:saturday_consumer_app/providers/add_album_provider.dart';
 import 'package:saturday_consumer_app/providers/library_provider.dart';
 import 'package:saturday_consumer_app/providers/repository_providers.dart';
 import 'package:saturday_consumer_app/repositories/album_repository.dart';
@@ -138,4 +140,29 @@ final libraryYearRangeProvider = Provider<({int? min, int? max})>((ref) {
         },
       ) ??
       (min: null, max: null);
+});
+
+/// Extracts and persists colors for an album that doesn't have them yet.
+///
+/// Returns the colors if extraction succeeds, or null if the album already
+/// has colors, has no cover image, or extraction fails. Persists to the
+/// database as a side effect so subsequent loads include colors.
+final albumColorsBackfillProvider =
+    FutureProvider.family<AlbumColors?, String>((ref, albumId) async {
+  final albumRepo = ref.watch(albumRepositoryProvider);
+  final album = await albumRepo.getAlbum(albumId);
+  if (album == null) return null;
+
+  // Already has colors — no backfill needed
+  if (album.colors != null) return album.colors;
+
+  // No cover image to extract from
+  if (album.coverImageUrl == null) return null;
+
+  final colorService = ref.watch(colorExtractionServiceProvider);
+  final colors = await colorService.extractFromUrl(album.coverImageUrl!);
+  if (colors != null) {
+    await albumRepo.updateAlbumColors(album.id, colors.toJson());
+  }
+  return colors;
 });

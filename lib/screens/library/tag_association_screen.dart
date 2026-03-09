@@ -50,11 +50,13 @@ class _TagAssociationScreenState extends ConsumerState<TagAssociationScreen> {
       final albumTitle =
           albumAsync.valueOrNull?.album?.title ?? 'album';
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Tag associated with "$albumTitle"'),
-        ),
-      );
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+          SnackBar(
+            content: Text('Tag associated with "$albumTitle"'),
+          ),
+        );
       context.pop();
     }
   }

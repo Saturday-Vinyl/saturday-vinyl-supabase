@@ -6,9 +6,11 @@ import 'package:saturday_consumer_app/config/styles.dart';
 import 'package:saturday_consumer_app/config/theme.dart';
 import 'package:saturday_consumer_app/models/device.dart';
 import 'package:saturday_consumer_app/providers/device_provider.dart';
+import 'package:saturday_consumer_app/providers/realtime_album_location_provider.dart';
 import 'package:saturday_consumer_app/providers/repository_providers.dart';
 import 'package:saturday_consumer_app/screens/account/wifi_reprovision_screen.dart';
 import 'package:saturday_consumer_app/widgets/devices/devices.dart';
+import 'package:saturday_consumer_app/widgets/library/album_card.dart';
 
 /// Screen displaying detailed information about a device.
 class DeviceDetailScreen extends ConsumerStatefulWidget {
@@ -25,6 +27,7 @@ class DeviceDetailScreen extends ConsumerStatefulWidget {
 
 class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
   bool _isEditing = false;
+  bool _isIdentifying = false;
   late TextEditingController _nameController;
 
   @override
@@ -96,7 +99,15 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
   }
 
   Widget _buildContent(BuildContext context, WidgetRef ref, Device device) {
-    return ListView(
+    return RefreshIndicator(
+      onRefresh: () async {
+        ref.invalidate(deviceByIdProvider(widget.deviceId));
+        if (device.isCrate) {
+          ref.invalidate(crateAlbumsProvider(device.id));
+        }
+        await ref.read(deviceByIdProvider(widget.deviceId).future);
+      },
+      child: ListView(
       padding: Spacing.pagePadding,
       children: [
         // Device header
@@ -135,11 +146,15 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
               child: _buildEnvironmentContent(context, device),
             ),
           ],
+          Spacing.sectionGap,
+          // Crate contents section
+          _buildCrateContentsSection(context, ref, device),
         ],
         Spacing.sectionGap,
         // Actions section
         _buildActionsSection(context, ref, device),
       ],
+    ),
     );
   }
 
@@ -370,6 +385,80 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
     );
   }
 
+  Widget _buildCrateContentsSection(
+    BuildContext context,
+    WidgetRef ref,
+    Device device,
+  ) {
+    final albumsAsync = ref.watch(crateAlbumsProvider(device.id));
+
+    return albumsAsync.when(
+      data: (albums) => _buildSection(
+        context,
+        title: 'Crate Contents (${albums.length})',
+        child: albums.isEmpty
+            ? Padding(
+                padding: const EdgeInsets.symmetric(vertical: Spacing.lg),
+                child: Center(
+                  child: Column(
+                    children: [
+                      Icon(
+                        Icons.album_outlined,
+                        size: 32,
+                        color: SaturdayColors.secondary,
+                      ),
+                      const SizedBox(height: Spacing.sm),
+                      Text(
+                        'No albums detected',
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                              color: SaturdayColors.secondary,
+                            ),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            : Column(
+                children: [
+                  for (int i = 0; i < albums.length; i++) ...[
+                    if (i > 0) const Divider(height: 1),
+                    AlbumListTile(
+                      libraryAlbum: albums[i],
+                      onTap: () => context.pushNamed(
+                        RouteNames.albumDetails,
+                        pathParameters: {'id': albums[i].id},
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+      ),
+      loading: () => _buildSection(
+        context,
+        title: 'Crate Contents',
+        child: const Padding(
+          padding: EdgeInsets.symmetric(vertical: Spacing.lg),
+          child: Center(child: CircularProgressIndicator()),
+        ),
+      ),
+      error: (e, _) => _buildSection(
+        context,
+        title: 'Crate Contents',
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: Spacing.lg),
+          child: Center(
+            child: Text(
+              'Failed to load albums',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: SaturdayColors.secondary,
+                  ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildActionsSection(BuildContext context, WidgetRef ref, Device device) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -378,9 +467,11 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
           ElevatedButton.icon(
             onPressed: () {
               // TODO: Navigate to device setup continuation
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Continue setup coming soon')),
-              );
+              ScaffoldMessenger.of(context)
+                ..clearSnackBars()
+                ..showSnackBar(
+                  const SnackBar(content: Text('Continue setup coming soon')),
+                );
             },
             icon: const Icon(Icons.settings),
             label: const Text('Complete Setup'),
@@ -390,6 +481,23 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
             onPressed: () => _navigateToWifiReprovision(context, device),
             icon: const Icon(Icons.wifi),
             label: const Text('Change Wi-Fi Network'),
+          ),
+        if (device.isCrate && !device.needsSetup)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: OutlinedButton.icon(
+              onPressed: device.isEffectivelyOnline && device.macAddress != null && !_isIdentifying
+                  ? () => _identifyDevice(ref, device)
+                  : null,
+              icon: _isIdentifying
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.flashlight_on),
+              label: Text(_isIdentifying ? 'Sending...' : 'Identify'),
+            ),
           ),
         const SizedBox(height: 8),
         OutlinedButton.icon(
@@ -485,6 +593,37 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
     }
   }
 
+  Future<void> _identifyDevice(WidgetRef ref, Device device) async {
+    setState(() => _isIdentifying = true);
+    try {
+      final unitRepo = ref.read(unitRepositoryProvider);
+      await unitRepo.sendDeviceCommand(
+        macAddress: device.macAddress!,
+        command: 'pattern',
+        parameters: {'pattern': 'pulse', 'loop': 5},
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(
+            const SnackBar(content: Text('Identify command sent')),
+          );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(
+            SnackBar(content: Text('Failed to send command: $e')),
+          );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isIdentifying = false);
+      }
+    }
+  }
+
   Future<void> _saveName(WidgetRef ref, Device device) async {
     final newName = _nameController.text.trim();
     if (newName.isEmpty || newName == device.name) {
@@ -499,15 +638,19 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
       ref.invalidate(userDevicesProvider);
       setState(() => _isEditing = false);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Device renamed')),
-        );
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(
+            const SnackBar(content: Text('Device renamed')),
+          );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to rename: $e')),
-        );
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(
+            SnackBar(content: Text('Failed to rename: $e')),
+          );
       }
     }
   }
@@ -562,16 +705,20 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
       await unitRepo.unclaimUnit(device.id);
       ref.invalidate(userDevicesProvider);
       if (mounted) {
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(
+            const SnackBar(content: Text('Device removed')),
+          );
         context.pop();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Device removed')),
-        );
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to remove device: $e')),
-        );
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(
+            SnackBar(content: Text('Failed to remove device: $e')),
+          );
       }
     }
   }

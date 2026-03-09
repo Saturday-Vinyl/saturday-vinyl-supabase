@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:saturday_consumer_app/models/album_location.dart';
+import 'package:saturday_consumer_app/models/library_album.dart';
 import 'package:saturday_consumer_app/providers/library_provider.dart';
 import 'package:saturday_consumer_app/providers/repository_providers.dart';
 import 'package:saturday_consumer_app/providers/supabase_provider.dart';
@@ -329,6 +330,25 @@ final albumLocationProvider =
 final albumsInCrateProvider =
     Provider.family<List<AlbumLocation>, String>((ref, deviceId) {
   return ref.watch(realtimeAlbumLocationProvider).getAlbumsInCrate(deviceId);
+});
+
+/// Provider for full LibraryAlbum objects in a specific crate.
+///
+/// Watches the realtime album location provider so the list updates
+/// automatically when albums are added to or removed from the crate.
+final crateAlbumsProvider =
+    FutureProvider.family<List<LibraryAlbum>, String>((ref, deviceId) async {
+  // Watch the realtime provider to re-evaluate when locations change
+  final locations = ref.watch(albumsInCrateProvider(deviceId));
+  final albumRepo = ref.watch(albumRepositoryProvider);
+
+  final albums = <LibraryAlbum>[];
+  for (final location in locations) {
+    final album = await albumRepo.getLibraryAlbum(location.libraryAlbumId);
+    if (album != null) albums.add(album);
+  }
+
+  return albums;
 });
 
 /// Provider for locations grouped by crate.

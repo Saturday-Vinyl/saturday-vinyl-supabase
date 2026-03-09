@@ -278,9 +278,11 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
       debugPrint('[DeviceSetup] Error claiming/provisioning device: $e');
       // Show error but still allow navigation
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Device configured but failed to save: $e')),
-        );
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(
+            SnackBar(content: Text('Device configured but failed to save: $e')),
+          );
       }
     }
 
@@ -993,9 +995,11 @@ class _ConfigureStepState extends ConsumerState<_ConfigureStep> {
     final password = _passwordController.text;
 
     if (ssid.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter a network name')),
-      );
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+          const SnackBar(content: Text('Please enter a network name')),
+        );
       return;
     }
 
@@ -1007,9 +1011,11 @@ class _ConfigureStepState extends ConsumerState<_ConfigureStep> {
 
   void _submitThreadCredentials() async {
     if (_selectedHub == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please select a Hub')),
-      );
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+          const SnackBar(content: Text('Please select a Hub')),
+        );
       return;
     }
 
@@ -1019,12 +1025,14 @@ class _ConfigureStepState extends ConsumerState<_ConfigureStep> {
 
     if (threadDataset == null || threadDataset.isEmpty) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('The selected Hub does not have Thread credentials. '
-                'Please ensure the Hub is fully set up.'),
-          ),
-        );
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(
+            const SnackBar(
+              content: Text('The selected Hub does not have Thread credentials. '
+                  'Please ensure the Hub is fully set up.'),
+            ),
+          );
       }
       return;
     }

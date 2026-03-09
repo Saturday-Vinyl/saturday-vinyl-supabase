@@ -236,6 +236,16 @@ class AlbumRepository extends BaseRepository {
     );
   }
 
+  /// Updates the colors for an existing album.
+  ///
+  /// Used for lazy backfill when an existing album has no colors yet.
+  Future<void> updateAlbumColors(
+      String albumId, Map<String, dynamic> colors) async {
+    await client
+        .from(_albumsTable)
+        .update({'colors': colors}).eq('id', albumId);
+  }
+
   /// Gets the count of albums in a library.
   Future<int> getLibraryAlbumCount(String libraryId) async {
     final response = await client

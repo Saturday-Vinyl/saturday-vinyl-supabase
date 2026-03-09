@@ -134,11 +134,13 @@ class AccountScreen extends ConsumerWidget {
                       .read(introSplashNotifierProvider.notifier)
                       .resetSplash();
                   if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Splash reset. Restart app to see it.'),
-                      ),
-                    );
+                    ScaffoldMessenger.of(context)
+                      ..clearSnackBars()
+                      ..showSnackBar(
+                        const SnackBar(
+                          content: Text('Splash reset. Restart app to see it.'),
+                        ),
+                      );
                   }
                 },
               ),
@@ -379,13 +381,15 @@ class AccountScreen extends ConsumerWidget {
                       sharedLibraries.first.library.id;
                   context.pushNamed(RouteNames.libraryDetails);
                 } else {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text(
-                        'No shared libraries yet. Ask someone to share their library with you!',
+                  ScaffoldMessenger.of(context)
+                    ..clearSnackBars()
+                    ..showSnackBar(
+                      const SnackBar(
+                        content: Text(
+                          'No shared libraries yet. Ask someone to share their library with you!',
+                        ),
                       ),
-                    ),
-                  );
+                    );
                 }
               },
             ),
