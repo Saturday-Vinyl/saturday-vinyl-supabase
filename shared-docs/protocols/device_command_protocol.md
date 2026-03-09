@@ -1,7 +1,7 @@
 # Saturday Device Command Protocol
 
-**Version:** 1.3.0
-**Last Updated:** 2026-02-20
+**Version:** 1.3.1
+**Last Updated:** 2026-03-09
 **Audience:** Saturday Admin App developers, Firmware engineers, Consumer App developers
 
 ---
@@ -586,6 +586,98 @@ Heartbeats are stored in the `device_heartbeats` table with automatic cleanup (2
 On each INSERT, a trigger (`sync_heartbeat_to_device_and_unit`) automatically:
 1. Updates `devices.latest_telemetry` and `devices.last_seen_at` (matched by `mac_address`)
 2. Aggregates consumer-facing fields to typed columns on the `units` table (`battery_level`, `is_online`, `wifi_rssi`, `temperature_c`, `humidity_pct`, etc.) matched by `unit_id` → `units.serial_number`
+
+### Heartbeat POST Format
+
+Devices POST heartbeats to the Supabase PostgREST API:
+
+**Endpoint:** `POST /rest/v1/device_heartbeats`
+
+**Headers:**
+```
+Authorization: Bearer <supabase_anon_key>
+apikey: <supabase_anon_key>
+Content-Type: application/json
+Prefer: return=minimal
+```
+
+Two POST formats are supported. A BEFORE INSERT trigger (`populate_heartbeat_telemetry`) normalizes both into the same stored result — typed columns populated AND complete telemetry JSONB.
+
+**Format A — Telemetry-wrapped (recommended for relays and forward compatibility):**
+
+Routing fields as top-level keys, all sensor data in the `telemetry` JSONB key. This preserves fields that don't have dedicated table columns (e.g., `temperature_c`, `rfid_tag_count`, `battery_mv`).
+
+```json
+{
+  "mac_address": "AA:BB:CC:DD:EE:FF",
+  "unit_id": "SV-CRT-000001",
+  "device_type": "crate",
+  "firmware_version": "1.2.0",
+  "type": "status",
+  "relay_device_type": "hub",
+  "relay_instance_id": "SV-HUB-00001",
+  "telemetry": {
+    "uptime_sec": 1051,
+    "free_heap": 119116,
+    "min_free_heap": 114512,
+    "largest_free_block": 98304,
+    "battery_level": 16,
+    "battery_charging": true,
+    "thread_rssi": -71,
+    "temperature_c": 25.50,
+    "humidity_pct": 39.42,
+    "rfid_tag_count": 0
+  }
+}
+```
+
+The trigger extracts known fields (`battery_level`, `uptime_sec`, `free_heap`, etc.) from `telemetry` into their typed columns, and merges routing fields into the `telemetry` JSONB so it becomes a complete record.
+
+**Format B — Flat (for devices posting directly):**
+
+All fields at top level matching table column names. The trigger auto-builds the `telemetry` JSONB from columns. Note: fields without matching columns (e.g., `temperature_c`, `humidity_pct`) are silently dropped by PostgREST and will not be stored.
+
+```json
+{
+  "mac_address": "AA:BB:CC:DD:EE:FF",
+  "unit_id": "SV-CRT-000001",
+  "device_type": "crate",
+  "firmware_version": "1.2.0",
+  "type": "status",
+  "uptime_sec": 1051,
+  "free_heap": 119116,
+  "min_free_heap": 114512,
+  "largest_free_block": 98304,
+  "battery_level": 16,
+  "battery_charging": true,
+  "wifi_rssi": -55
+}
+```
+
+**Recommendation:** Use Format A when the device sends fields beyond the standard column set (e.g., `temperature_c`, `rfid_tag_count`). Format B is acceptable for devices that only send fields with matching table columns, but Format A is preferred for forward compatibility.
+
+**Typed Columns Available:**
+
+The following fields have dedicated typed columns on `device_heartbeats`. All other fields are only preserved in the `telemetry` JSONB.
+
+| Column | Type | Extracted from telemetry |
+|--------|------|--------------------------|
+| `mac_address` | varchar(17) | Routing (top-level only) |
+| `unit_id` | text | Routing (top-level only) |
+| `device_type` | text | Routing (top-level only) |
+| `firmware_version` | text | Yes |
+| `type` | text | Routing (top-level only) |
+| `command_id` | uuid | Routing (top-level only) |
+| `relay_device_type` | text | Routing (top-level only) |
+| `relay_instance_id` | text | Routing (top-level only) |
+| `battery_level` | integer | Yes |
+| `battery_charging` | boolean | Yes |
+| `wifi_rssi` | integer | Yes |
+| `thread_rssi` | integer | Yes |
+| `uptime_sec` | integer | Yes |
+| `free_heap` | integer | Yes |
+| `min_free_heap` | integer | Yes |
+| `largest_free_block` | integer | Yes |
 
 ### Relayed Heartbeats
 
@@ -1622,6 +1714,7 @@ Key components:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.3.1 | 2026-03-09 | Added Heartbeat POST Format section documenting the two supported POST formats (telemetry-wrapped and flat) and the BEFORE INSERT trigger that normalizes both; listed typed columns available for extraction |
 | 1.3.0 | 2026-02-20 | Replaced `run_test` meta-command with flat capability commands (`connect`, `scan`, `get_dataset`, `register`, etc.); renamed `tests` → `commands` in schema references; `run_test` kept as deprecated alias; added `register` command for hub-initiated re-registration |
 | 1.2.7 | 2026-02-18 | Added Thread Network Diagnostics section with `get_dataset` test command and troubleshooting workflow for debugging Thread join failures |
 | 1.2.6 | 2026-02-06 | Clarified that `provision_data` stores only device response data (`_output` schemas), not input params; added validation requirement - provisioning must fail if required `factory_output` fields are missing |
