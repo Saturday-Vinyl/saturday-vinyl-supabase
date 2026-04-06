@@ -46,6 +46,8 @@ struct FlipTimerWidgetLiveActivity: Widget {
             let startedAtTimestamp = sharedDefault.integer(forKey: context.attributes.prefixedKey("startedAtTimestamp"))
             let isNearFlip = sharedDefault.bool(forKey: context.attributes.prefixedKey("isNearFlip"))
             let isOvertime = sharedDefault.bool(forKey: context.attributes.prefixedKey("isOvertime"))
+            let currentTrackTitle = sharedDefault.string(forKey: context.attributes.prefixedKey("currentTrackTitle")) ?? ""
+            let currentTrackPosition = sharedDefault.string(forKey: context.attributes.prefixedKey("currentTrackPosition")) ?? ""
 
             // Calculate the end time for the countdown
             let startDate = Date(timeIntervalSince1970: Double(startedAtTimestamp) / 1000.0)
@@ -60,7 +62,9 @@ struct FlipTimerWidgetLiveActivity: Widget {
                 startDate: startDate,
                 endDate: endDate,
                 isNearFlip: isNearFlip,
-                isOvertime: isOvertime
+                isOvertime: isOvertime,
+                currentTrackTitle: currentTrackTitle,
+                currentTrackPosition: currentTrackPosition
             )
             .activityBackgroundTint(Color(red: 0.886, green: 0.855, blue: 0.816)) // Saturday cream
             .activitySystemActionForegroundColor(Color(red: 0.247, green: 0.227, blue: 0.204)) // Saturday brown
@@ -73,6 +77,8 @@ struct FlipTimerWidgetLiveActivity: Widget {
             let startedAtTimestamp = sharedDefault.integer(forKey: context.attributes.prefixedKey("startedAtTimestamp"))
             let isNearFlip = sharedDefault.bool(forKey: context.attributes.prefixedKey("isNearFlip"))
             let isOvertime = sharedDefault.bool(forKey: context.attributes.prefixedKey("isOvertime"))
+            let currentTrackTitle = sharedDefault.string(forKey: context.attributes.prefixedKey("currentTrackTitle")) ?? ""
+            let currentTrackPosition = sharedDefault.string(forKey: context.attributes.prefixedKey("currentTrackPosition")) ?? ""
 
             // Calculate the end time for the countdown
             let startDate = Date(timeIntervalSince1970: Double(startedAtTimestamp) / 1000.0)
@@ -123,10 +129,17 @@ struct FlipTimerWidgetLiveActivity: Widget {
 
                 DynamicIslandExpandedRegion(.bottom) {
                     HStack {
-                        Text(artist)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
+                        if !currentTrackTitle.isEmpty {
+                            Text("\(currentTrackPosition) · \(currentTrackTitle)")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                        } else {
+                            Text(artist)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .lineLimit(1)
+                        }
 
                         Spacer()
 
@@ -190,6 +203,8 @@ struct LockScreenView: View {
     let endDate: Date
     let isNearFlip: Bool
     let isOvertime: Bool
+    let currentTrackTitle: String
+    let currentTrackPosition: String
 
     var body: some View {
         let now = Date()
@@ -248,6 +263,14 @@ struct LockScreenView: View {
                     .fontWeight(.medium)
                     .foregroundColor(Color(red: 0.247, green: 0.227, blue: 0.204))
                     .lineLimit(1)
+
+                if !currentTrackTitle.isEmpty {
+                    Text("\(currentTrackPosition) · \(currentTrackTitle)")
+                        .font(.caption)
+                        .fontWeight(.medium)
+                        .foregroundColor(Color(red: 0.247, green: 0.227, blue: 0.204).opacity(0.85))
+                        .lineLimit(1)
+                }
 
                 Text(artist)
                     .font(.caption)

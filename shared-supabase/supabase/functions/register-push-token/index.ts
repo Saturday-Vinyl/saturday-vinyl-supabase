@@ -4,11 +4,11 @@
  * Description: Registers and manages FCM push notification tokens for the mobile app
  */
 
-// Called by the app to register/update FCM push notification tokens
+// Called by the app to register/update push notification tokens
 //
 // This function:
 // 1. Validates the authenticated user
-// 2. Upserts the push token into push_notification_tokens
+// 2. Upserts the push token into push_notification_tokens (FCM) or activity_push_tokens (ActivityKit)
 // 3. Marks previous tokens for this device as inactive (token refresh)
 // 4. Optionally updates last_used_at for presence tracking
 
@@ -29,6 +29,12 @@ interface RegisterTokenRequest {
 
 interface UpdatePresenceRequest {
   device_identifier: string
+}
+
+interface RegisterActivityTokenRequest {
+  action: 'register_activity_token'
+  push_token: string
+  session_id: string
 }
 
 serve(async (req) => {
@@ -94,16 +100,26 @@ serve(async (req) => {
     const path = url.pathname.split('/').pop()
 
     // Handle different endpoints
-    if (req.method === 'POST' && path === 'register-push-token') {
-      return await handleRegisterToken(supabase, userId, await req.json())
-    } else if (req.method === 'POST' && path === 'update-presence') {
+    if (req.method === 'POST' && path === 'update-presence') {
       return await handleUpdatePresence(supabase, userId, await req.json())
     } else if (req.method === 'DELETE') {
       return await handleUnregisterToken(supabase, userId, await req.json())
+    } else if (req.method === 'POST') {
+      const body = await req.json()
+
+      // Route by action field for new token types
+      if (body.action === 'register_activity_token') {
+        return await handleRegisterActivityToken(supabase, userId, body)
+      }
+
+      // Default POST: register FCM token
+      return await handleRegisterToken(supabase, userId, body)
     }
 
-    // Default: register token
-    return await handleRegisterToken(supabase, userId, await req.json())
+    return new Response(
+      JSON.stringify({ error: 'Method not allowed' }),
+      { status: 405, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    )
 
   } catch (error) {
     console.error('Error:', error)
@@ -257,6 +273,61 @@ async function handleUnregisterToken(
 
   return new Response(
     JSON.stringify({ success: true }),
+    { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+  )
+}
+
+async function handleRegisterActivityToken(
+  supabase: ReturnType<typeof createClient>,
+  userId: string,
+  body: RegisterActivityTokenRequest
+): Promise<Response> {
+  const { push_token, session_id } = body
+
+  if (!push_token || !session_id) {
+    return new Response(
+      JSON.stringify({ error: 'Missing required fields: push_token, session_id' }),
+      { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    )
+  }
+
+  console.log(`Registering activity token for user ${userId}, session ${session_id}`)
+
+  // Deactivate previous activity tokens for this user
+  // (only one Live Activity per user at a time)
+  await supabase
+    .from('activity_push_tokens')
+    .update({ is_active: false, updated_at: new Date().toISOString() })
+    .eq('user_id', userId)
+    .eq('is_active', true)
+
+  // Upsert the new token
+  const { data, error } = await supabase
+    .from('activity_push_tokens')
+    .upsert({
+      user_id: userId,
+      session_id,
+      push_token,
+      is_active: true,
+      updated_at: new Date().toISOString(),
+    }, {
+      onConflict: 'user_id,push_token',
+    })
+    .select('id')
+    .single()
+
+  if (error) {
+    console.error('Error upserting activity token:', error)
+    return new Response(
+      JSON.stringify({ error: 'Failed to register activity token' }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    )
+  }
+
+  console.log(`Activity token registered: ${data.id}`)
+
+  return new Response(
+    JSON.stringify({ success: true, token_id: data.id }),
     { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
   )
 }

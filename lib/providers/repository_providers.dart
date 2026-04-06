@@ -54,6 +54,12 @@ final invitationRepositoryProvider = Provider<InvitationRepository>((ref) {
   return InvitationRepository();
 });
 
+/// Provider for PlaybackSessionRepository.
+final playbackSessionRepositoryProvider =
+    Provider<PlaybackSessionRepository>((ref) {
+  return PlaybackSessionRepository();
+});
+
 /// Provider for TrackDurationRepository.
 final trackDurationRepositoryProvider =
     Provider<TrackDurationRepository>((ref) {

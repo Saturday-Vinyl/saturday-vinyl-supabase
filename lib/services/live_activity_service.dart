@@ -9,6 +9,10 @@ import 'package:saturday_consumer_app/models/album.dart';
 /// Activity ID for the flip timer Live Activity.
 const String _flipTimerActivityId = 'flip_timer';
 
+/// Callback type for registering an ActivityKit push token with the server.
+typedef ActivityPushTokenCallback = Future<void> Function(
+    String pushToken, String sessionId);
+
 /// Service for managing iOS Live Activities (Dynamic Island & Lock Screen).
 ///
 /// Displays flip timer information in the Dynamic Island and Lock Screen
@@ -35,6 +39,12 @@ class LiveActivityService {
 
   /// The current activity ID returned by the system.
   String? _currentActivityId;
+
+  /// The current session ID associated with the Live Activity.
+  String? _currentSessionId;
+
+  /// Callback for registering push tokens with the server.
+  ActivityPushTokenCallback? _onPushTokenReceived;
 
   /// Returns whether Live Activities are supported and enabled.
   bool get areActivitiesEnabled => _areActivitiesEnabled;
@@ -89,15 +99,27 @@ class LiveActivityService {
     }
 
     update.mapOrNull(
-      active: (state) {
+      active: (activeState) {
         _hasActiveActivity = true;
-      },
-      ended: (state) {
-        if (state.activityId == _flipTimerActivityId) {
-          _hasActiveActivity = false;
+        // Register push token when activity becomes active
+        final token = activeState.activityToken;
+        if (token != null &&
+            _currentSessionId != null &&
+            _onPushTokenReceived != null) {
+          if (kDebugMode) {
+            print(
+                'LiveActivityService: Got activity push token: ${token.substring(0, 20)}...');
+          }
+          _onPushTokenReceived!(token, _currentSessionId!);
         }
       },
-      stale: (state) {
+      ended: (endedState) {
+        if (endedState.activityId == _flipTimerActivityId) {
+          _hasActiveActivity = false;
+          _currentSessionId = null;
+        }
+      },
+      stale: (staleState) {
         // Activity became stale, we might want to update it
       },
     );
@@ -109,11 +131,21 @@ class LiveActivityService {
   /// [startedAt] - When playback started.
   /// [sideDurationSeconds] - Total duration of the current side in seconds.
   /// [currentSide] - Current side being played ('A' or 'B').
+  /// Set the callback for when an ActivityKit push token is received.
+  void setOnPushTokenReceived(ActivityPushTokenCallback? callback) {
+    _onPushTokenReceived = callback;
+  }
+
   Future<void> startFlipTimerActivity({
     required Album album,
     required DateTime startedAt,
     required int sideDurationSeconds,
     required String currentSide,
+    String? currentTrackTitle,
+    String? currentTrackPosition,
+    int currentTrackIndex = -1,
+    int totalTracks = 0,
+    String? sessionId,
   }) async {
     if (kDebugMode) {
       print('LiveActivityService: startFlipTimerActivity called');
@@ -147,6 +179,10 @@ class LiveActivityService {
         'isNearFlip': isNearFlip,
         'isOvertime': isOvertime,
         'startedAtTimestamp': startedAt.millisecondsSinceEpoch,
+        'currentTrackTitle': currentTrackTitle ?? '',
+        'currentTrackPosition': currentTrackPosition ?? '',
+        'currentTrackIndex': currentTrackIndex,
+        'totalTracks': totalTracks,
       };
 
       if (kDebugMode) {
@@ -161,9 +197,15 @@ class LiveActivityService {
 
       _currentActivityId = activityId;
       _hasActiveActivity = true;
+      _currentSessionId = sessionId;
 
       if (kDebugMode) {
         print('LiveActivityService: Started flip timer activity, id: $activityId');
+      }
+
+      // Try to get the push token for server-side updates
+      if (activityId != null && sessionId != null) {
+        _retrieveAndRegisterPushToken(activityId, sessionId);
       }
     } catch (e, stackTrace) {
       if (kDebugMode) {
@@ -180,6 +222,10 @@ class LiveActivityService {
     required DateTime startedAt,
     required int sideDurationSeconds,
     required String currentSide,
+    String? currentTrackTitle,
+    String? currentTrackPosition,
+    int currentTrackIndex = -1,
+    int totalTracks = 0,
   }) async {
     if (!Platform.isIOS ||
         !_areActivitiesEnabled ||
@@ -201,6 +247,10 @@ class LiveActivityService {
         'remainingSeconds': remainingSeconds,
         'isNearFlip': isNearFlip,
         'isOvertime': isOvertime,
+        'currentTrackTitle': currentTrackTitle ?? '',
+        'currentTrackPosition': currentTrackPosition ?? '',
+        'currentTrackIndex': currentTrackIndex,
+        'totalTracks': totalTracks,
       };
 
       await _liveActivities.updateActivity(_currentActivityId!, data);
@@ -264,6 +314,30 @@ class LiveActivityService {
       if (kDebugMode) {
         print('LiveActivityService: Failed to end all activities: $e');
       }
+    }
+  }
+
+  /// Attempt to get the ActivityKit push token and register it.
+  Future<void> _retrieveAndRegisterPushToken(
+    String activityId,
+    String sessionId,
+  ) async {
+    if (_onPushTokenReceived == null) return;
+
+    try {
+      final pushToken = await _liveActivities.getPushToken(activityId);
+      if (pushToken != null && pushToken.isNotEmpty) {
+        if (kDebugMode) {
+          print(
+              'LiveActivityService: Retrieved push token: ${pushToken.substring(0, 20)}...');
+        }
+        await _onPushTokenReceived!(pushToken, sessionId);
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        print('LiveActivityService: Failed to get push token: $e');
+      }
+      // Not critical — the activityUpdateStream callback will also try
     }
   }
 

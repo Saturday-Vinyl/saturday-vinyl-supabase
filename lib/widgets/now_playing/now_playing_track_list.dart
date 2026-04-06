@@ -14,6 +14,7 @@ class NowPlayingTrackList extends StatefulWidget {
     required this.sideBTracks,
     required this.currentSide,
     this.initiallyExpanded = false,
+    this.currentTrackIndex,
   });
 
   /// Tracks for Side A.
@@ -27,6 +28,10 @@ class NowPlayingTrackList extends StatefulWidget {
 
   /// Whether the track list is initially expanded.
   final bool initiallyExpanded;
+
+  /// The index of the currently playing track within the current side's
+  /// track list. Used to highlight the active track.
+  final int? currentTrackIndex;
 
   @override
   State<NowPlayingTrackList> createState() => _NowPlayingTrackListState();
@@ -137,6 +142,8 @@ class _NowPlayingTrackListState extends State<NowPlayingTrackList> {
               side: 'A',
               tracks: widget.sideATracks,
               isCurrentSide: widget.currentSide == 'A',
+              currentTrackIndex:
+                  widget.currentSide == 'A' ? widget.currentTrackIndex : null,
             ),
           ],
 
@@ -148,6 +155,8 @@ class _NowPlayingTrackListState extends State<NowPlayingTrackList> {
               side: 'B',
               tracks: widget.sideBTracks,
               isCurrentSide: widget.currentSide == 'B',
+              currentTrackIndex:
+                  widget.currentSide == 'B' ? widget.currentTrackIndex : null,
             ),
           ],
         ],
@@ -162,11 +171,13 @@ class _SideSection extends StatelessWidget {
     required this.side,
     required this.tracks,
     required this.isCurrentSide,
+    this.currentTrackIndex,
   });
 
   final String side;
   final List<Track> tracks;
   final bool isCurrentSide;
+  final int? currentTrackIndex;
 
   @override
   Widget build(BuildContext context) {
@@ -225,9 +236,11 @@ class _SideSection extends StatelessWidget {
         const SizedBox(height: Spacing.sm),
 
         // Tracks
-        ...tracks.map((track) => _TrackRow(
-              track: track,
+        ...tracks.asMap().entries.map((entry) => _TrackRow(
+              track: entry.value,
               isCurrentSide: isCurrentSide,
+              isCurrentTrack: currentTrackIndex != null &&
+                  entry.key == currentTrackIndex,
             )),
       ],
     );
@@ -245,29 +258,51 @@ class _TrackRow extends StatelessWidget {
   const _TrackRow({
     required this.track,
     required this.isCurrentSide,
+    this.isCurrentTrack = false,
   });
 
   final Track track;
   final bool isCurrentSide;
+  final bool isCurrentTrack;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: Spacing.xs),
+    final textColor = isCurrentTrack || isCurrentSide
+        ? SaturdayColors.primaryDark
+        : SaturdayColors.secondary;
+    final titleWeight =
+        isCurrentTrack ? FontWeight.w600 : FontWeight.normal;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        vertical: Spacing.xs,
+        horizontal: Spacing.xs,
+      ),
+      decoration: isCurrentTrack
+          ? BoxDecoration(
+              color: SaturdayColors.primaryDark.withValues(alpha: 0.05),
+              borderRadius: AppRadius.smallRadius,
+            )
+          : null,
       child: Row(
         children: [
-          // Position
+          // Position or play indicator
           SizedBox(
             width: 28,
-            child: Text(
-              track.position,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: isCurrentSide
-                        ? SaturdayColors.primaryDark
-                        : SaturdayColors.secondary,
-                    fontWeight: isCurrentSide ? FontWeight.w500 : null,
+            child: isCurrentTrack
+                ? Icon(
+                    Icons.play_arrow,
+                    size: 14,
+                    color: SaturdayColors.primaryDark,
+                  )
+                : Text(
+                    track.position,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: textColor,
+                          fontWeight:
+                              isCurrentSide ? FontWeight.w500 : null,
+                        ),
                   ),
-            ),
           ),
           const SizedBox(width: Spacing.sm),
 
@@ -276,9 +311,8 @@ class _TrackRow extends StatelessWidget {
             child: Text(
               track.title,
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: isCurrentSide
-                        ? SaturdayColors.primaryDark
-                        : SaturdayColors.secondary,
+                    color: textColor,
+                    fontWeight: titleWeight,
                   ),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
@@ -290,7 +324,9 @@ class _TrackRow extends StatelessWidget {
           Text(
             track.formattedDuration,
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: SaturdayColors.secondary,
+                  color: isCurrentTrack
+                      ? SaturdayColors.primaryDark
+                      : SaturdayColors.secondary,
                   fontFamily: 'monospace',
                 ),
           ),

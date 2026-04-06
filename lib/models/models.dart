@@ -8,6 +8,8 @@ export 'library.dart';
 export 'library_album.dart';
 export 'library_member.dart';
 export 'listening_history.dart';
+export 'playback_event.dart';
+export 'playback_session.dart';
 export 'now_playing_detection.dart';
 export 'tag.dart';
 export 'track.dart';

@@ -5,7 +5,10 @@ import 'package:saturday_consumer_app/config/routes.dart';
 import 'package:saturday_consumer_app/config/styles.dart';
 import 'package:saturday_consumer_app/config/theme.dart';
 import 'package:saturday_consumer_app/models/library_album.dart';
+import 'package:saturday_consumer_app/providers/current_track_provider.dart';
 import 'package:saturday_consumer_app/providers/now_playing_provider.dart';
+import 'package:saturday_consumer_app/providers/app_lifecycle_provider.dart';
+import 'package:saturday_consumer_app/providers/playback_sync_provider.dart';
 import 'package:saturday_consumer_app/providers/realtime_now_playing_provider.dart';
 import 'package:saturday_consumer_app/widgets/common/loading_indicator.dart';
 import 'package:saturday_consumer_app/widgets/common/saturday_app_bar.dart';
@@ -15,6 +18,7 @@ import 'package:saturday_consumer_app/providers/track_timing_provider.dart';
 import 'package:saturday_consumer_app/widgets/now_playing/flip_timer.dart';
 import 'package:saturday_consumer_app/widgets/now_playing/now_playing_empty_state.dart';
 import 'package:saturday_consumer_app/widgets/now_playing/now_playing_info.dart';
+import 'package:saturday_consumer_app/widgets/now_playing/current_track_card.dart';
 import 'package:saturday_consumer_app/widgets/now_playing/now_playing_track_list.dart';
 import 'package:saturday_consumer_app/widgets/now_playing/side_selector.dart';
 import 'package:saturday_consumer_app/widgets/now_playing/track_timing_banner.dart';
@@ -41,6 +45,12 @@ class NowPlayingScreen extends ConsumerWidget {
     // This ensures we listen for hub detections when the screen is visible
     ref.watch(realtimeNowPlayingProvider);
 
+    // Multi-device playback sync via cloud events
+    ref.watch(playbackSyncProvider);
+
+    // App lifecycle observer for foreground recovery
+    ref.watch(appLifecycleProvider);
+
     return Scaffold(
       appBar: const SaturdayAppBar(
         showLibrarySwitcher: true,
@@ -49,7 +59,9 @@ class NowPlayingScreen extends ConsumerWidget {
       body: SafeArea(
         child: nowPlayingState.isPlaying
             ? _buildNowPlayingContent(context, ref, nowPlayingState)
-            : _buildEmptyState(context, recentlyPlayed),
+            : nowPlayingState.isQueued
+                ? _buildQueuedContent(context, ref, nowPlayingState)
+                : _buildEmptyState(context, recentlyPlayed),
       ),
     );
   }
@@ -64,6 +76,7 @@ class NowPlayingScreen extends ConsumerWidget {
     final timingState = ref.watch(trackTimingProvider);
     final isTimingActive = timingState.isActive;
     final hasMissingDurations = state.currentSideHasMissingDurations;
+    final currentTrack = ref.watch(currentTrackProvider);
 
     return SingleChildScrollView(
       padding: Spacing.pagePadding,
@@ -130,6 +143,12 @@ class NowPlayingScreen extends ConsumerWidget {
               },
             ),
 
+          // Current track card (shown when track position is calculable)
+          if (!isTimingActive && currentTrack != null) ...[
+            const SizedBox(height: Spacing.md),
+            CurrentTrackCard(trackPosition: currentTrack),
+          ],
+
           Spacing.sectionGap,
 
           // Track list (hidden during active timing session)
@@ -140,6 +159,7 @@ class NowPlayingScreen extends ConsumerWidget {
               sideATracks: state.sideATracks,
               sideBTracks: state.sideBTracks,
               currentSide: state.currentSide,
+              currentTrackIndex: currentTrack?.trackIndex,
               initiallyExpanded: false,
             ),
 
@@ -158,6 +178,86 @@ class NowPlayingScreen extends ConsumerWidget {
 
           // Up Next carousel (recommendations + recently played)
           const UpNextCarousel(),
+
+          const SizedBox(height: Spacing.xxl),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQueuedContent(
+    BuildContext context,
+    WidgetRef ref,
+    NowPlayingState state,
+  ) {
+    final album = state.currentAlbum!.album;
+    final hasSides = state.hasSides;
+
+    return SingleChildScrollView(
+      padding: Spacing.pagePadding,
+      child: Column(
+        children: [
+          // Album art hero
+          ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: MediaQuery.of(context).size.width * 0.85,
+            ),
+            child: AlbumArtHero(
+              album: album,
+              onTap: () {},
+            ),
+          ),
+
+          Spacing.sectionGap,
+
+          // Auto-detected badge (if detected by hub)
+          if (state.isAutoDetected && state.detectedByDevice != null) ...[
+            AutoDetectedBadge(deviceName: state.detectedByDevice!),
+            const SizedBox(height: Spacing.md),
+          ],
+
+          // Album info
+          if (album != null) NowPlayingInfo(album: album),
+
+          const SizedBox(height: Spacing.lg),
+
+          // Side selector (user can pick side before starting)
+          if (hasSides) ...[
+            SideSelector(
+              currentSide: state.currentSide,
+              sideADuration: state.sideADurationSeconds,
+              sideBDuration: state.sideBDurationSeconds,
+              onSideChanged: (side) {
+                ref.read(nowPlayingProvider.notifier).setSide(side);
+              },
+            ),
+            const SizedBox(height: Spacing.lg),
+          ],
+
+          Spacing.sectionGap,
+
+          // Start Playing button
+          SizedBox(
+            width: double.infinity,
+            height: 56,
+            child: FilledButton.icon(
+              onPressed: () {
+                ref.read(nowPlayingProvider.notifier).startPlaying();
+              },
+              icon: const Icon(Icons.play_arrow),
+              label: const Text('Start Playing'),
+            ),
+          ),
+
+          const SizedBox(height: Spacing.md),
+
+          // Dismiss button
+          TextButton(
+            onPressed: () {
+              ref.read(nowPlayingProvider.notifier).clearNowPlaying();
+            },
+            child: const Text('Dismiss'),
+          ),
 
           const SizedBox(height: Spacing.xxl),
         ],

@@ -1,9 +1,13 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:saturday_consumer_app/providers/current_track_provider.dart';
 import 'package:saturday_consumer_app/providers/now_playing_provider.dart';
 import 'package:saturday_consumer_app/services/live_activity_service.dart';
+import 'package:saturday_consumer_app/services/supabase_service.dart';
+import 'package:saturday_consumer_app/utils/track_position_calculator.dart';
 
 /// Provider that manages Live Activities based on Now Playing state.
 ///
@@ -16,6 +20,7 @@ class LiveActivityNotifier extends StateNotifier<bool> {
 
   final Ref _ref;
   Timer? _updateTimer;
+  int? _lastTrackIndex;
 
   /// Initialize the Live Activity manager.
   Future<void> _initialize() async {
@@ -25,9 +30,21 @@ class LiveActivityNotifier extends StateNotifier<bool> {
     await LiveActivityService.instance.initialize();
     state = LiveActivityService.instance.areActivitiesEnabled;
 
+    // Wire up ActivityKit push token registration
+    LiveActivityService.instance
+        .setOnPushTokenReceived(_registerActivityPushToken);
+
     // Listen for Now Playing state changes
     _ref.listen<NowPlayingState>(nowPlayingProvider, (previous, next) {
       _handleNowPlayingChange(previous, next);
+    });
+
+    // Listen for track boundary changes to update Live Activity immediately
+    _ref.listen<TrackPosition?>(currentTrackProvider, (previous, next) {
+      if (next != null && next.trackIndex != _lastTrackIndex) {
+        _lastTrackIndex = next.trackIndex;
+        _updateActivityWithTrack(next);
+      }
     });
 
     // Check initial state
@@ -75,11 +92,19 @@ class LiveActivityNotifier extends StateNotifier<bool> {
     final album = nowPlaying.currentAlbum?.album;
     if (album == null || nowPlaying.startedAt == null) return;
 
+    final currentTrack = _ref.read(currentTrackProvider);
+    _lastTrackIndex = currentTrack?.trackIndex;
+
     await LiveActivityService.instance.startFlipTimerActivity(
       album: album,
       startedAt: nowPlaying.startedAt!,
       sideDurationSeconds: nowPlaying.currentSideDurationSeconds,
       currentSide: nowPlaying.currentSide,
+      currentTrackTitle: currentTrack?.track.title,
+      currentTrackPosition: currentTrack?.track.position,
+      currentTrackIndex: currentTrack?.trackIndex ?? -1,
+      totalTracks: nowPlaying.currentSideTracks.length,
+      sessionId: nowPlaying.cloudSessionId,
     );
 
     // Start periodic updates
@@ -107,12 +132,36 @@ class LiveActivityNotifier extends StateNotifier<bool> {
         return;
       }
 
+      final currentTrack = _ref.read(currentTrackProvider);
+
       LiveActivityService.instance.updateFlipTimerActivity(
         startedAt: nowPlaying.startedAt!,
         sideDurationSeconds: nowPlaying.currentSideDurationSeconds,
         currentSide: nowPlaying.currentSide,
+        currentTrackTitle: currentTrack?.track.title,
+        currentTrackPosition: currentTrack?.track.position,
+        currentTrackIndex: currentTrack?.trackIndex ?? -1,
+        totalTracks: nowPlaying.currentSideTracks.length,
       );
     });
+  }
+
+  /// Update the Live Activity when the current track changes.
+  void _updateActivityWithTrack(TrackPosition trackPosition) {
+    if (!Platform.isIOS) return;
+
+    final nowPlaying = _ref.read(nowPlayingProvider);
+    if (!nowPlaying.isPlaying || nowPlaying.startedAt == null) return;
+
+    LiveActivityService.instance.updateFlipTimerActivity(
+      startedAt: nowPlaying.startedAt!,
+      sideDurationSeconds: nowPlaying.currentSideDurationSeconds,
+      currentSide: nowPlaying.currentSide,
+      currentTrackTitle: trackPosition.track.title,
+      currentTrackPosition: trackPosition.track.position,
+      currentTrackIndex: trackPosition.trackIndex,
+      totalTracks: nowPlaying.currentSideTracks.length,
+    );
   }
 
   /// Manually refresh the Live Activity.
@@ -123,9 +172,36 @@ class LiveActivityNotifier extends StateNotifier<bool> {
     }
   }
 
+  /// Register an ActivityKit push token with the server.
+  Future<void> _registerActivityPushToken(
+    String pushToken,
+    String sessionId,
+  ) async {
+    try {
+      final client = SupabaseService.instance.client;
+      await client.functions.invoke(
+        'register-push-token',
+        body: {
+          'action': 'register_activity_token',
+          'push_token': pushToken,
+          'session_id': sessionId,
+        },
+      );
+      if (kDebugMode) {
+        debugPrint('LiveActivityProvider: Activity push token registered');
+      }
+    } catch (e) {
+      if (kDebugMode) {
+        debugPrint(
+            'LiveActivityProvider: Failed to register activity push token: $e');
+      }
+    }
+  }
+
   @override
   void dispose() {
     _updateTimer?.cancel();
+    LiveActivityService.instance.setOnPushTokenReceived(null);
     super.dispose();
   }
 }

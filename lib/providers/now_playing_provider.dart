@@ -1,6 +1,8 @@
 import 'package:equatable/equatable.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:saturday_consumer_app/models/library_album.dart';
+import 'package:saturday_consumer_app/models/playback_session.dart';
 import 'package:saturday_consumer_app/models/track.dart';
 import 'package:saturday_consumer_app/providers/auth_provider.dart';
 import 'package:saturday_consumer_app/providers/library_view_provider.dart';
@@ -11,6 +13,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 const String _nowPlayingAlbumIdKey = 'now_playing_album_id';
 const String _nowPlayingStartedAtKey = 'now_playing_started_at';
 const String _nowPlayingCurrentSideKey = 'now_playing_current_side';
+const String _nowPlayingSessionIdKey = 'now_playing_session_id';
+const String _nowPlayingStatusKey = 'now_playing_status';
 
 /// Source of the Now Playing album.
 enum NowPlayingSource {
@@ -19,6 +23,18 @@ enum NowPlayingSource {
 
   /// Album was auto-detected by a Saturday Hub.
   autoDetected,
+}
+
+/// Status of the Now Playing session.
+enum NowPlayingStatus {
+  /// No album selected.
+  idle,
+
+  /// Album detected/selected but playback not yet started.
+  queued,
+
+  /// Album is actively playing with timer running.
+  playing,
 }
 
 /// Represents the current state of Now Playing.
@@ -44,6 +60,12 @@ class NowPlayingState extends Equatable {
   /// The name of the device that detected the album (if auto-detected).
   final String? detectedByDevice;
 
+  /// The playback session status.
+  final NowPlayingStatus status;
+
+  /// The ID of the cloud playback session, if synced.
+  final String? cloudSessionId;
+
   const NowPlayingState({
     this.isLoading = false,
     this.currentAlbum,
@@ -52,10 +74,18 @@ class NowPlayingState extends Equatable {
     this.error,
     this.source = NowPlayingSource.manual,
     this.detectedByDevice,
+    this.status = NowPlayingStatus.idle,
+    this.cloudSessionId,
   });
 
-  /// Whether there is something currently playing.
-  bool get isPlaying => currentAlbum != null;
+  /// Whether there is something currently playing (timer running).
+  bool get isPlaying => status == NowPlayingStatus.playing;
+
+  /// Whether an album is queued but not yet playing.
+  bool get isQueued => status == NowPlayingStatus.queued;
+
+  /// Whether there is an active session (queued or playing).
+  bool get isActive => isPlaying || isQueued;
 
   /// Get tracks for the current side.
   List<Track> get currentSideTracks {
@@ -147,19 +177,31 @@ class NowPlayingState extends Equatable {
     String? error,
     NowPlayingSource? source,
     String? detectedByDevice,
+    NowPlayingStatus? status,
+    String? cloudSessionId,
     bool clearAlbum = false,
     bool clearDetectedByDevice = false,
+    bool clearStartedAt = false,
+    bool clearCloudSessionId = false,
   }) {
     return NowPlayingState(
       isLoading: isLoading ?? this.isLoading,
       currentAlbum: clearAlbum ? null : (currentAlbum ?? this.currentAlbum),
-      startedAt: clearAlbum ? null : (startedAt ?? this.startedAt),
+      startedAt: clearAlbum || clearStartedAt
+          ? null
+          : (startedAt ?? this.startedAt),
       currentSide: currentSide ?? this.currentSide,
       error: error,
       source: clearAlbum ? NowPlayingSource.manual : (source ?? this.source),
       detectedByDevice: clearAlbum || clearDetectedByDevice
           ? null
           : (detectedByDevice ?? this.detectedByDevice),
+      status: clearAlbum
+          ? NowPlayingStatus.idle
+          : (status ?? this.status),
+      cloudSessionId: clearAlbum || clearCloudSessionId
+          ? null
+          : (cloudSessionId ?? this.cloudSessionId),
     );
   }
 
@@ -172,6 +214,8 @@ class NowPlayingState extends Equatable {
         error,
         source,
         detectedByDevice,
+        status,
+        cloudSessionId,
       ];
 }
 
@@ -189,8 +233,10 @@ class NowPlayingNotifier extends StateNotifier<NowPlayingState> {
     final albumId = _prefs.getString(_nowPlayingAlbumIdKey);
     final startedAtMillis = _prefs.getInt(_nowPlayingStartedAtKey);
     final currentSide = _prefs.getString(_nowPlayingCurrentSideKey) ?? 'A';
+    final sessionId = _prefs.getString(_nowPlayingSessionIdKey);
+    final statusStr = _prefs.getString(_nowPlayingStatusKey);
 
-    if (albumId == null || startedAtMillis == null) {
+    if (albumId == null) {
       return; // No persisted state
     }
 
@@ -202,12 +248,30 @@ class NowPlayingNotifier extends StateNotifier<NowPlayingState> {
       final album = await albumRepo.getLibraryAlbum(albumId);
 
       if (album != null) {
-        final startedAt = DateTime.fromMillisecondsSinceEpoch(startedAtMillis);
+        final startedAt = startedAtMillis != null
+            ? DateTime.fromMillisecondsSinceEpoch(startedAtMillis)
+            : null;
+
+        // Determine status from persisted value
+        NowPlayingStatus restoredStatus;
+        if (statusStr == 'playing' && startedAt != null) {
+          restoredStatus = NowPlayingStatus.playing;
+        } else if (statusStr == 'queued') {
+          restoredStatus = NowPlayingStatus.queued;
+        } else if (startedAt != null) {
+          // Legacy: no status persisted but has startedAt → playing
+          restoredStatus = NowPlayingStatus.playing;
+        } else {
+          restoredStatus = NowPlayingStatus.idle;
+        }
+
         state = state.copyWith(
           isLoading: false,
           currentAlbum: album,
           startedAt: startedAt,
           currentSide: currentSide,
+          status: restoredStatus,
+          cloudSessionId: sessionId,
         );
       } else {
         // Album no longer exists, clear persisted state
@@ -224,13 +288,22 @@ class NowPlayingNotifier extends StateNotifier<NowPlayingState> {
   /// Persist the current state to SharedPreferences.
   Future<void> _persistState() async {
     final album = state.currentAlbum;
-    final startedAt = state.startedAt;
 
-    if (album != null && startedAt != null) {
+    if (album != null && state.status != NowPlayingStatus.idle) {
       await _prefs.setString(_nowPlayingAlbumIdKey, album.id);
-      await _prefs.setInt(
-          _nowPlayingStartedAtKey, startedAt.millisecondsSinceEpoch);
+      final startedAt = state.startedAt;
+      if (startedAt != null) {
+        await _prefs.setInt(
+            _nowPlayingStartedAtKey, startedAt.millisecondsSinceEpoch);
+      } else {
+        await _prefs.remove(_nowPlayingStartedAtKey);
+      }
       await _prefs.setString(_nowPlayingCurrentSideKey, state.currentSide);
+      await _prefs.setString(_nowPlayingStatusKey, state.status.name);
+      final sessionId = state.cloudSessionId;
+      if (sessionId != null) {
+        await _prefs.setString(_nowPlayingSessionIdKey, sessionId);
+      }
     } else {
       await _clearPersistedState();
     }
@@ -241,9 +314,42 @@ class NowPlayingNotifier extends StateNotifier<NowPlayingState> {
     await _prefs.remove(_nowPlayingAlbumIdKey);
     await _prefs.remove(_nowPlayingStartedAtKey);
     await _prefs.remove(_nowPlayingCurrentSideKey);
+    await _prefs.remove(_nowPlayingSessionIdKey);
+    await _prefs.remove(_nowPlayingStatusKey);
   }
 
-  /// Set an album as now playing.
+  /// Fire-and-forget cloud sync wrapper.
+  void _syncToCloud(Future<void> Function() action) {
+    action().catchError((e) {
+      debugPrint('[NowPlaying] Cloud sync error (non-blocking): $e');
+    });
+  }
+
+  /// Build a tracks snapshot for the cloud session.
+  List<Map<String, dynamic>>? _buildTracksSnapshot(LibraryAlbum album) {
+    final tracks = album.album?.tracks;
+    if (tracks == null || tracks.isEmpty) return null;
+    return tracks
+        .map((t) => {
+              'position': t.position,
+              'title': t.title,
+              'duration_seconds': t.durationSeconds,
+            })
+        .toList();
+  }
+
+  /// Calculate total duration for a side.
+  int? _calculateSideDuration(LibraryAlbum album, String side) {
+    final tracks = album.album?.tracks;
+    if (tracks == null) return null;
+    final sideTracks = tracks
+        .where((t) => t.position.trim().toUpperCase().startsWith(side));
+    final total =
+        sideTracks.fold<int>(0, (sum, t) => sum + (t.durationSeconds ?? 0));
+    return total > 0 ? total : null;
+  }
+
+  /// Set an album as now playing (app-initiated, immediate playback).
   Future<void> setNowPlaying(LibraryAlbum album) async {
     state = state.copyWith(
       isLoading: true,
@@ -267,10 +373,41 @@ class NowPlayingNotifier extends StateNotifier<NowPlayingState> {
         currentAlbum: album,
         startedAt: DateTime.now(),
         currentSide: 'A',
+        status: NowPlayingStatus.playing,
+        source: NowPlayingSource.manual,
+        clearDetectedByDevice: true,
       );
 
       // Persist the state so timer survives app restarts
       await _persistState();
+
+      // Fire-and-forget cloud sync: queue + immediately start
+      _syncToCloud(() async {
+        final userId = _ref.read(currentUserIdProvider);
+        if (userId == null) return;
+        final repo = _ref.read(playbackSessionRepositoryProvider);
+
+        final session = await repo.queueSession(
+          userId: userId,
+          libraryAlbumId: album.id,
+          albumTitle: album.album?.title,
+          albumArtist: album.album?.artist,
+          coverImageUrl: album.album?.coverImageUrl,
+          tracks: _buildTracksSnapshot(album),
+          sideADurationSeconds: _calculateSideDuration(album, 'A'),
+          sideBDurationSeconds: _calculateSideDuration(album, 'B'),
+        );
+
+        final started = await repo.startSession(
+          sessionId: session.id,
+          userId: userId,
+        );
+
+        if (mounted) {
+          state = state.copyWith(cloudSessionId: started.id);
+          await _persistState();
+        }
+      });
     } catch (e) {
       state = state.copyWith(
         isLoading: false,
@@ -281,8 +418,25 @@ class NowPlayingNotifier extends StateNotifier<NowPlayingState> {
 
   /// Clear the now playing state.
   Future<void> clearNowPlaying() async {
+    final sessionId = state.cloudSessionId;
+    final wasPlaying = state.isPlaying;
+
     state = state.copyWith(clearAlbum: true);
     await _clearPersistedState();
+
+    if (sessionId != null) {
+      _syncToCloud(() async {
+        final userId = _ref.read(currentUserIdProvider);
+        if (userId == null) return;
+        final repo = _ref.read(playbackSessionRepositoryProvider);
+
+        if (wasPlaying) {
+          await repo.stopSession(sessionId: sessionId, userId: userId);
+        } else {
+          await repo.cancelSession(sessionId: sessionId, userId: userId);
+        }
+      });
+    }
   }
 
   /// Switch the current side (A to B or B to A).
@@ -290,19 +444,49 @@ class NowPlayingNotifier extends StateNotifier<NowPlayingState> {
     final newSide = state.currentSide == 'A' ? 'B' : 'A';
     state = state.copyWith(
       currentSide: newSide,
-      startedAt: DateTime.now(), // Reset timer when switching sides
+      // Only reset timer if currently playing
+      startedAt: state.isPlaying ? DateTime.now() : state.startedAt,
     );
     await _persistState();
+
+    final sessionId = state.cloudSessionId;
+    if (sessionId != null) {
+      _syncToCloud(() async {
+        final userId = _ref.read(currentUserIdProvider);
+        if (userId == null) return;
+        final repo = _ref.read(playbackSessionRepositoryProvider);
+        await repo.changeSide(
+          sessionId: sessionId,
+          userId: userId,
+          side: newSide,
+        );
+      });
+    }
   }
 
   /// Set the current side explicitly.
   Future<void> setSide(String side) async {
-    if (side == 'A' || side == 'B') {
-      state = state.copyWith(
-        currentSide: side,
-        startedAt: DateTime.now(),
-      );
-      await _persistState();
+    if (side != 'A' && side != 'B') return;
+
+    state = state.copyWith(
+      currentSide: side,
+      // Only reset timer if currently playing
+      startedAt: state.isPlaying ? DateTime.now() : state.startedAt,
+    );
+    await _persistState();
+
+    final sessionId = state.cloudSessionId;
+    if (sessionId != null) {
+      _syncToCloud(() async {
+        final userId = _ref.read(currentUserIdProvider);
+        if (userId == null) return;
+        final repo = _ref.read(playbackSessionRepositoryProvider);
+        await repo.changeSide(
+          sessionId: sessionId,
+          userId: userId,
+          side: side,
+        );
+      });
     }
   }
 
@@ -323,8 +507,8 @@ class NowPlayingNotifier extends StateNotifier<NowPlayingState> {
 
   /// Set an album as now playing from auto-detection (hub).
   ///
-  /// Auto-detected albums take priority over manual selections.
-  /// This is called by the realtime provider when a hub detects a record.
+  /// Hub-detected albums are set to **queued** status.
+  /// The user must call [startPlaying] to begin playback.
   Future<void> setAutoDetected(
     LibraryAlbum album, {
     required String deviceName,
@@ -336,28 +520,42 @@ class NowPlayingNotifier extends StateNotifier<NowPlayingState> {
     );
 
     try {
-      // Record the play in listening history
-      final userId = _ref.read(currentUserIdProvider);
-      if (userId != null) {
-        final historyRepo = _ref.read(listeningHistoryRepositoryProvider);
-        await historyRepo.recordPlay(
-          userId: userId,
-          libraryAlbumId: album.id,
-          deviceId: null, // TODO: Pass actual device ID when available
-        );
-      }
-
+      // Set as QUEUED — do NOT record listening history yet
       state = state.copyWith(
         isLoading: false,
         currentAlbum: album,
-        startedAt: detectedAt ?? DateTime.now(),
         currentSide: 'A',
         source: NowPlayingSource.autoDetected,
         detectedByDevice: deviceName,
+        status: NowPlayingStatus.queued,
+        clearStartedAt: true,
       );
 
-      // Persist the state so timer survives app restarts
       await _persistState();
+
+      // Fire-and-forget: create queued cloud session
+      _syncToCloud(() async {
+        final userId = _ref.read(currentUserIdProvider);
+        if (userId == null) return;
+        final repo = _ref.read(playbackSessionRepositoryProvider);
+
+        final session = await repo.queueSession(
+          userId: userId,
+          libraryAlbumId: album.id,
+          albumTitle: album.album?.title,
+          albumArtist: album.album?.artist,
+          coverImageUrl: album.album?.coverImageUrl,
+          tracks: _buildTracksSnapshot(album),
+          sideADurationSeconds: _calculateSideDuration(album, 'A'),
+          sideBDurationSeconds: _calculateSideDuration(album, 'B'),
+          sourceType: 'hub',
+        );
+
+        if (mounted) {
+          state = state.copyWith(cloudSessionId: session.id);
+          await _persistState();
+        }
+      });
     } catch (e) {
       state = state.copyWith(
         isLoading: false,
@@ -366,14 +564,129 @@ class NowPlayingNotifier extends StateNotifier<NowPlayingState> {
     }
   }
 
+  /// Start playback on a queued album.
+  ///
+  /// Transitions from [NowPlayingStatus.queued] to [NowPlayingStatus.playing].
+  Future<void> startPlaying() async {
+    if (state.status != NowPlayingStatus.queued) return;
+
+    state = state.copyWith(
+      status: NowPlayingStatus.playing,
+      startedAt: DateTime.now(),
+    );
+    await _persistState();
+
+    // Record listening history when playback actually starts
+    final album = state.currentAlbum;
+    if (album != null) {
+      final userId = _ref.read(currentUserIdProvider);
+      if (userId != null) {
+        final historyRepo = _ref.read(listeningHistoryRepositoryProvider);
+        historyRepo
+            .recordPlay(userId: userId, libraryAlbumId: album.id)
+            .then((_) {}, onError: (e) {
+          debugPrint('[NowPlaying] Failed to record listening history: $e');
+        });
+      }
+    }
+
+    final sessionId = state.cloudSessionId;
+    if (sessionId != null) {
+      _syncToCloud(() async {
+        final userId = _ref.read(currentUserIdProvider);
+        if (userId == null) return;
+        final repo = _ref.read(playbackSessionRepositoryProvider);
+        await repo.startSession(
+          sessionId: sessionId,
+          userId: userId,
+        );
+      });
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Cloud sync entry points (called by PlaybackSyncProvider)
+  // ---------------------------------------------------------------------------
+
+  /// Apply a full cloud session. Cloud always wins.
+  ///
+  /// Called by [PlaybackSyncProvider] when a remote event indicates state
+  /// that differs from local. The [album] must be pre-fetched by the caller.
+  Future<void> applyCloudSession({
+    required PlaybackSession session,
+    required LibraryAlbum album,
+  }) async {
+    final newStatus = session.isPlaying
+        ? NowPlayingStatus.playing
+        : session.isQueued
+            ? NowPlayingStatus.queued
+            : NowPlayingStatus.idle;
+
+    if (newStatus == NowPlayingStatus.idle) {
+      await applyCloudClear();
+      return;
+    }
+
+    state = state.copyWith(
+      isLoading: false,
+      currentAlbum: album,
+      startedAt: session.sideStartedAt,
+      currentSide: session.currentSide,
+      status: newStatus,
+      cloudSessionId: session.id,
+      source: session.queuedBySource == 'hub'
+          ? NowPlayingSource.autoDetected
+          : NowPlayingSource.manual,
+      clearDetectedByDevice: session.queuedBySource != 'hub',
+    );
+    await _persistState();
+  }
+
+  /// Clear local state in response to a cloud stop/cancel event.
+  Future<void> applyCloudClear() async {
+    state = state.copyWith(clearAlbum: true);
+    await _clearPersistedState();
+  }
+
+  /// Apply a side change from cloud.
+  Future<void> applyCloudSideChange(
+      String side, DateTime? sideStartedAt) async {
+    state = state.copyWith(
+      currentSide: side,
+      startedAt: sideStartedAt,
+    );
+    await _persistState();
+  }
+
+  /// Apply playback_started from cloud (queued → playing).
+  Future<void> applyCloudPlaybackStarted(DateTime? sideStartedAt) async {
+    state = state.copyWith(
+      status: NowPlayingStatus.playing,
+      startedAt: sideStartedAt,
+    );
+    await _persistState();
+  }
+
   /// Clear the now playing state from auto-detection.
   ///
   /// Called when a record is removed from the hub.
+  /// Only cancels if currently **queued** — does NOT stop active playback.
   Future<void> clearAutoDetected() async {
-    // Only clear if the current album was auto-detected
-    if (state.source == NowPlayingSource.autoDetected) {
-      state = state.copyWith(clearAlbum: true);
-      await _clearPersistedState();
+    if (state.source != NowPlayingSource.autoDetected) return;
+    if (state.status != NowPlayingStatus.queued) return;
+
+    final sessionId = state.cloudSessionId;
+
+    state = state.copyWith(clearAlbum: true);
+    await _clearPersistedState();
+
+    if (sessionId != null) {
+      _syncToCloud(() async {
+        final userId = _ref.read(currentUserIdProvider);
+        if (userId == null) return;
+        final repo = _ref.read(playbackSessionRepositoryProvider);
+        await repo.cancelSession(sessionId: sessionId, userId: userId);
+      });
     }
   }
 }
