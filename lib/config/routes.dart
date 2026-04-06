@@ -24,6 +24,7 @@ import 'package:saturday_consumer_app/screens/account/device_detail_screen.dart'
 import 'package:saturday_consumer_app/screens/account/device_setup_screen.dart';
 import 'package:saturday_consumer_app/screens/account/wifi_reprovision_screen.dart';
 import 'package:saturday_consumer_app/screens/account/notification_settings_screen.dart';
+import 'package:saturday_consumer_app/screens/account/pair_tv_screen.dart';
 import 'package:saturday_consumer_app/screens/onboarding/quick_start_screen.dart';
 import 'package:saturday_consumer_app/screens/onboarding/add_album_intro_screen.dart';
 import 'package:saturday_consumer_app/screens/search/search_screen.dart';
@@ -61,6 +62,7 @@ class RoutePaths {
   static const String deviceSetup = 'devices/setup';
   static const String wifiReprovision = 'devices/:id/wifi';
   static const String notificationSettings = 'notifications';
+  static const String pairTv = 'pair-tv';
   static const String settings = 'settings';
   static const String search = '/search';
 
@@ -103,6 +105,7 @@ class RouteNames {
   static const String deviceSetup = 'device-setup';
   static const String wifiReprovision = 'wifi-reprovision';
   static const String notificationSettings = 'notification-settings';
+  static const String pairTv = 'pair-tv';
   static const String settings = 'settings';
   static const String search = 'search';
   static const String setNowPlaying = 'set-now-playing';
@@ -311,6 +314,12 @@ GoRouter createAppRouter(Ref ref) {
                 path: RoutePaths.notificationSettings,
                 name: RouteNames.notificationSettings,
                 builder: (context, state) => const NotificationSettingsScreen(),
+              ),
+              // Pair TV
+              GoRoute(
+                path: RoutePaths.pairTv,
+                name: RouteNames.pairTv,
+                builder: (context, state) => const PairTvScreen(),
               ),
               // Device detail
               GoRoute(

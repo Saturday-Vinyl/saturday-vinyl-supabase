@@ -67,6 +67,13 @@ class AccountScreen extends ConsumerWidget {
             ),
             _buildSettingsTile(
               context,
+              icon: Icons.tv,
+              title: 'Pair TV',
+              subtitle: 'Connect your Saturday Apple TV app',
+              onTap: () => context.pushNamed(RouteNames.pairTv),
+            ),
+            _buildSettingsTile(
+              context,
               icon: Icons.palette_outlined,
               title: 'Appearance',
               onTap: () {
