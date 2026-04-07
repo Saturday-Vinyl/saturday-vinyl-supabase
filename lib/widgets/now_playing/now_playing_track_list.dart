@@ -5,25 +5,21 @@ import 'package:saturday_consumer_app/models/track.dart';
 
 /// A track list widget for the Now Playing screen.
 ///
-/// Shows all tracks with the current side highlighted.
-/// Supports expansion/collapse for space efficiency.
+/// Shows all tracks grouped by side, with the current side highlighted.
+/// Supports any number of sides (A, B, C, D, etc.) for multi-disc albums.
 class NowPlayingTrackList extends StatefulWidget {
   const NowPlayingTrackList({
     super.key,
-    required this.sideATracks,
-    required this.sideBTracks,
+    required this.tracksBySide,
     required this.currentSide,
     this.initiallyExpanded = false,
     this.currentTrackIndex,
   });
 
-  /// Tracks for Side A.
-  final List<Track> sideATracks;
+  /// Map of side letter to tracks for that side, in display order.
+  final Map<String, List<Track>> tracksBySide;
 
-  /// Tracks for Side B.
-  final List<Track> sideBTracks;
-
-  /// The currently playing side ('A' or 'B').
+  /// The currently playing side letter.
   final String currentSide;
 
   /// Whether the track list is initially expanded.
@@ -46,12 +42,12 @@ class _NowPlayingTrackListState extends State<NowPlayingTrackList> {
     _isExpanded = widget.initiallyExpanded;
   }
 
+  int get _totalTrackCount =>
+      widget.tracksBySide.values.fold(0, (sum, tracks) => sum + tracks.length);
+
   @override
   Widget build(BuildContext context) {
-    final hasTracks =
-        widget.sideATracks.isNotEmpty || widget.sideBTracks.isNotEmpty;
-
-    if (!hasTracks) {
+    if (_totalTrackCount == 0) {
       return _buildEmptyState(context);
     }
 
@@ -76,7 +72,7 @@ class _NowPlayingTrackListState extends State<NowPlayingTrackList> {
                   Row(
                     children: [
                       Text(
-                        '${widget.sideATracks.length + widget.sideBTracks.length} tracks',
+                        '$_totalTrackCount tracks',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
                               color: SaturdayColors.secondary,
                             ),
@@ -127,6 +123,8 @@ class _NowPlayingTrackListState extends State<NowPlayingTrackList> {
   }
 
   Widget _buildTrackListContent(BuildContext context) {
+    final sides = widget.tracksBySide.keys.toList();
+
     return Padding(
       padding: const EdgeInsets.only(
         left: Spacing.lg,
@@ -136,27 +134,15 @@ class _NowPlayingTrackListState extends State<NowPlayingTrackList> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Side A
-          if (widget.sideATracks.isNotEmpty) ...[
+          for (var i = 0; i < sides.length; i++) ...[
+            if (i > 0) const SizedBox(height: Spacing.lg),
             _SideSection(
-              side: 'A',
-              tracks: widget.sideATracks,
-              isCurrentSide: widget.currentSide == 'A',
-              currentTrackIndex:
-                  widget.currentSide == 'A' ? widget.currentTrackIndex : null,
-            ),
-          ],
-
-          // Side B
-          if (widget.sideBTracks.isNotEmpty) ...[
-            if (widget.sideATracks.isNotEmpty)
-              const SizedBox(height: Spacing.lg),
-            _SideSection(
-              side: 'B',
-              tracks: widget.sideBTracks,
-              isCurrentSide: widget.currentSide == 'B',
-              currentTrackIndex:
-                  widget.currentSide == 'B' ? widget.currentTrackIndex : null,
+              side: sides[i],
+              tracks: widget.tracksBySide[sides[i]]!,
+              isCurrentSide: widget.currentSide == sides[i],
+              currentTrackIndex: widget.currentSide == sides[i]
+                  ? widget.currentTrackIndex
+                  : null,
             ),
           ],
         ],

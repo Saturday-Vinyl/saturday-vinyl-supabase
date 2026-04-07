@@ -118,7 +118,7 @@ class PlaybackSessionRepository extends BaseRepository {
     // Stop any existing playing session
     await _stopExistingPlaying(userId, sourceType, sourceDeviceId);
 
-    final now = DateTime.now().toIso8601String();
+    final now = DateTime.now().toUtc().toIso8601String();
     final response = await client
         .from(_sessionsTable)
         .update({
@@ -156,7 +156,7 @@ class PlaybackSessionRepository extends BaseRepository {
         .from(_sessionsTable)
         .update({
           'status': 'stopped',
-          'ended_at': DateTime.now().toIso8601String(),
+          'ended_at': DateTime.now().toUtc().toIso8601String(),
         })
         .eq('id', sessionId);
 
@@ -180,7 +180,7 @@ class PlaybackSessionRepository extends BaseRepository {
         .from(_sessionsTable)
         .update({
           'status': 'cancelled',
-          'ended_at': DateTime.now().toIso8601String(),
+          'ended_at': DateTime.now().toUtc().toIso8601String(),
         })
         .eq('id', sessionId);
 
@@ -215,7 +215,7 @@ class PlaybackSessionRepository extends BaseRepository {
     };
 
     if (current['status'] == 'playing') {
-      updateData['side_started_at'] = DateTime.now().toIso8601String();
+      updateData['side_started_at'] = DateTime.now().toUtc().toIso8601String();
     }
 
     await client

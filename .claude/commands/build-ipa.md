@@ -22,8 +22,16 @@ Prepare and build the iOS app for TestFlight deployment.
    - If the build fails, diagnose and fix the issue before proceeding
 
 3. **Write TestFlight release notes**
-   - Analyze the git log to understand what changed since the last release/tag
-   - Write a concise synopsis of the changes for TestFlight users
+   - Find the most recent TestFlight tag to determine the range of changes:
+     ```bash
+     git describe --tags --match 'testflight/*' --abbrev=0
+     ```
+   - If a previous tag exists, gather all commits since that tag:
+     ```bash
+     git log $(git describe --tags --match 'testflight/*' --abbrev=0)..HEAD --oneline
+     ```
+   - If no previous tag exists (first build), use the full recent git log instead
+   - Write a concise synopsis of ALL changes since the last tagged build for TestFlight users
    - Format requirements:
      - Plain text only (no markdown)
      - No emojis
@@ -35,3 +43,18 @@ Prepare and build the iOS app for TestFlight deployment.
    - Launch the Transporter app: `open /Applications/Transporter.app`
    - Open the IPA folder in Finder: `open ./build/ios/ipa`
    - Remind the user to drag `Saturday.ipa` into the Transporter app to upload
+
+5. **Tag the build and optionally create a GitHub release**
+   - Read the current version from `pubspec.yaml` (the `version:` field, e.g. `1.2.3+42`)
+   - Construct the tag name: `testflight/v{version}` (e.g. `testflight/v1.2.3+42`)
+   - Tag the current commit:
+     ```bash
+     git tag -a testflight/v{version} -m "TestFlight build {version}"
+     git push origin testflight/v{version}
+     ```
+   - Ask the user if they want to create a GitHub release for this build
+   - If yes, create the release using the TestFlight release notes:
+     ```bash
+     gh release create testflight/v{version} --title "TestFlight v{version}" --notes "{release_notes}"
+     ```
+   - If no, skip the GitHub release (the git tag is still pushed as a marker)

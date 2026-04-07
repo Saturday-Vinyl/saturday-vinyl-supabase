@@ -2,57 +2,57 @@ import 'package:flutter/material.dart';
 import 'package:saturday_consumer_app/config/styles.dart';
 import 'package:saturday_consumer_app/config/theme.dart';
 
-/// A toggle button for selecting Side A or Side B.
+/// A selector for choosing the current record side.
 ///
-/// Used in the Now Playing screen to switch between record sides
-/// and reset the flip timer.
+/// Dynamically renders a button for each available side (A, B, C, D, etc.)
+/// to support multi-disc albums.
 class SideSelector extends StatelessWidget {
   const SideSelector({
     super.key,
     required this.currentSide,
+    required this.availableSides,
     required this.onSideChanged,
-    this.sideADuration,
-    this.sideBDuration,
+    this.sideDurations = const {},
   });
 
-  /// The currently selected side ('A' or 'B').
+  /// The currently selected side letter.
   final String currentSide;
+
+  /// All available side letters, in order.
+  final List<String> availableSides;
 
   /// Callback when the side is changed.
   final ValueChanged<String> onSideChanged;
 
-  /// Optional duration of Side A in seconds.
-  final int? sideADuration;
-
-  /// Optional duration of Side B in seconds.
-  final int? sideBDuration;
+  /// Optional durations per side in seconds.
+  final Map<String, int> sideDurations;
 
   @override
   Widget build(BuildContext context) {
+    if (availableSides.isEmpty) return const SizedBox.shrink();
+
     return Container(
       decoration: BoxDecoration(
         color: SaturdayColors.white,
         borderRadius: AppRadius.largeRadius,
         boxShadow: AppShadows.card,
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _SideButton(
-            side: 'A',
-            isSelected: currentSide == 'A',
-            duration: sideADuration,
-            onTap: () => onSideChanged('A'),
-            isLeft: true,
-          ),
-          _SideButton(
-            side: 'B',
-            isSelected: currentSide == 'B',
-            duration: sideBDuration,
-            onTap: () => onSideChanged('B'),
-            isLeft: false,
-          ),
-        ],
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (var i = 0; i < availableSides.length; i++)
+              _SideButton(
+                side: availableSides[i],
+                isSelected: currentSide == availableSides[i],
+                duration: sideDurations[availableSides[i]],
+                onTap: () => onSideChanged(availableSides[i]),
+                isFirst: i == 0,
+                isLast: i == availableSides.length - 1,
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -63,23 +63,25 @@ class _SideButton extends StatelessWidget {
     required this.side,
     required this.isSelected,
     required this.onTap,
-    required this.isLeft,
+    required this.isFirst,
+    required this.isLast,
     this.duration,
   });
 
   final String side;
   final bool isSelected;
   final VoidCallback onTap;
-  final bool isLeft;
+  final bool isFirst;
+  final bool isLast;
   final int? duration;
 
   @override
   Widget build(BuildContext context) {
     final borderRadius = BorderRadius.only(
-      topLeft: isLeft ? const Radius.circular(AppRadius.lg) : Radius.zero,
-      bottomLeft: isLeft ? const Radius.circular(AppRadius.lg) : Radius.zero,
-      topRight: !isLeft ? const Radius.circular(AppRadius.lg) : Radius.zero,
-      bottomRight: !isLeft ? const Radius.circular(AppRadius.lg) : Radius.zero,
+      topLeft: isFirst ? const Radius.circular(AppRadius.lg) : Radius.zero,
+      bottomLeft: isFirst ? const Radius.circular(AppRadius.lg) : Radius.zero,
+      topRight: isLast ? const Radius.circular(AppRadius.lg) : Radius.zero,
+      bottomRight: isLast ? const Radius.circular(AppRadius.lg) : Radius.zero,
     );
 
     return GestureDetector(

@@ -87,76 +87,57 @@ class NowPlayingState extends Equatable {
   /// Whether there is an active session (queued or playing).
   bool get isActive => isPlaying || isQueued;
 
+  /// All unique side letters present in the album's tracks, sorted.
+  ///
+  /// Extracts the leading letter from each track position (e.g. "A1" → "A",
+  /// "C3" → "C") and returns them in alphabetical order.
+  List<String> get availableSides {
+    final album = currentAlbum?.album;
+    if (album == null) return [];
+
+    final sides = <String>{};
+    for (final track in album.tracks) {
+      final pos = track.position.trim().toUpperCase();
+      if (pos.isNotEmpty && RegExp(r'^[A-Z]').hasMatch(pos)) {
+        sides.add(pos[0]);
+      }
+    }
+    final sorted = sides.toList()..sort();
+    return sorted;
+  }
+
+  /// Get tracks for a specific side letter.
+  List<Track> tracksForSide(String side) {
+    final album = currentAlbum?.album;
+    if (album == null) return [];
+
+    return album.tracks.where((track) {
+      final pos = track.position.trim().toUpperCase();
+      return pos.startsWith(side.toUpperCase());
+    }).toList();
+  }
+
   /// Get tracks for the current side.
-  List<Track> get currentSideTracks {
-    final album = currentAlbum?.album;
-    if (album == null) return [];
+  List<Track> get currentSideTracks => tracksForSide(currentSide);
 
-    return album.tracks.where((track) {
-      final pos = track.position.trim().toUpperCase();
-      if (pos.isEmpty) return false;
-      // Match tracks that start with the current side letter
-      return pos.startsWith(currentSide);
-    }).toList();
-  }
-
-  /// Get tracks for Side A.
-  List<Track> get sideATracks {
-    final album = currentAlbum?.album;
-    if (album == null) return [];
-
-    return album.tracks.where((track) {
-      final pos = track.position.trim().toUpperCase();
-      return pos.startsWith('A');
-    }).toList();
-  }
-
-  /// Get tracks for Side B.
-  List<Track> get sideBTracks {
-    final album = currentAlbum?.album;
-    if (album == null) return [];
-
-    return album.tracks.where((track) {
-      final pos = track.position.trim().toUpperCase();
-      return pos.startsWith('B');
-    }).toList();
+  /// Total duration of a specific side in seconds.
+  int durationForSide(String side) {
+    return tracksForSide(side).fold<int>(
+      0,
+      (sum, track) => sum + (track.durationSeconds ?? 0),
+    );
   }
 
   /// Total duration of the current side in seconds.
-  int get currentSideDurationSeconds {
-    return currentSideTracks.fold<int>(
-      0,
-      (sum, track) => sum + (track.durationSeconds ?? 0),
-    );
+  int get currentSideDurationSeconds => durationForSide(currentSide);
+
+  /// Map of side letter → duration in seconds, for all available sides.
+  Map<String, int> get sideDurations {
+    return {for (final side in availableSides) side: durationForSide(side)};
   }
 
-  /// Total duration of Side A in seconds.
-  int get sideADurationSeconds {
-    return sideATracks.fold<int>(
-      0,
-      (sum, track) => sum + (track.durationSeconds ?? 0),
-    );
-  }
-
-  /// Total duration of Side B in seconds.
-  int get sideBDurationSeconds {
-    return sideBTracks.fold<int>(
-      0,
-      (sum, track) => sum + (track.durationSeconds ?? 0),
-    );
-  }
-
-  /// Whether the album has Side A/B track structure.
-  bool get hasSides {
-    final album = currentAlbum?.album;
-    if (album == null) return false;
-
-    // Check if any tracks have A or B prefixes
-    return album.tracks.any((track) {
-      final pos = track.position.trim().toUpperCase();
-      return pos.startsWith('A') || pos.startsWith('B');
-    });
-  }
+  /// Whether the album has side-based track structure.
+  bool get hasSides => availableSides.length > 1;
 
   /// Whether the current side has tracks with missing durations.
   bool get currentSideHasMissingDurations {
@@ -349,6 +330,7 @@ class NowPlayingNotifier extends StateNotifier<NowPlayingState> {
     return total > 0 ? total : null;
   }
 
+
   /// Set an album as now playing (app-initiated, immediate playback).
   Future<void> setNowPlaying(LibraryAlbum album) async {
     state = state.copyWith(
@@ -439,9 +421,14 @@ class NowPlayingNotifier extends StateNotifier<NowPlayingState> {
     }
   }
 
-  /// Switch the current side (A to B or B to A).
+  /// Advance to the next side in the album's side sequence.
+  ///
+  /// Cycles through all available sides (A → B → C → ... → A).
   Future<void> toggleSide() async {
-    final newSide = state.currentSide == 'A' ? 'B' : 'A';
+    final sides = state.availableSides;
+    if (sides.length < 2) return;
+    final currentIndex = sides.indexOf(state.currentSide);
+    final newSide = sides[(currentIndex + 1) % sides.length];
     state = state.copyWith(
       currentSide: newSide,
       // Only reset timer if currently playing
@@ -466,7 +453,8 @@ class NowPlayingNotifier extends StateNotifier<NowPlayingState> {
 
   /// Set the current side explicitly.
   Future<void> setSide(String side) async {
-    if (side != 'A' && side != 'B') return;
+    final sides = state.availableSides;
+    if (sides.isNotEmpty && !sides.contains(side.toUpperCase())) return;
 
     state = state.copyWith(
       currentSide: side,

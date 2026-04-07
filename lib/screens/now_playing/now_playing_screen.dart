@@ -30,7 +30,7 @@ import 'package:saturday_consumer_app/widgets/now_playing/up_next_carousel.dart'
 /// This is the primary entry point for the app, displaying:
 /// - Album art with hero display
 /// - Album metadata (title, artist, year)
-/// - Side selector (A/B) with flip timer
+/// - Side selector with flip timer (supports multi-disc albums)
 /// - Track listing with current side highlighted
 /// - What's next queue with recently played albums
 class NowPlayingScreen extends ConsumerWidget {
@@ -112,8 +112,8 @@ class NowPlayingScreen extends ConsumerWidget {
           if (hasSides) ...[
             SideSelector(
               currentSide: state.currentSide,
-              sideADuration: state.sideADurationSeconds,
-              sideBDuration: state.sideBDurationSeconds,
+              availableSides: state.availableSides,
+              sideDurations: state.sideDurations,
               onSideChanged: (side) {
                 ref.read(nowPlayingProvider.notifier).setSide(side);
               },
@@ -156,8 +156,10 @@ class NowPlayingScreen extends ConsumerWidget {
               album != null &&
               album.tracks.isNotEmpty)
             NowPlayingTrackList(
-              sideATracks: state.sideATracks,
-              sideBTracks: state.sideBTracks,
+              tracksBySide: {
+                for (final side in state.availableSides)
+                  side: state.tracksForSide(side),
+              },
               currentSide: state.currentSide,
               currentTrackIndex: currentTrack?.trackIndex,
               initiallyExpanded: false,
@@ -225,8 +227,8 @@ class NowPlayingScreen extends ConsumerWidget {
           if (hasSides) ...[
             SideSelector(
               currentSide: state.currentSide,
-              sideADuration: state.sideADurationSeconds,
-              sideBDuration: state.sideBDurationSeconds,
+              availableSides: state.availableSides,
+              sideDurations: state.sideDurations,
               onSideChanged: (side) {
                 ref.read(nowPlayingProvider.notifier).setSide(side);
               },
