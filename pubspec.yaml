@@ -60,6 +60,9 @@ dependencies:
   # Serial Communication
   flutter_libserialport: ^0.4.0
 
+  # Charts
+  fl_chart: ^0.69.0
+
   # UI Components
   google_fonts: ^6.1.0
   flutter_svg: ^2.0.0

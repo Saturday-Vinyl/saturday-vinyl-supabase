@@ -51,13 +51,13 @@ The admin app currently builds command payloads with the `run_test` wrapper when
 
 ### 2. `tests` column reads and capability command display
 
-The admin app reads the `capabilities.commands` JSONB column to display available commands for a device type.
+The admin app reads the `capabilities.tests` JSONB column to display available commands for a device type.
 
 **Search patterns:**
-- `.commands` in model/query code
-- `commands` as a database column name in queries
-- `from('capabilities')` with `.select(` that includes `commands`
-- Model properties like `commands`, `capabilityCommands`
+- `.tests` in model/query code
+- `tests` as a database column name in queries
+- `from('capabilities')` with `.select(` that includes `tests`
+- Model properties like `tests`, `testList`, `capabilityTests`
 
 **Current format (DB column):**
 ```json
@@ -67,18 +67,31 @@ The admin app reads the `capabilities.commands` JSONB column to display availabl
 ]
 ```
 
-**Required change:** The DB column has been renamed from `tests` to `commands`. Dart model property names and UI labels use "command" terminology.
+**Required change:** The DB column is still named `tests` — no query changes needed yet. But the Dart model property names and UI labels should be renamed from "test" to "command" terminology. When the DB column is eventually renamed, a migration in `shared-supabase/` will handle the column rename.
 
 ### 3. Firmware JSON schema export
 
 The admin app exports a firmware JSON schema file that developers download. The `tests` key in this export should be renamed to `commands`.
 
 **Search patterns:**
-- `"commands"` as a JSON key in schema generation/export code
-- `commands` in firmware schema builder or serializer
-- `toJson`, `toMap`, `serialize` methods on capability models that output `commands`
+- `"tests"` as a JSON key in schema generation/export code
+- `tests` in firmware schema builder or serializer
+- `toJson`, `toMap`, `serialize` methods on capability models that output `tests`
 
-**Expected export format:**
+**Current export format:**
+```json
+{
+  "capabilities": {
+    "wifi": {
+      "tests": {
+        "connect": {"params": {...}, "result": {...}}
+      }
+    }
+  }
+}
+```
+
+**New export format:**
 ```json
 {
   "capabilities": {
@@ -91,7 +104,7 @@ The admin app exports a firmware JSON schema file that developers download. The 
 }
 ```
 
-**Required change:** The firmware JSON schema export/download flow should use `"commands"` as the key (matching the renamed DB column).
+**Required change:** In the firmware JSON schema export/download flow, change the key from `"tests"` to `"commands"`. This is the only place where the rename happens on the admin app side for now (the DB column stays as `tests`).
 
 ### 4. UI labels and terminology
 
@@ -183,10 +196,10 @@ A new `register` command has been added to the `thread` capability. This is a hu
 After this audit, the admin app should:
 - Send flat capability commands (`{"cmd": "connect"}`) instead of `run_test` wrapper
 - Display "Commands" instead of "Tests" in capability-related UI
-- Export firmware JSON schema with `"commands"` key
+- Export firmware JSON schema with `"commands"` key instead of `"tests"`
 - Validate command name uniqueness when linking capabilities to device types
 - Use `command_not_found` error code instead of `test_not_found`
-- Read `capabilities.commands` DB column (renamed from `tests`)
+- Continue reading `capabilities.tests` DB column (rename pending future migration)
 - Show the new `register` command in thread capability's command list
 
 ## Reference Documents

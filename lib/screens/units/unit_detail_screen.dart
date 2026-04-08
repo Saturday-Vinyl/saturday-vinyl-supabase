@@ -7,6 +7,7 @@ import 'package:saturday_app/models/unit.dart';
 import 'package:saturday_app/providers/device_provider.dart';
 import 'package:saturday_app/providers/remote_monitor_provider.dart';
 import 'package:saturday_app/providers/unit_provider.dart';
+import 'package:saturday_app/widgets/heartbeat_chart/heartbeat_chart_section.dart';
 import 'package:saturday_app/widgets/remote_monitor/remote_monitor_section.dart';
 
 /// Screen showing unit details and its associated devices
@@ -83,6 +84,8 @@ class UnitDetailScreen extends ConsumerWidget {
                 _buildProvisioningSection(context, unit),
                 const SizedBox(height: 24),
                 _buildDevicesSection(context, devicesAsync),
+                // Telemetry chart
+                _buildTelemetryChartSection(context, devicesAsync),
                 // Remote Monitor section (only for devices with websocket capability)
                 _buildRemoteMonitorSection(context, ref, devicesAsync),
                 if (unit.consumerAttributes.isNotEmpty) ...[
@@ -548,6 +551,28 @@ class UnitDetailScreen extends ConsumerWidget {
           fontWeight: FontWeight.w500,
         ),
       ),
+    );
+  }
+
+  Widget _buildTelemetryChartSection(
+    BuildContext context,
+    AsyncValue<List<Device>> devicesAsync,
+  ) {
+    return devicesAsync.when(
+      data: (devices) {
+        if (devices.isEmpty) return const SizedBox.shrink();
+        return Column(
+          children: [
+            const SizedBox(height: 24),
+            HeartbeatChartSection(
+              unitId: unitId,
+              devices: devices,
+            ),
+          ],
+        );
+      },
+      loading: () => const SizedBox.shrink(),
+      error: (_, __) => const SizedBox.shrink(),
     );
   }
 
