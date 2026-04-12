@@ -1,5 +1,3 @@
-import 'dart:io';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -28,6 +26,8 @@ import 'package:saturday_app/screens/users/user_management_screen.dart';
 import 'package:saturday_app/services/keyboard_listener_service.dart';
 import 'package:saturday_app/services/qr_scanner_service.dart';
 import 'package:saturday_app/utils/app_logger.dart';
+import 'package:saturday_app/utils/platform_utils.dart';
+import 'package:saturday_app/widgets/navigation/mobile_qr_scan_tab.dart';
 import 'package:saturday_app/widgets/navigation/sidebar_nav.dart';
 import 'package:saturday_app/widgets/production/qr_fab_button.dart';
 
@@ -40,17 +40,21 @@ class MainScaffold extends ConsumerStatefulWidget {
 }
 
 class _MainScaffoldState extends ConsumerState<MainScaffold> {
+  // Desktop navigation state
   String _currentRoute = '/dashboard';
   KeyboardListenerService? _keyboardListener;
   final _qrScannerService = QRScannerService();
   final _unitRepository = UnitRepository();
 
+  // Mobile navigation state
+  int _mobileTabIndex = 0; // Units tab
+
   // USB monitoring - re-enable when firmware responds to get_status
   // final _newUnitRepository = UnitRepository();
   // bool _usbMonitorInitialized = false;
 
-  bool get _isDesktop =>
-      !kIsWeb && (Platform.isMacOS || Platform.isWindows || Platform.isLinux);
+  bool get _isDesktop => PlatformUtils.isDesktop;
+  bool get _isMobile => PlatformUtils.isMobile;
 
   @override
   void initState() {
@@ -261,6 +265,13 @@ class _MainScaffoldState extends ConsumerState<MainScaffold> {
 
   @override
   Widget build(BuildContext context) {
+    if (_isMobile) {
+      return _buildMobileLayout();
+    }
+    return _buildDesktopLayout();
+  }
+
+  Widget _buildDesktopLayout() {
     return Scaffold(
       body: Row(
         children: [
@@ -279,6 +290,45 @@ class _MainScaffoldState extends ConsumerState<MainScaffold> {
       // Global FAB for QR scanning
       floatingActionButton: QRFABButton(
         onPressed: _openQRScanner,
+      ),
+    );
+  }
+
+  Widget _buildMobileLayout() {
+    return Scaffold(
+      body: IndexedStack(
+        index: _mobileTabIndex,
+        children: [
+          // Tab 0: Production Units
+          const ProductionUnitsScreen(),
+
+          // Tab 1: QR Scanner
+          MobileQRScanTab(isActive: _mobileTabIndex == 1),
+
+          // Tab 2: Profile / Dashboard
+          const DashboardScreen(),
+        ],
+      ),
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: _mobileTabIndex,
+        onTap: (index) => setState(() => _mobileTabIndex = index),
+        type: BottomNavigationBarType.fixed,
+        selectedItemColor: SaturdayColors.primaryDark,
+        unselectedItemColor: SaturdayColors.secondaryGrey,
+        items: const [
+          BottomNavigationBarItem(
+            icon: Icon(Icons.inventory_2),
+            label: 'Units',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.qr_code_scanner),
+            label: 'Scan',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.person),
+            label: 'Profile',
+          ),
+        ],
       ),
     );
   }

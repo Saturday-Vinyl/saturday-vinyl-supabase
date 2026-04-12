@@ -4,6 +4,7 @@ import 'package:saturday_app/config/theme.dart';
 import 'package:saturday_app/providers/unit_provider.dart';
 import 'package:saturday_app/screens/production/create_unit_screen.dart';
 import 'package:saturday_app/screens/production/unit_detail_screen.dart';
+import 'package:saturday_app/utils/platform_utils.dart';
 import 'package:saturday_app/widgets/production/unit_card.dart';
 
 /// Screen showing all production units
@@ -20,12 +21,14 @@ class ProductionUnitsScreen extends ConsumerWidget {
         backgroundColor: SaturdayColors.primaryDark,
         foregroundColor: Colors.white,
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _navigateToCreateUnit(context),
-        backgroundColor: SaturdayColors.success,
-        icon: const Icon(Icons.add),
-        label: const Text('Create Unit'),
-      ),
+      floatingActionButton: PlatformUtils.isDesktop
+          ? FloatingActionButton.extended(
+              onPressed: () => _navigateToCreateUnit(context),
+              backgroundColor: SaturdayColors.success,
+              icon: const Icon(Icons.add),
+              label: const Text('Create Unit'),
+            )
+          : null,
       body: unitsAsync.when(
         data: (units) {
           if (units.isEmpty) {
