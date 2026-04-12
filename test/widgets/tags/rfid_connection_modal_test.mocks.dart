@@ -273,9 +273,10 @@ class MockUhfRfidService extends _i1.Mock implements _i7.UhfRfidService {
           as _i6.Future<List<_i8.TagPollResult>>);
 
   @override
-  _i6.Future<_i3.WriteResult> writeEpc(List<int>? newEpc) =>
+  _i6.Future<_i3.WriteResult> writeEpc(List<int>? newEpc,
+          {List<int>? targetEpc}) =>
       (super.noSuchMethod(
-            Invocation.method(#writeEpc, [newEpc]),
+            Invocation.method(#writeEpc, [newEpc], {#targetEpc: targetEpc}),
             returnValue: _i6.Future<_i3.WriteResult>.value(
               _FakeWriteResult_1(this, Invocation.method(#writeEpc, [newEpc])),
             ),

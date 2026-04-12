@@ -355,7 +355,7 @@ class UhfRfidService {
 
     AppLogger.info('UhfRfidService: Starting continuous polling');
 
-    final command = UhfFrameCodec.buildMultiplePoll(count: 0); // 0 = continuous
+    final command = UhfFrameCodec.buildMultiplePoll(count: 0xFFFF); // 0xFFFF = continuous until stopped
     final success = await _serialPortService.write(command);
 
     if (success) {
@@ -466,7 +466,13 @@ class UhfRfidService {
   /// [newEpc] - The EPC to write (12 bytes for 96-bit EPC)
   ///
   /// Returns [WriteResult] with success/failure details
-  Future<WriteResult> writeEpc(List<int> newEpc) async {
+  /// Write a new EPC to a specific tag
+  ///
+  /// [newEpc] - The EPC to write (12 bytes for 96-bit EPC)
+  /// [targetEpc] - The current EPC of the tag to write to (for Select filtering).
+  ///               If null, writes to the first tag the module finds (unsafe with
+  ///               multiple tags in the field).
+  Future<WriteResult> writeEpc(List<int> newEpc, {List<int>? targetEpc}) async {
     final stopwatch = Stopwatch()..start();
 
     if (!isConnected) {
@@ -490,12 +496,56 @@ class UhfRfidService {
         'UhfRfidService: Writing EPC ${newEpc.map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase()).join()}');
 
     try {
+      // Clear the RX buffer to discard any leftover poll data that could
+      // prevent the write response from being parsed
+      if (_frameBuffer.isNotEmpty) {
+        AppLogger.info('UhfRfidService: Clearing ${_frameBuffer.length} bytes of stale buffer data before write');
+        _frameBuffer.clear();
+      }
+
       // Small delay to let the module settle after stopping polling
       await Future.delayed(const Duration(milliseconds: 100));
 
-      // Send the write command directly - the M100 module will find and write
-      // to the first tag in the field without needing explicit selection
-      final command = UhfFrameCodec.buildWriteEpc(_accessPassword, newEpc);
+      // Select the specific target tag so the write only affects it
+      if (targetEpc != null && targetEpc.length == RfidConfig.epcLengthBytes) {
+        final targetHex = targetEpc.map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase()).join();
+        AppLogger.info('UhfRfidService: Selecting target tag $targetHex before write');
+
+        // Set Select parameter: match this specific EPC
+        final selectCmd = UhfFrameCodec.buildSetSelect(targetEpc);
+        final selectResponse = await _sendCommandAndWaitForResponse(
+          selectCmd,
+          RfidConfig.cmdSetSelect,
+        );
+        if (selectResponse == null) {
+          AppLogger.warning('UhfRfidService: Set Select timed out, proceeding anyway');
+        }
+
+        // Clear buffer again after Select response
+        _frameBuffer.clear();
+
+        // Set Select mode: apply Select before write/read/lock (not polling)
+        final modeCmd = UhfFrameCodec.buildSetSelectMode(0x02);
+        final modeResponse = await _sendCommandAndWaitForResponse(
+          modeCmd,
+          RfidConfig.cmdSetSelectMode,
+        );
+        if (modeResponse == null) {
+          AppLogger.warning('UhfRfidService: Set Select Mode timed out, proceeding anyway');
+        }
+
+        // Clear buffer again
+        _frameBuffer.clear();
+        await Future.delayed(const Duration(milliseconds: 50));
+      }
+
+      // Use default (zero) password for fresh/unwritten tags.
+      // The configured access password is only valid after a tag has been
+      // locked with that password via a separate lock command.
+      const writePassword = RfidConfig.defaultAccessPassword;
+
+      // Send the write command — with Select active, only the targeted tag responds
+      final command = UhfFrameCodec.buildWriteEpc(writePassword, newEpc);
       final commandHex = command.map((b) => b.toRadixString(16).padLeft(2, '0').toUpperCase()).join(' ');
       AppLogger.debug('UhfRfidService: Sending write command: $commandHex');
       final response = await _sendCommandAndWaitForResponse(
@@ -523,6 +573,17 @@ class UhfRfidService {
       AppLogger.error('UhfRfidService: Write exception', e);
       return WriteResult.error(e.toString(), duration: stopwatch.elapsed);
     } finally {
+      // Reset Select mode to 0x01 (no select) so polling sees all tags
+      if (targetEpc != null) {
+        _frameBuffer.clear();
+        final resetCmd = UhfFrameCodec.buildSetSelectMode(0x01);
+        await _sendCommandAndWaitForResponse(
+          resetCmd,
+          RfidConfig.cmdSetSelectMode,
+        );
+        _frameBuffer.clear();
+      }
+
       // Resume polling if it was active
       if (wasPolling) {
         await startPolling();

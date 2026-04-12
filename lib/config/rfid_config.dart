@@ -118,6 +118,12 @@ class RfidConfig {
   /// Stop multiple polling command
   static const int cmdStopMultiplePoll = 0x28;
 
+  /// Set Select parameter command — filter operations to a specific tag
+  static const int cmdSetSelect = 0x0C;
+
+  /// Set Select mode command — controls when Select filter is applied
+  static const int cmdSetSelectMode = 0x12;
+
   /// Read tag data command
   static const int cmdReadData = 0x39;
 

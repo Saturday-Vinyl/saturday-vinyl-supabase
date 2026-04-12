@@ -11,12 +11,17 @@ import 'package:saturday_app/providers/rfid_tag_roll_provider.dart';
 import 'package:saturday_app/providers/uhf_rfid_provider.dart';
 import 'package:saturday_app/utils/app_logger.dart';
 
+/// Sentinel value for distinguishing "not provided" from explicit null in copyWith
+const _sentinel = Object();
+
 /// Represents a tag detected during roll writing with its signal strength
 class DetectedTag {
   final String epcHex;
   final String formattedEpc;
   final int rssi;
-  final int signalStrength; // 0-100 percentage
+  final int signalStrength; // 0-100 percentage (instantaneous)
+  final double smoothedRssi; // EMA-smoothed signed RSSI
+  final int readCount; // number of readings accumulated
   final bool isSaturdayTag;
   final bool isInDatabase;
   final DateTime lastSeen;
@@ -26,16 +31,28 @@ class DetectedTag {
     required this.formattedEpc,
     required this.rssi,
     required this.signalStrength,
+    required this.smoothedRssi,
+    this.readCount = 1,
     required this.isSaturdayTag,
     required this.isInDatabase,
     required this.lastSeen,
   });
+
+  /// Signal strength (0-100) derived from the smoothed RSSI EMA
+  int get smoothedSignalStrength {
+    const minRssi = -80.0;
+    const maxRssi = -20.0;
+    final clamped = smoothedRssi.clamp(minRssi, maxRssi);
+    return ((clamped - minRssi) / (maxRssi - minRssi) * 100).round();
+  }
 
   DetectedTag copyWith({
     String? epcHex,
     String? formattedEpc,
     int? rssi,
     int? signalStrength,
+    double? smoothedRssi,
+    int? readCount,
     bool? isSaturdayTag,
     bool? isInDatabase,
     DateTime? lastSeen,
@@ -45,6 +62,8 @@ class DetectedTag {
       formattedEpc: formattedEpc ?? this.formattedEpc,
       rssi: rssi ?? this.rssi,
       signalStrength: signalStrength ?? this.signalStrength,
+      smoothedRssi: smoothedRssi ?? this.smoothedRssi,
+      readCount: readCount ?? this.readCount,
       isSaturdayTag: isSaturdayTag ?? this.isSaturdayTag,
       isInDatabase: isInDatabase ?? this.isInDatabase,
       lastSeen: lastSeen ?? this.lastSeen,
@@ -66,8 +85,14 @@ class RollWriteState {
   /// Current position on the roll (next position to write)
   final int currentPosition;
 
-  /// Tags currently detected, sorted by signal strength (strongest first)
+  /// Tags currently detected, sorted by smoothed signal strength (strongest first)
   final List<DetectedTag> detectedTags;
+
+  /// EPC of the current focus tag (center slot — write candidate)
+  final String? focusTagEpc;
+
+  /// EPC of the previous focus tag (left slot — last written or previously focused)
+  final String? previousFocusTagEpc;
 
   /// Current operation description
   final String? currentOperation;
@@ -84,17 +109,48 @@ class RollWriteState {
     this.isWriting = false,
     this.currentPosition = 1,
     this.detectedTags = const [],
+    this.focusTagEpc,
+    this.previousFocusTagEpc,
     this.currentOperation,
     this.lastError,
     this.writeSuccess = false,
   });
 
-  /// Get the active tag (strongest signal, unwritten)
+  /// The focus tag (center slot — strongest smoothed RSSI, any tag)
   DetectedTag? get activeTag {
+    if (focusTagEpc == null) return null;
     for (final tag in detectedTags) {
-      if (!tag.isSaturdayTag) {
+      if (tag.epcHex == focusTagEpc) return tag;
+    }
+    return null;
+  }
+
+  /// The previous tag (left slot — was previously in focus, now dropping RSSI)
+  DetectedTag? get previousTag {
+    if (previousFocusTagEpc == null) return null;
+    // Never show the same tag in both previous and focus slots
+    if (previousFocusTagEpc == focusTagEpc) return null;
+    for (final tag in detectedTags) {
+      if (tag.epcHex == previousFocusTagEpc) return tag;
+    }
+    return null;
+  }
+
+  /// The next tag (right slot — strongest tag that isn't focus or previous)
+  DetectedTag? get nextTag {
+    for (final tag in detectedTags) {
+      if (tag.epcHex != focusTagEpc &&
+          tag.epcHex != previousFocusTagEpc) {
         return tag;
       }
+    }
+    return null;
+  }
+
+  /// The strongest unwritten tag (for the write button)
+  DetectedTag? get writeCandidateTag {
+    for (final tag in detectedTags) {
+      if (!tag.isSaturdayTag) return tag;
     }
     return null;
   }
@@ -111,6 +167,8 @@ class RollWriteState {
     bool? isWriting,
     int? currentPosition,
     List<DetectedTag>? detectedTags,
+    Object? focusTagEpc = _sentinel,
+    Object? previousFocusTagEpc = _sentinel,
     String? currentOperation,
     String? lastError,
     bool? writeSuccess,
@@ -124,6 +182,12 @@ class RollWriteState {
       isWriting: isWriting ?? this.isWriting,
       currentPosition: currentPosition ?? this.currentPosition,
       detectedTags: detectedTags ?? this.detectedTags,
+      focusTagEpc: focusTagEpc == _sentinel
+          ? this.focusTagEpc
+          : focusTagEpc as String?,
+      previousFocusTagEpc: previousFocusTagEpc == _sentinel
+          ? this.previousFocusTagEpc
+          : previousFocusTagEpc as String?,
       currentOperation:
           clearOperation ? null : (currentOperation ?? this.currentOperation),
       lastError: clearError ? null : (lastError ?? this.lastError),
@@ -143,6 +207,24 @@ class RollWriteNotifier extends StateNotifier<RollWriteState> {
 
   /// EPCs we know are in the database (cache to avoid repeated lookups)
   final Set<String> _knownDatabaseEpcs = {};
+
+  /// Map of EPC -> smoothed signed RSSI (EMA)
+  final Map<String, double> _tagSmoothedRssi = {};
+
+  /// Map of EPC -> read count for EMA warmup
+  final Map<String, int> _tagReadCount = {};
+
+  /// EPC of the currently focused tag (center slot)
+  String? _currentFocusEpc;
+
+  /// EPC of the previously focused tag (left slot)
+  String? _previousFocusEpc;
+
+  /// EMA smoothing factor (0.3 = responsive but smooth)
+  static const double _emaSmoothingFactor = 0.3;
+
+  /// Minimum smoothed signal strength difference to swap focus tag (hysteresis)
+  static const int _focusSwapThreshold = 10;
 
   /// How long before a tag is considered "stale" and removed from view
   static const _staleTagTimeout = Duration(seconds: 2);
@@ -212,11 +294,17 @@ class RollWriteNotifier extends StateNotifier<RollWriteState> {
 
     // Clear previous state
     _tagLastSeen.clear();
+    _tagSmoothedRssi.clear();
+    _tagReadCount.clear();
+    _currentFocusEpc = null;
+    _previousFocusEpc = null;
     state = state.copyWith(
       isScanning: true,
       detectedTags: [],
       currentOperation: 'Scanning for tags...',
       clearError: true,
+      focusTagEpc: null,
+      previousFocusTagEpc: null,
       writeSuccess: false,
     );
 
@@ -255,15 +343,16 @@ class RollWriteNotifier extends StateNotifier<RollWriteState> {
     final uhfService = _ref.read(uhfRfidServiceProvider);
     await uhfService.stopPolling();
 
+    if (!mounted) return;
     state = state.copyWith(
       isScanning: false,
       clearOperation: true,
     );
   }
 
-  /// Handle a detected tag
+  /// Handle a detected tag with EMA smoothing and focus tracking
   Future<void> _onTagDetected(TagPollResult result) async {
-    if (!state.isScanning || state.isWriting) return;
+    if (!mounted || !state.isScanning || state.isWriting) return;
 
     final epc = result.epcHex.toUpperCase();
     final now = DateTime.now();
@@ -271,21 +360,39 @@ class RollWriteNotifier extends StateNotifier<RollWriteState> {
     // Update last seen time
     _tagLastSeen[epc] = now;
 
+    // Compute EMA-smoothed RSSI
+    final signedRssi = result.rssi > 127
+        ? (result.rssi - 256).toDouble()
+        : result.rssi.toDouble();
+    final prevSmoothed = _tagSmoothedRssi[epc];
+    final count = (_tagReadCount[epc] ?? 0) + 1;
+    _tagReadCount[epc] = count;
+
+    final smoothed = prevSmoothed == null
+        ? signedRssi
+        : _emaSmoothingFactor * signedRssi +
+            (1 - _emaSmoothingFactor) * prevSmoothed;
+    _tagSmoothedRssi[epc] = smoothed;
+
     // Check if this is a Saturday tag
     final isSaturdayTag = result.isSaturdayTag;
 
-    // Check if it's in our known database cache
+    // Check if this is in our known database cache
     bool isInDatabase = _knownDatabaseEpcs.contains(epc);
 
     // If it's a Saturday tag but not in our cache, check the database
     if (isSaturdayTag && !isInDatabase) {
+      if (!mounted) return;
       final tagRepo = _ref.read(rfidTagRepositoryProvider);
       final existingTag = await tagRepo.getTagByEpc(epc);
+      if (!mounted) return;
       if (existingTag != null) {
         isInDatabase = true;
         _knownDatabaseEpcs.add(epc);
       }
     }
+
+    if (!mounted) return;
 
     // Create or update the detected tag entry
     final detectedTag = DetectedTag(
@@ -293,6 +400,8 @@ class RollWriteNotifier extends StateNotifier<RollWriteState> {
       formattedEpc: result.formattedEpc,
       rssi: result.rssi,
       signalStrength: result.signalStrength,
+      smoothedRssi: smoothed,
+      readCount: count,
       isSaturdayTag: isSaturdayTag,
       isInDatabase: isInDatabase,
       lastSeen: now,
@@ -308,19 +417,95 @@ class RollWriteNotifier extends StateNotifier<RollWriteState> {
       currentTags.add(detectedTag);
     }
 
-    // Sort by signal strength (strongest first)
-    currentTags.sort((a, b) => b.signalStrength.compareTo(a.signalStrength));
+    // Sort by smoothed signal strength (strongest first)
+    currentTags
+        .sort((a, b) => b.smoothedSignalStrength.compareTo(a.smoothedSignalStrength));
 
-    state = state.copyWith(detectedTags: currentTags);
+    // Focus tracking with hysteresis
+    _updateFocusTracking(currentTags);
+
+    if (!mounted) return;
+    state = state.copyWith(
+      detectedTags: currentTags,
+      focusTagEpc: _currentFocusEpc,
+      previousFocusTagEpc: _previousFocusEpc,
+    );
+  }
+
+  /// Update focus tracking with hysteresis to prevent jitter.
+  /// Focus is based purely on RSSI strength — any tag (written or not) can
+  /// be the focus. Tags flow right -> center -> left as they cross the reader.
+  void _updateFocusTracking(List<DetectedTag> sortedTags) {
+    if (sortedTags.isEmpty) {
+      if (_currentFocusEpc != null) {
+        _previousFocusEpc = _currentFocusEpc;
+      }
+      _currentFocusEpc = null;
+      return;
+    }
+
+    final strongest = sortedTags.first; // sorted by smoothedSignalStrength desc
+
+    if (_currentFocusEpc == null ||
+        _currentFocusEpc == strongest.epcHex) {
+      // No current focus or same tag — keep it
+      _currentFocusEpc = strongest.epcHex;
+      // Clear previous if it's the same as current (tag returned to focus)
+      if (_previousFocusEpc == _currentFocusEpc) {
+        _previousFocusEpc = null;
+      }
+      return;
+    }
+
+    // Different tag is now strongest — check hysteresis
+    final currentFocusTag =
+        sortedTags.where((t) => t.epcHex == _currentFocusEpc).firstOrNull;
+
+    if (currentFocusTag == null) {
+      // Current focus tag is gone (stale) — swap immediately
+      _previousFocusEpc = _currentFocusEpc;
+      _currentFocusEpc = strongest.epcHex;
+      return;
+    }
+
+    final diff = strongest.smoothedSignalStrength -
+        currentFocusTag.smoothedSignalStrength;
+    if (diff > _focusSwapThreshold) {
+      _previousFocusEpc = _currentFocusEpc;
+      _currentFocusEpc = strongest.epcHex;
+    }
+    // Otherwise keep current focus (hysteresis prevents jitter)
   }
 
   /// Remove tags that haven't been seen recently
   void _removeStalesTags() {
+    if (!mounted) return;
     final now = DateTime.now();
     final staleCutoff = now.subtract(_staleTagTimeout);
 
-    // Remove stale entries from the last seen map
-    _tagLastSeen.removeWhere((epc, lastSeen) => lastSeen.isBefore(staleCutoff));
+    // Find stale EPCs
+    final staleEpcs = _tagLastSeen.entries
+        .where((e) => e.value.isBefore(staleCutoff))
+        .map((e) => e.key)
+        .toList();
+
+    if (staleEpcs.isEmpty) return;
+
+    // Clean up EMA and tracking state for stale tags
+    for (final epc in staleEpcs) {
+      _tagLastSeen.remove(epc);
+      _tagSmoothedRssi.remove(epc);
+      _tagReadCount.remove(epc);
+    }
+
+    // Clear focus refs if they point to stale tags
+    if (staleEpcs.contains(_currentFocusEpc)) {
+      _previousFocusEpc = _currentFocusEpc;
+      _currentFocusEpc = null;
+    }
+    if (staleEpcs.contains(_previousFocusEpc)) {
+      _previousFocusEpc = null;
+    }
 
     // Filter detected tags to only include non-stale ones
     final currentTags = state.detectedTags
@@ -328,13 +513,22 @@ class RollWriteNotifier extends StateNotifier<RollWriteState> {
         .toList();
 
     if (currentTags.length != state.detectedTags.length) {
-      state = state.copyWith(detectedTags: currentTags);
+      // Re-evaluate focus if it was cleared
+      if (_currentFocusEpc == null) {
+        _updateFocusTracking(currentTags);
+      }
+
+      state = state.copyWith(
+        detectedTags: currentTags,
+        focusTagEpc: _currentFocusEpc,
+        previousFocusTagEpc: _previousFocusEpc,
+      );
     }
   }
 
-  /// Write to the active (strongest signal, unwritten) tag
+  /// Write to the strongest unwritten tag
   Future<bool> writeToActiveTag() async {
-    final activeTag = state.activeTag;
+    final activeTag = state.writeCandidateTag;
     if (activeTag == null) {
       state = state.copyWith(lastError: 'No unwritten tag detected');
       return false;
@@ -373,9 +567,10 @@ class RollWriteNotifier extends StateNotifier<RollWriteState> {
 
       state = state.copyWith(currentOperation: 'Writing to tag...');
 
-      // Write to tag
+      // Write to tag — use Select to target the specific tag
       final epcBytes = _hexToBytes(newEpc);
-      final writeResult = await uhfService.writeEpc(epcBytes);
+      final targetEpcBytes = _hexToBytes(activeTag.epcHex);
+      final writeResult = await uhfService.writeEpc(epcBytes, targetEpc: targetEpcBytes);
 
       if (!writeResult.success) {
         activityLog.error('Write failed - tag may be locked or moved');
@@ -407,6 +602,10 @@ class RollWriteNotifier extends StateNotifier<RollWriteState> {
       // Add to known EPCs
       _knownDatabaseEpcs.add(newEpc.toUpperCase());
 
+      // Transition focus: written tag moves to left slot
+      _previousFocusEpc = activeTag.epcHex;
+      _currentFocusEpc = null; // re-determined on next poll
+
       // Success!
       activityLog.success(
         'Tag written at position ${state.currentPosition}: $formattedEpc',
@@ -419,6 +618,8 @@ class RollWriteNotifier extends StateNotifier<RollWriteState> {
         currentPosition: state.currentPosition + 1,
         currentOperation: 'Scanning for tags...',
         writeSuccess: true,
+        previousFocusTagEpc: _previousFocusEpc,
+        focusTagEpc: null, // re-determined on next poll
       );
 
       // Invalidate providers to refresh data
@@ -535,7 +736,9 @@ class RollWriteNotifier extends StateNotifier<RollWriteState> {
   @override
   void dispose() {
     _staleTagTimer?.cancel();
+    _staleTagTimer = null;
     _pollSubscription?.cancel();
+    _pollSubscription = null;
     super.dispose();
   }
 }

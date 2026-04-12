@@ -627,7 +627,7 @@ class _RollWriteScreenState extends ConsumerState<RollWriteScreen> {
               // Write button
               Expanded(
                 child: FilledButton.icon(
-                  onPressed: (writeState.activeTag != null &&
+                  onPressed: (writeState.writeCandidateTag != null &&
                           !writeState.isWriting)
                       ? () {
                           ref
@@ -648,12 +648,12 @@ class _RollWriteScreenState extends ConsumerState<RollWriteScreen> {
                   label: Text(
                     writeState.isWriting
                         ? 'Writing...'
-                        : writeState.activeTag != null
-                            ? 'Write to Active Tag'
+                        : writeState.writeCandidateTag != null
+                            ? 'Write Tag'
                             : 'No Unwritten Tag',
                   ),
                   style: FilledButton.styleFrom(
-                    backgroundColor: writeState.activeTag != null
+                    backgroundColor: writeState.writeCandidateTag != null
                         ? SaturdayColors.info
                         : SaturdayColors.secondaryGrey,
                     padding: const EdgeInsets.symmetric(vertical: 16),

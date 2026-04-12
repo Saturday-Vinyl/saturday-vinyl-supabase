@@ -65,6 +65,45 @@ class UhfFrameCodec {
     ]);
   }
 
+  /// Build a Set Select Parameter command (0x0C)
+  ///
+  /// Configures the module to filter subsequent operations to a specific tag
+  /// by matching its EPC.
+  ///
+  /// [epcBytes] - The 12-byte EPC to match against (the tag's current EPC)
+  ///
+  /// Per the M100 protocol:
+  /// - SelParam: Target(3b)=000(S0), Action(3b)=000(match→A), MemBank(2b)=01(EPC) = 0x01
+  /// - Ptr: bit pointer, EPC data starts at bit 32 (0x00000020)
+  /// - MaskLen: 96 bits (0x60) for a full 12-byte EPC
+  /// - Truncate: 0x00 (disabled)
+  /// - Mask: the EPC bytes
+  static List<int> buildSetSelect(List<int> epcBytes) {
+    if (epcBytes.length != RfidConfig.epcLengthBytes) {
+      throw ArgumentError('EPC must be ${RfidConfig.epcLengthBytes} bytes');
+    }
+
+    final parameters = <int>[
+      0x01, // SelParam: Target=S0, Action=match→A, MemBank=EPC
+      0x00, 0x00, 0x00, 0x20, // Ptr: bit 32 (EPC data start)
+      0x60, // MaskLen: 96 bits
+      0x00, // Truncate: disabled
+      ...epcBytes, // Mask: the EPC to match
+    ];
+
+    return buildCommand(RfidConfig.cmdSetSelect, parameters);
+  }
+
+  /// Build a Set Select Mode command (0x12)
+  ///
+  /// [mode] - Select mode:
+  ///   0x00: Select before ALL operations
+  ///   0x01: No Select (default)
+  ///   0x02: Select before read/write/lock/kill only (NOT polling)
+  static List<int> buildSetSelectMode(int mode) {
+    return buildCommand(RfidConfig.cmdSetSelectMode, [mode]);
+  }
+
   /// Build a Stop Multiple Poll command
   static List<int> buildStopMultiplePoll() {
     return buildCommand(RfidConfig.cmdStopMultiplePoll);
