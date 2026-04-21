@@ -1,9 +1,0 @@
-# Environment files
-.env
-.env.*
-!.env.example
-
-# OS
-.DS_Store
-
-# Supabase local state is handled by supabase/.gitignore
