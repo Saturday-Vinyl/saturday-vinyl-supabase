@@ -14,6 +14,8 @@ import 'package:saturday_app/screens/products/production_steps_config_screen.dar
 import 'package:saturday_app/utils/extensions.dart';
 import 'package:saturday_app/widgets/common/error_state.dart';
 import 'package:saturday_app/widgets/common/loading_indicator.dart';
+import 'package:saturday_app/providers/image_slot_provider.dart';
+import 'package:saturday_app/screens/products/image_slots/image_slot_selection_screen.dart';
 import 'package:saturday_app/widgets/products/device_type_assignment_dialog.dart';
 import 'package:saturday_app/widgets/products/production_step_item.dart';
 
@@ -328,6 +330,86 @@ class ProductDetailScreen extends ConsumerWidget {
 
                 // BOM section
                 _BomSection(productId: productId),
+
+                const Divider(height: 1),
+
+                // Image Slots section
+                Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            'Image Slots',
+                            style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                          ),
+                          TextButton.icon(
+                            onPressed: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) =>
+                                      ImageSlotSelectionScreen(
+                                    productId: productId,
+                                  ),
+                                ),
+                              );
+                            },
+                            icon: const Icon(Icons.edit),
+                            label: const Text('Configure'),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Consumer(
+                        builder: (context, ref, _) {
+                          final slotsAsync = ref.watch(
+                            productImageSlotsProvider(productId),
+                          );
+                          return slotsAsync.when(
+                            data: (slots) {
+                              if (slots.isEmpty) {
+                                return Text(
+                                  'No image slots configured',
+                                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                                        color: SaturdayColors.secondaryGrey,
+                                      ),
+                                );
+                              }
+                              return Wrap(
+                                spacing: 8,
+                                runSpacing: 8,
+                                children: slots.map((slot) {
+                                  return Chip(
+                                    avatar: const Icon(
+                                      Icons.photo_size_select_actual,
+                                      size: 16,
+                                    ),
+                                    label: Text('${slot.angle} / ${slot.capacity}'),
+                                    backgroundColor:
+                                        SaturdayColors.success.withValues(alpha: 0.1),
+                                  );
+                                }).toList(),
+                              );
+                            },
+                            loading: () => const LoadingIndicator(
+                              message: 'Loading image slots...',
+                            ),
+                            error: (error, stack) => Text(
+                              'Failed to load image slots: $error',
+                              style: const TextStyle(color: SaturdayColors.error),
+                            ),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                ),
 
                 const Divider(height: 1),
 
