@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:saturday_consumer_app/config/styles.dart';
 import 'package:saturday_consumer_app/config/theme.dart';
 import 'package:saturday_consumer_app/models/device.dart';
+import 'package:saturday_consumer_app/widgets/common/product_image.dart';
 import 'package:saturday_consumer_app/widgets/devices/battery_indicator.dart';
 import 'package:saturday_consumer_app/widgets/devices/status_badge.dart';
 
@@ -84,20 +85,31 @@ class DeviceCard extends StatelessWidget {
           padding: Spacing.cardPadding,
           child: Row(
             children: [
-              // Device icon
-              Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  color: _iconBackgroundColor,
-                  borderRadius: AppRadius.mediumRadius,
+              // Device image or icon
+              if (device.hasProductImageData)
+                ProductImageWidget(
+                  device: device,
+                  size: 48,
+                  fallback: Icon(
+                    _deviceIcon,
+                    color: _iconColor,
+                    size: 24,
+                  ),
+                )
+              else
+                Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: _iconBackgroundColor,
+                    borderRadius: AppRadius.mediumRadius,
+                  ),
+                  child: Icon(
+                    _deviceIcon,
+                    color: _iconColor,
+                    size: 24,
+                  ),
                 ),
-                child: Icon(
-                  _deviceIcon,
-                  color: _iconColor,
-                  size: 24,
-                ),
-              ),
               Spacing.horizontalGapMd,
               // Device info
               Expanded(
@@ -200,14 +212,24 @@ class DeviceListTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListTile(
-      leading: CircleAvatar(
-        backgroundColor: _avatarBackgroundColor,
-        child: Icon(
-          device.isHub ? Icons.router : Icons.inventory_2_outlined,
-          color: _avatarIconColor,
-          size: 20,
-        ),
-      ),
+      leading: device.hasProductImageData
+          ? ProductImageWidget(
+              device: device,
+              size: 40,
+              fallback: Icon(
+                device.isHub ? Icons.router : Icons.inventory_2_outlined,
+                color: _avatarIconColor,
+                size: 20,
+              ),
+            )
+          : CircleAvatar(
+              backgroundColor: _avatarBackgroundColor,
+              child: Icon(
+                device.isHub ? Icons.router : Icons.inventory_2_outlined,
+                color: _avatarIconColor,
+                size: 20,
+              ),
+            ),
       title: Text(device.name),
       subtitle: Text(device.isHub ? 'Hub' : 'Crate'),
       trailing: Row(

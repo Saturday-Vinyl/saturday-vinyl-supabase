@@ -24,6 +24,13 @@ class UnitRepository extends BaseRepository {
           devices!left(
             mac_address,
             provision_data
+          ),
+          product_variants!left(
+            sku,
+            product_id,
+            products!inner(
+              shopify_product_handle
+            )
           )
         ''')
         .eq('consumer_user_id', userId)
@@ -43,6 +50,13 @@ class UnitRepository extends BaseRepository {
           devices!left(
             mac_address,
             provision_data
+          ),
+          product_variants!left(
+            sku,
+            product_id,
+            products!inner(
+              shopify_product_handle
+            )
           )
         ''')
         .eq('id', unitId)
@@ -61,6 +75,13 @@ class UnitRepository extends BaseRepository {
           devices!left(
             mac_address,
             provision_data
+          ),
+          product_variants!left(
+            sku,
+            product_id,
+            products!inner(
+              shopify_product_handle
+            )
           )
         ''')
         .eq('serial_number', serialNumber)
@@ -124,6 +145,13 @@ class UnitRepository extends BaseRepository {
           devices!left(
             mac_address,
             provision_data
+          ),
+          product_variants!left(
+            sku,
+            product_id,
+            products!inner(
+              shopify_product_handle
+            )
           )
         ''')
         .single();
@@ -161,6 +189,13 @@ class UnitRepository extends BaseRepository {
           devices!left(
             mac_address,
             provision_data
+          ),
+          product_variants!left(
+            sku,
+            product_id,
+            products!inner(
+              shopify_product_handle
+            )
           )
         ''')
         .eq('id', unitId)

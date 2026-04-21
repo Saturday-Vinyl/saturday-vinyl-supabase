@@ -9,6 +9,7 @@ import 'package:saturday_consumer_app/providers/device_provider.dart';
 import 'package:saturday_consumer_app/providers/realtime_album_location_provider.dart';
 import 'package:saturday_consumer_app/providers/repository_providers.dart';
 import 'package:saturday_consumer_app/screens/account/wifi_reprovision_screen.dart';
+import 'package:saturday_consumer_app/widgets/common/product_image.dart';
 import 'package:saturday_consumer_app/widgets/devices/devices.dart';
 import 'package:saturday_consumer_app/widgets/library/album_card.dart';
 
@@ -110,6 +111,11 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
       child: ListView(
       padding: Spacing.pagePadding,
       children: [
+        // Product image hero (if product image data is available)
+        if (device.hasProductImageData) ...[
+          _buildProductImageHero(context, ref, device),
+          Spacing.sectionGap,
+        ],
         // Device header
         _buildDeviceHeader(context, device),
         Spacing.sectionGap,
@@ -180,19 +186,30 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
       ),
       child: Row(
         children: [
-          Container(
-            width: 64,
-            height: 64,
-            decoration: BoxDecoration(
-              color: connectivityColor.withValues(alpha: 0.1),
-              borderRadius: AppRadius.mediumRadius,
+          if (device.hasProductImageData)
+            ProductImageWidget(
+              device: device,
+              size: 64,
+              fallback: Icon(
+                device.isHub ? Icons.router : Icons.inventory_2_outlined,
+                color: connectivityColor,
+                size: 32,
+              ),
+            )
+          else
+            Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                color: connectivityColor.withValues(alpha: 0.1),
+                borderRadius: AppRadius.mediumRadius,
+              ),
+              child: Icon(
+                device.isHub ? Icons.router : Icons.inventory_2_outlined,
+                color: connectivityColor,
+                size: 32,
+              ),
             ),
-            child: Icon(
-              device.isHub ? Icons.router : Icons.inventory_2_outlined,
-              color: connectivityColor,
-              size: 32,
-            ),
-          ),
           Spacing.horizontalGapLg,
           Expanded(
             child: Column(
@@ -225,6 +242,30 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
           ),
           ConnectivityStatusChip.fromDevice(device: device),
         ],
+      ),
+    );
+  }
+
+  Widget _buildProductImageHero(
+    BuildContext context,
+    WidgetRef ref,
+    Device device,
+  ) {
+    // Get the first album's cover URL for compositing (if crate has albums)
+    String? albumCoverUrl;
+    if (device.isCrate) {
+      final albumsAsync = ref.watch(crateAlbumsProvider(device.id));
+      albumCoverUrl = albumsAsync.whenOrNull(
+        data: (albums) =>
+            albums.isNotEmpty ? albums.first.album?.coverImageUrl : null,
+      );
+    }
+
+    return Center(
+      child: ProductImageWidget(
+        device: device,
+        albumCoverUrl: albumCoverUrl,
+        size: 200,
       ),
     );
   }

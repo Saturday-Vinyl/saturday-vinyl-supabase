@@ -156,6 +156,20 @@ class Device extends Equatable {
   /// When the device was last seen (heartbeat received).
   final DateTime? lastSeenAt;
 
+  // === Product variant info (from product_variants + products join) ===
+
+  /// Variant ID (FK to product_variants table).
+  final String? variantId;
+
+  /// Product ID (FK to products table, via product_variants).
+  final String? productId;
+
+  /// Product variant SKU (e.g., "SV-CRT-WAL-BLK").
+  final String? sku;
+
+  /// Shopify product handle (URL-safe slug, e.g., "saturday-crate").
+  final String? productHandle;
+
   // === Metadata ===
 
   /// When the unit was created (factory provisioning time).
@@ -181,6 +195,10 @@ class Device extends Equatable {
     this.temperatureC,
     this.humidityPct,
     this.lastSeenAt,
+    this.variantId,
+    this.productId,
+    this.sku,
+    this.productHandle,
     required this.createdAt,
     this.provisionData,
   });
@@ -254,6 +272,21 @@ class Device extends Equatable {
       provisionData = deviceData['provision_data'] as Map<String, dynamic>?;
     }
 
+    // Parse product variant data from the joined product_variants + products
+    final variantId = json['variant_id'] as String?;
+    String? productId;
+    String? sku;
+    String? productHandle;
+    final variantsList = json['product_variants'] as Map<String, dynamic>?;
+    if (variantsList != null) {
+      sku = variantsList['sku'] as String?;
+      productId = variantsList['product_id'] as String?;
+      final productsData = variantsList['products'] as Map<String, dynamic>?;
+      if (productsData != null) {
+        productHandle = productsData['shopify_product_handle'] as String?;
+      }
+    }
+
     return Device(
       id: json['id'] as String,
       userId: json['consumer_user_id'] as String,
@@ -270,6 +303,10 @@ class Device extends Equatable {
       temperatureC: temperatureC,
       humidityPct: humidityPct,
       lastSeenAt: lastSeenAt,
+      variantId: variantId,
+      productId: productId,
+      sku: sku,
+      productHandle: productHandle,
       createdAt: DateTime.parse(json['created_at'] as String),
       provisionData: provisionData,
     );
@@ -292,6 +329,10 @@ class Device extends Equatable {
       'temperature_c': temperatureC,
       'humidity_pct': humidityPct,
       'last_seen_at': lastSeenAt?.toIso8601String(),
+      'variant_id': variantId,
+      'product_id': productId,
+      'sku': sku,
+      'product_handle': productHandle,
       'created_at': createdAt.toIso8601String(),
       'provision_data': provisionData,
     };
@@ -313,6 +354,10 @@ class Device extends Equatable {
     double? temperatureC,
     double? humidityPct,
     DateTime? lastSeenAt,
+    String? variantId,
+    String? productId,
+    String? sku,
+    String? productHandle,
     DateTime? createdAt,
     Map<String, dynamic>? provisionData,
   }) {
@@ -332,6 +377,10 @@ class Device extends Equatable {
       temperatureC: temperatureC ?? this.temperatureC,
       humidityPct: humidityPct ?? this.humidityPct,
       lastSeenAt: lastSeenAt ?? this.lastSeenAt,
+      variantId: variantId ?? this.variantId,
+      productId: productId ?? this.productId,
+      sku: sku ?? this.sku,
+      productHandle: productHandle ?? this.productHandle,
       createdAt: createdAt ?? this.createdAt,
       provisionData: provisionData ?? this.provisionData,
     );
@@ -366,6 +415,9 @@ class Device extends Equatable {
   /// Whether this device is effectively online.
   bool get isEffectivelyOnline => isOnlineDb == true;
 
+  /// Whether this device has product image asset data available.
+  bool get hasProductImageData => productHandle != null && sku != null;
+
   @override
   List<Object?> get props => [
         id,
@@ -383,6 +435,10 @@ class Device extends Equatable {
         temperatureC,
         humidityPct,
         lastSeenAt,
+        variantId,
+        productId,
+        sku,
+        productHandle,
         createdAt,
         provisionData,
       ];
