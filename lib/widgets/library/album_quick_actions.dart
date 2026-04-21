@@ -6,6 +6,7 @@ import 'package:saturday_consumer_app/config/styles.dart';
 import 'package:saturday_consumer_app/config/theme.dart';
 import 'package:saturday_consumer_app/models/library_album.dart';
 import 'package:saturday_consumer_app/providers/now_playing_provider.dart';
+import 'package:saturday_consumer_app/widgets/library/tag_method_picker.dart';
 
 /// Shows a bottom sheet with quick actions for an album.
 ///
@@ -115,7 +116,7 @@ void showAlbumQuickActions(
             title: const Text('Associate NFC Tag'),
             onTap: () {
               Navigator.pop(context);
-              context.push('/library/album/${libraryAlbum.id}/tag');
+              showTagMethodPicker(context, ref, libraryAlbum.id);
             },
           ),
 

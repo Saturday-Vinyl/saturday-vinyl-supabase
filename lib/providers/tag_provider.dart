@@ -104,6 +104,12 @@ class TagAssociationNotifier extends StateNotifier<TagAssociationState> {
     }
   }
 
+  /// Process an EPC detected by the hub (skips QR code parsing).
+  Future<void> processHubDetectedEpc(String epc) async {
+    state = state.copyWith(isLoading: true, clearError: true);
+    await _checkExistingTag(epc);
+  }
+
   /// Check if the EPC is already associated with an album.
   Future<void> _checkExistingTag(String epc) async {
     try {

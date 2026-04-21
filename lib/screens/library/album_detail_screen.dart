@@ -15,6 +15,7 @@ import 'package:saturday_consumer_app/providers/repository_providers.dart';
 import 'package:saturday_consumer_app/providers/now_playing_provider.dart';
 import 'package:saturday_consumer_app/providers/tag_provider.dart';
 import 'package:saturday_consumer_app/utils/epc_validator.dart';
+import 'package:saturday_consumer_app/widgets/library/tag_method_picker.dart';
 import 'package:saturday_consumer_app/widgets/library/album_location_badge.dart';
 import 'package:saturday_consumer_app/widgets/library/track_list.dart';
 
@@ -807,7 +808,7 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
   }
 
   void _associateTag(LibraryAlbum libraryAlbum) {
-    context.push('/library/album/${libraryAlbum.id}/tag');
+    showTagMethodPicker(context, ref, libraryAlbum.id);
   }
 
   Future<void> _saveNotes(LibraryAlbum libraryAlbum) async {

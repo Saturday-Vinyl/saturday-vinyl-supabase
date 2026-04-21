@@ -15,6 +15,7 @@ import 'package:saturday_consumer_app/screens/library/discogs_search_screen.dart
 import 'package:saturday_consumer_app/screens/library/barcode_scanner_screen.dart';
 import 'package:saturday_consumer_app/screens/library/confirm_album_screen.dart';
 import 'package:saturday_consumer_app/screens/library/tag_association_screen.dart';
+import 'package:saturday_consumer_app/screens/library/hub_tag_association_screen.dart';
 import 'package:saturday_consumer_app/screens/library/create_library_screen.dart';
 import 'package:saturday_consumer_app/screens/library/library_details_screen.dart';
 import 'package:saturday_consumer_app/screens/invitation/invitation_accept_screen.dart';
@@ -55,6 +56,7 @@ class RoutePaths {
   static const String addAlbumSearch = 'add/search';
   static const String addAlbumConfirm = 'add/confirm';
   static const String tagAssociation = 'album/:id/tag';
+  static const String hubTagAssociation = 'album/:id/tag/hub';
   static const String createLibrary = 'create';
   static const String libraryDetails = 'details';
   static const String deviceList = 'devices';
@@ -97,6 +99,7 @@ class RouteNames {
   static const String addAlbumSearch = 'add-album-search';
   static const String addAlbumConfirm = 'add-album-confirm';
   static const String tagAssociation = 'tag-association';
+  static const String hubTagAssociation = 'hub-tag-association';
   static const String createLibrary = 'create-library';
   static const String libraryDetails = 'library-details';
   static const String inviteAccept = 'invite-accept';
@@ -252,6 +255,16 @@ GoRouter createAppRouter(Ref ref) {
                 builder: (context, state) {
                   final albumId = state.pathParameters['id']!;
                   return TagAssociationScreen(libraryAlbumId: albumId);
+                },
+              ),
+              // Hub-based tag association (fullscreen)
+              GoRoute(
+                path: RoutePaths.hubTagAssociation,
+                name: RouteNames.hubTagAssociation,
+                parentNavigatorKey: rootNavigatorKey,
+                builder: (context, state) {
+                  final albumId = state.pathParameters['id']!;
+                  return HubTagAssociationScreen(libraryAlbumId: albumId);
                 },
               ),
               // Create library
