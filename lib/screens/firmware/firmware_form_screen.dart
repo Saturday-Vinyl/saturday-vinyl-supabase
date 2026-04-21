@@ -43,6 +43,9 @@ class _FirmwareFormScreenState extends ConsumerState<FirmwareFormScreen> {
   // Map of SoC type -> selected file
   final Map<String, File> _selectedFiles = {};
 
+  // Map of SoC type -> flash offset controller
+  final Map<String, TextEditingController> _flashOffsetControllers = {};
+
   // Existing files from firmware (for edit mode)
   List<FirmwareFile> _existingFiles = [];
 
@@ -67,6 +70,9 @@ class _FirmwareFormScreenState extends ConsumerState<FirmwareFormScreen> {
   void dispose() {
     _versionController.dispose();
     _releaseNotesController.dispose();
+    for (final controller in _flashOffsetControllers.values) {
+      controller.dispose();
+    }
     super.dispose();
   }
 
@@ -226,6 +232,31 @@ class _FirmwareFormScreenState extends ConsumerState<FirmwareFormScreen> {
     );
   }
 
+  TextEditingController _getFlashOffsetController(String socType) {
+    if (!_flashOffsetControllers.containsKey(socType)) {
+      // Initialize from existing file or default (0 for master)
+      final existingFile = _existingFiles
+          .where((f) => f.socType == socType)
+          .firstOrNull;
+      final defaultOffset = existingFile?.flashOffset ?? 0;
+      _flashOffsetControllers[socType] = TextEditingController(
+        text: defaultOffset > 0
+            ? '0x${defaultOffset.toRadixString(16).toUpperCase()}'
+            : '0x0',
+      );
+    }
+    return _flashOffsetControllers[socType]!;
+  }
+
+  int _parseFlashOffset(String text) {
+    final trimmed = text.trim();
+    if (trimmed.isEmpty) return 0;
+    if (trimmed.startsWith('0x') || trimmed.startsWith('0X')) {
+      return int.tryParse(trimmed.substring(2), radix: 16) ?? 0;
+    }
+    return int.tryParse(trimmed) ?? 0;
+  }
+
   Widget _buildSocFileCard(String socType) {
     final existingFile = _existingFiles
         .where((f) => f.socType == socType)
@@ -362,6 +393,28 @@ class _FirmwareFormScreenState extends ConsumerState<FirmwareFormScreen> {
                 ),
               ),
             ],
+
+            // Flash offset field (shown for non-master SoCs)
+            if (!isMaster) ...[
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _getFlashOffsetController(socType),
+                enabled: !_isSaving,
+                decoration: const InputDecoration(
+                  labelText: 'Flash Offset',
+                  hintText: 'e.g., 0x400000',
+                  helperText:
+                      'Offset in master SoC flash for staging partition',
+                  isDense: true,
+                ),
+                validator: (value) {
+                  if (value == null || value.trim().isEmpty) return null;
+                  final offset = _parseFlashOffset(value);
+                  if (offset < 0) return 'Invalid offset';
+                  return null;
+                },
+              ),
+            ],
           ],
         ),
       ),
@@ -414,11 +467,17 @@ class _FirmwareFormScreenState extends ConsumerState<FirmwareFormScreen> {
 
         // Upload any new files
         for (final entry in _selectedFiles.entries) {
+          final isMaster = _masterSoc == entry.key;
+          final flashOffset = isMaster
+              ? 0
+              : _parseFlashOffset(
+                  _getFlashOffsetController(entry.key).text);
           await management.addFirmwareFile(
             firmwareId: widget.firmware!.id,
             socType: entry.key,
-            isMaster: _masterSoc == entry.key,
+            isMaster: isMaster,
             file: entry.value,
+            flashOffset: flashOffset,
           );
         }
       } else {
@@ -436,10 +495,16 @@ class _FirmwareFormScreenState extends ConsumerState<FirmwareFormScreen> {
 
         // Prepare file uploads
         final fileUploads = _selectedFiles.entries.map((entry) {
+          final isMaster = _masterSoc == entry.key;
+          final flashOffset = isMaster
+              ? 0
+              : _parseFlashOffset(
+                  _getFlashOffsetController(entry.key).text);
           return FirmwareFileUpload(
             socType: entry.key,
-            isMaster: _masterSoc == entry.key,
+            isMaster: isMaster,
             file: entry.value,
+            flashOffset: flashOffset,
           );
         }).toList();
 

@@ -235,6 +235,7 @@ extension FirmwareManagementExtensions on FirmwareManagement {
     required bool isMaster,
     required File file,
     String? sha256,
+    int flashOffset = 0,
   }) async {
     try {
       AppLogger.info('Adding firmware file for $socType');
@@ -246,6 +247,7 @@ extension FirmwareManagementExtensions on FirmwareManagement {
         isMaster: isMaster,
         file: file,
         sha256: sha256,
+        flashOffset: flashOffset,
       );
 
       // Invalidate providers

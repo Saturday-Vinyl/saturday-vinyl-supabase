@@ -469,6 +469,7 @@ class FirmwareRepository {
           'file_url': fileUrl,
           'file_sha256': upload.sha256,
           'file_size': fileSize,
+          'flash_offset': upload.flashOffset,
         };
 
         final fileResponse = await supabase
@@ -496,6 +497,7 @@ class FirmwareRepository {
     required bool isMaster,
     required File file,
     String? sha256,
+    int flashOffset = 0,
   }) async {
     try {
       AppLogger.info('Adding firmware file for $socType to firmware $firmwareId');
@@ -524,6 +526,7 @@ class FirmwareRepository {
             'file_url': fileUrl,
             'file_sha256': sha256,
             'file_size': fileSize,
+            'flash_offset': flashOffset,
           })
           .select()
           .single();
@@ -691,11 +694,13 @@ class FirmwareFileUpload {
   final String socType;
   final bool isMaster;
   final String? sha256;
+  final int flashOffset;
 
   const FirmwareFileUpload({
     required this.file,
     required this.socType,
     this.isMaster = false,
     this.sha256,
+    this.flashOffset = 0,
   });
 }

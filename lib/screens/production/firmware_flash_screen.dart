@@ -2,16 +2,18 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:saturday_app/config/theme.dart';
 import 'package:saturday_app/models/device_type.dart';
+import 'package:saturday_app/models/firmware.dart';
 import 'package:saturday_app/models/product.dart';
 import 'package:saturday_app/models/product_variant.dart';
 import 'package:saturday_app/models/unit.dart';
 import 'package:saturday_app/providers/auth_provider.dart';
 import 'package:saturday_app/providers/device_type_provider.dart';
+import 'package:saturday_app/providers/firmware_provider.dart';
 import 'package:saturday_app/providers/product_provider.dart';
 import 'package:saturday_app/providers/unit_provider.dart';
-import 'package:saturday_app/services/file_launcher_service.dart';
 import 'package:saturday_app/utils/app_logger.dart';
 import 'package:saturday_app/widgets/firmware/firmware_selector.dart';
+import 'package:saturday_app/widgets/firmware/flash_progress_sheet.dart';
 
 /// Screen for flashing firmware to devices during production
 class FirmwareFlashScreen extends ConsumerStatefulWidget {
@@ -31,7 +33,6 @@ class FirmwareFlashScreen extends ConsumerStatefulWidget {
 
 class _FirmwareFlashScreenState extends ConsumerState<FirmwareFlashScreen> {
   final _notesController = TextEditingController();
-  final _fileLauncher = FileLauncherService();
 
   // Map of deviceTypeId -> selected firmware ID
   final Map<String, String?> _selectedFirmware = {};
@@ -41,6 +42,12 @@ class _FirmwareFlashScreenState extends ConsumerState<FirmwareFlashScreen> {
 
   // Map of deviceTypeId -> recommended firmware ID
   final Map<String, String?> _recommendedFirmware = {};
+
+  // Map of deviceTypeId -> Firmware with files (for multi-SoC support)
+  final Map<String, Firmware> _firmwareWithFiles = {};
+
+  // Map of deviceTypeId -> detected MAC address from flash
+  final Map<String, String?> _detectedMacAddresses = {};
 
   bool _isLoading = false;
 
@@ -60,15 +67,15 @@ class _FirmwareFlashScreenState extends ConsumerState<FirmwareFlashScreen> {
     try {
       final firmwareMap = await ref
           .read(unitRepositoryProvider)
-          .getFirmwareForUnit(widget.unit.id);
+          .getFirmwareWithFilesForUnit(widget.unit.id);
 
       if (mounted) {
         setState(() {
           for (final entry in firmwareMap.entries) {
             _recommendedFirmware[entry.key] = entry.value.id;
-            // Pre-select recommended firmware
             _selectedFirmware[entry.key] = entry.value.id;
             _flashedConfirmations[entry.key] = false;
+            _firmwareWithFiles[entry.key] = entry.value;
           }
         });
       }
@@ -85,48 +92,51 @@ class _FirmwareFlashScreenState extends ConsumerState<FirmwareFlashScreen> {
     }
   }
 
-  Future<void> _downloadAndLaunch(
-      DeviceType deviceType, String firmwareId) async {
-    try {
-      setState(() => _isLoading = true);
-
-      final repository = ref.read(unitRepositoryProvider);
-      final firmwareMap = await repository.getFirmwareForUnit(widget.unit.id);
-      final firmware = firmwareMap.values.firstWhere(
-        (f) => f.id == firmwareId,
-        orElse: () => throw Exception('Firmware not found'),
-      );
-
-      // Launch the firmware flashing tool
-      final result = await _fileLauncher.launchFirmwareFlashTool(
-        deviceType: deviceType,
-        firmware: firmware,
-      );
-
-      if (mounted) {
-        if (!result.success) {
+  Future<void> _flashFirmware(DeviceType deviceType, String firmwareId) async {
+    // Load the full firmware with files if not already cached
+    Firmware? firmware = _firmwareWithFiles[deviceType.id];
+    if (firmware == null || firmware.id != firmwareId) {
+      try {
+        setState(() => _isLoading = true);
+        final repo = ref.read(firmwareRepositoryProvider);
+        firmware = await repo.getFirmwareById(firmwareId);
+        if (firmware == null) {
+          throw Exception('Firmware not found');
+        }
+        _firmwareWithFiles[deviceType.id] = firmware;
+      } catch (e) {
+        AppLogger.error('Failed to load firmware', e);
+        if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text(result.errorMessage ?? 'Failed to launch tool'),
+              content: Text('Failed to load firmware: $e'),
               backgroundColor: SaturdayColors.error,
             ),
           );
         }
+        return;
+      } finally {
+        if (mounted) setState(() => _isLoading = false);
       }
-    } catch (e) {
-      AppLogger.error('Failed to download and launch firmware', e);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to launch flashing tool: $e'),
-            backgroundColor: SaturdayColors.error,
-          ),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
+    }
+
+    if (!mounted) return;
+
+    // Show flash progress sheet
+    final result = await FlashProgressSheet.show(
+      context: context,
+      deviceType: deviceType,
+      firmware: firmware,
+      firmwareRepository: ref.read(firmwareRepositoryProvider),
+    );
+
+    if (result != null && mounted) {
+      setState(() {
+        _flashedConfirmations[deviceType.id] = result.success;
+        if (result.macAddress != null) {
+          _detectedMacAddresses[deviceType.id] = result.macAddress;
+        }
+      });
     }
   }
 
@@ -158,7 +168,7 @@ class _FirmwareFlashScreenState extends ConsumerState<FirmwareFlashScreen> {
             deviceTypeId: deviceTypeId,
             firmwareVersionId: firmwareId,
             userId: userId,
-            installationMethod: 'manual', // Could be enhanced to detect esptool
+            installationMethod: 'esptool',
             notes: _notesController.text.trim().isEmpty
                 ? null
                 : _notesController.text.trim(),
@@ -368,7 +378,7 @@ class _FirmwareFlashScreenState extends ConsumerState<FirmwareFlashScreen> {
                   const SizedBox(width: 12),
                   Expanded(
                     child: Text(
-                      'Select firmware version for each device, download and flash the firmware, then confirm installation.',
+                      'Select firmware version for each device, flash via esptool, then confirm installation.',
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                             color: SaturdayColors.info,
                           ),
@@ -441,7 +451,7 @@ class _FirmwareFlashScreenState extends ConsumerState<FirmwareFlashScreen> {
           if (!_allFlashed)
             Center(
               child: Text(
-                'Please confirm all firmware installations before proceeding',
+                'Please flash all firmware before confirming',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: SaturdayColors.secondaryGrey,
                     ),
@@ -481,6 +491,8 @@ class _FirmwareFlashScreenState extends ConsumerState<FirmwareFlashScreen> {
     final selectedFirmwareId = _selectedFirmware[deviceType.id];
     final isFlashed = _flashedConfirmations[deviceType.id] ?? false;
     final recommendedId = _recommendedFirmware[deviceType.id];
+    final firmware = _firmwareWithFiles[deviceType.id];
+    final detectedMac = _detectedMacAddresses[deviceType.id];
 
     return Card(
       margin: const EdgeInsets.only(bottom: 16),
@@ -497,13 +509,27 @@ class _FirmwareFlashScreenState extends ConsumerState<FirmwareFlashScreen> {
                 ),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: Text(
-                    deviceType.name,
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.bold,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        deviceType.name,
+                        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.bold,
+                            ),
+                      ),
+                      if (deviceType.isMultiSoc)
+                        Text(
+                          'Multi-SoC: ${deviceType.effectiveSocTypes.map((s) => s.toUpperCase()).join(' + ')}',
+                          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                color: SaturdayColors.secondaryGrey,
+                              ),
                         ),
+                    ],
                   ),
                 ),
+                if (isFlashed)
+                  const Icon(Icons.check_circle, color: SaturdayColors.success),
               ],
             ),
             const SizedBox(height: 16),
@@ -518,42 +544,152 @@ class _FirmwareFlashScreenState extends ConsumerState<FirmwareFlashScreen> {
                   _selectedFirmware[deviceType.id] = firmwareId;
                   // Reset confirmation when firmware changes
                   _flashedConfirmations[deviceType.id] = false;
+                  _detectedMacAddresses.remove(deviceType.id);
                 });
               },
             ),
+
+            // SoC files breakdown for multi-SoC firmware
+            if (firmware != null && firmware.isMultiSoc) ...[
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: SaturdayColors.secondaryGrey.withValues(alpha: 0.05),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: SaturdayColors.secondaryGrey.withValues(alpha: 0.2),
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'SoC Binaries',
+                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                            color: SaturdayColors.secondaryGrey,
+                          ),
+                    ),
+                    const SizedBox(height: 8),
+                    ...firmware.files.map((file) => Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Row(
+                            children: [
+                              Icon(
+                                file.isMaster ? Icons.star : Icons.memory,
+                                size: 14,
+                                color: file.isMaster
+                                    ? Colors.orange
+                                    : SaturdayColors.secondaryGrey,
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                file.socType.toUpperCase(),
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w500,
+                                  fontSize: 13,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                file.isMaster ? 'Master' : 'Secondary',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: file.isMaster
+                                      ? Colors.orange
+                                      : SaturdayColors.secondaryGrey,
+                                ),
+                              ),
+                              const Spacer(),
+                              Text(
+                                '@ 0x${file.flashOffset.toRadixString(16).toUpperCase()}',
+                                style: const TextStyle(
+                                  fontFamily: 'monospace',
+                                  fontSize: 11,
+                                  color: SaturdayColors.secondaryGrey,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                file.formattedSize,
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                            ],
+                          ),
+                        )),
+                  ],
+                ),
+              ),
+            ],
             const SizedBox(height: 16),
 
-            // Download and launch button
+            // Flash button
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
                 onPressed: selectedFirmwareId != null && !_isLoading
-                    ? () => _downloadAndLaunch(deviceType, selectedFirmwareId)
+                    ? () => _flashFirmware(deviceType, selectedFirmwareId)
                     : null,
-                icon: const Icon(Icons.download),
-                label: const Text('Download & Launch Flashing Tool'),
+                icon: const Icon(Icons.flash_on),
+                label: Text(isFlashed ? 'Re-flash Firmware' : 'Flash Firmware'),
                 style: ElevatedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 12),
+                  backgroundColor: isFlashed ? null : SaturdayColors.primaryDark,
+                  foregroundColor: isFlashed ? null : Colors.white,
                 ),
               ),
             ),
-            const SizedBox(height: 12),
 
-            // Confirmation checkbox
-            CheckboxListTile(
-              value: isFlashed,
-              onChanged: selectedFirmwareId != null
-                  ? (value) {
-                      setState(() {
-                        _flashedConfirmations[deviceType.id] = value ?? false;
-                      });
-                    }
-                  : null,
-              title: const Text('Firmware flashed successfully'),
-              controlAffinity: ListTileControlAffinity.leading,
-              contentPadding: EdgeInsets.zero,
-              activeColor: SaturdayColors.success,
-            ),
+            // Flash result info
+            if (isFlashed) ...[
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  const Icon(Icons.check_circle,
+                      size: 16, color: SaturdayColors.success),
+                  const SizedBox(width: 8),
+                  const Text(
+                    'Flashed successfully',
+                    style: TextStyle(
+                      color: SaturdayColors.success,
+                      fontWeight: FontWeight.w500,
+                      fontSize: 13,
+                    ),
+                  ),
+                  if (detectedMac != null) ...[
+                    const Spacer(),
+                    Text(
+                      'MAC: $detectedMac',
+                      style: const TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 12,
+                        color: SaturdayColors.secondaryGrey,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ],
+
+            // Manual override checkbox (if flash sheet was dismissed)
+            if (!isFlashed) ...[
+              const SizedBox(height: 8),
+              CheckboxListTile(
+                value: false,
+                onChanged: selectedFirmwareId != null
+                    ? (value) {
+                        setState(() {
+                          _flashedConfirmations[deviceType.id] = value ?? false;
+                        });
+                      }
+                    : null,
+                title: const Text('Manually confirm flash (skip esptool)'),
+                controlAffinity: ListTileControlAffinity.leading,
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                visualDensity: VisualDensity.compact,
+              ),
+            ],
           ],
         ),
       ),

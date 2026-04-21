@@ -23,6 +23,11 @@ class FirmwareFile extends Equatable {
   /// File size in bytes
   final int? fileSize;
 
+  /// Flash memory offset for esptool write_flash
+  /// Master SoC: 0 (default)
+  /// Secondary SoCs: offset of the staging partition (e.g., 0x400000 for h2_fw)
+  final int flashOffset;
+
   final DateTime createdAt;
 
   const FirmwareFile({
@@ -33,6 +38,7 @@ class FirmwareFile extends Equatable {
     required this.fileUrl,
     this.fileSha256,
     this.fileSize,
+    this.flashOffset = 0,
     required this.createdAt,
   });
 
@@ -59,6 +65,7 @@ class FirmwareFile extends Equatable {
       fileUrl: json['file_url'] as String,
       fileSha256: json['file_sha256'] as String?,
       fileSize: json['file_size'] as int?,
+      flashOffset: json['flash_offset'] as int? ?? 0,
       createdAt: DateTime.parse(json['created_at'] as String),
     );
   }
@@ -72,6 +79,7 @@ class FirmwareFile extends Equatable {
       'file_url': fileUrl,
       'file_sha256': fileSha256,
       'file_size': fileSize,
+      'flash_offset': flashOffset,
       'created_at': createdAt.toIso8601String(),
     };
   }
@@ -84,6 +92,7 @@ class FirmwareFile extends Equatable {
       'file_url': fileUrl,
       'file_sha256': fileSha256,
       'file_size': fileSize,
+      'flash_offset': flashOffset,
     };
   }
 
@@ -96,6 +105,7 @@ class FirmwareFile extends Equatable {
         fileUrl,
         fileSha256,
         fileSize,
+        flashOffset,
         createdAt,
       ];
 

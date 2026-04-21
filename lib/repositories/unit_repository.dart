@@ -1,3 +1,4 @@
+import 'package:saturday_app/models/firmware.dart';
 import 'package:saturday_app/models/firmware_version.dart';
 import 'package:saturday_app/models/production_step.dart';
 import 'package:saturday_app/models/thread_credentials.dart';
@@ -800,6 +801,65 @@ class UnitRepository {
       return firmwareMap;
     } catch (error, stackTrace) {
       AppLogger.error('Failed to get firmware for unit', error, stackTrace);
+      rethrow;
+    }
+  }
+
+  /// Get firmware with files for a unit (multi-SoC support)
+  ///
+  /// Returns a map of deviceTypeId -> Firmware (with firmware_files loaded).
+  /// This is used by the firmware flash screen to get per-SoC binary info.
+  Future<Map<String, Firmware>> getFirmwareWithFilesForUnit(String unitId) async {
+    try {
+      AppLogger.info('Getting firmware with files for unit: $unitId');
+
+      final unit = await getUnitById(unitId);
+
+      if (unit.productId == null) {
+        AppLogger.info('Unit $unitId has no product assigned');
+        return {};
+      }
+
+      // Get device types for this product
+      final deviceTypesResponse = await _supabase
+          .from('product_device_types')
+          .select('device_type_id, quantity')
+          .eq('product_id', unit.productId!);
+
+      final deviceTypeIds = (deviceTypesResponse as List)
+          .map((row) => row['device_type_id'] as String)
+          .toList();
+
+      if (deviceTypeIds.isEmpty) {
+        AppLogger.info('No device types found for unit $unitId');
+        return {};
+      }
+
+      // Get latest production-ready firmware with files for each device type
+      final firmwareMap = <String, Firmware>{};
+
+      for (final deviceTypeId in deviceTypeIds) {
+        final firmwareResponse = await _supabase
+            .from('firmware')
+            .select('''
+              *,
+              firmware_files (*)
+            ''')
+            .eq('device_type_id', deviceTypeId)
+            .eq('is_production_ready', true)
+            .order('created_at', ascending: false)
+            .limit(1);
+
+        if (firmwareResponse.isNotEmpty) {
+          final firmware = Firmware.fromJson(firmwareResponse.first);
+          firmwareMap[deviceTypeId] = firmware;
+        }
+      }
+
+      AppLogger.info('Found firmware with files for ${firmwareMap.length} device types');
+      return firmwareMap;
+    } catch (error, stackTrace) {
+      AppLogger.error('Failed to get firmware with files for unit', error, stackTrace);
       rethrow;
     }
   }
