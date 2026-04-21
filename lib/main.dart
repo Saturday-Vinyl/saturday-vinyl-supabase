@@ -8,6 +8,7 @@ import 'package:saturday_app/providers/rfid_settings_provider.dart';
 import 'package:saturday_app/screens/auth/login_screen.dart';
 import 'package:saturday_app/screens/main_scaffold.dart';
 import 'package:saturday_app/services/auth_service.dart';
+import 'package:saturday_app/services/deep_link_service.dart';
 import 'package:saturday_app/services/shopify_service.dart';
 import 'package:saturday_app/services/supabase_service.dart';
 import 'package:saturday_app/utils/app_logger.dart';
@@ -32,6 +33,9 @@ void main() async {
 
     // Initialize Shopify Service
     ShopifyService().initialize();
+
+    // Initialize deep link handling (saturday:// URI scheme)
+    await DeepLinkService.instance.initialize();
 
     // Initialize SharedPreferences for RFID settings
     final sharedPreferences = await SharedPreferences.getInstance();

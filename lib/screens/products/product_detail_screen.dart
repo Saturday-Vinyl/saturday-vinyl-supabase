@@ -5,6 +5,10 @@ import 'package:saturday_app/models/product.dart';
 import 'package:saturday_app/providers/auth_provider.dart';
 import 'package:saturday_app/providers/device_type_provider.dart';
 import 'package:saturday_app/providers/product_provider.dart';
+import 'package:saturday_app/providers/bom_provider.dart';
+import 'package:saturday_app/providers/inventory_provider.dart';
+import 'package:saturday_app/providers/parts_provider.dart';
+import 'package:saturday_app/providers/supplier_parts_provider.dart';
 import 'package:saturday_app/providers/production_step_provider.dart';
 import 'package:saturday_app/screens/products/production_steps_config_screen.dart';
 import 'package:saturday_app/utils/extensions.dart';
@@ -322,6 +326,11 @@ class ProductDetailScreen extends ConsumerWidget {
 
                 const Divider(height: 1),
 
+                // BOM section
+                _BomSection(productId: productId),
+
+                const Divider(height: 1),
+
                 // Variants section
                 Padding(
                   padding: const EdgeInsets.all(24),
@@ -516,6 +525,356 @@ class ProductDetailScreen extends ConsumerWidget {
       builder: (context) => DeviceTypeAssignmentDialog(
         productId: product.id,
         productName: product.name,
+      ),
+    );
+  }
+}
+
+/// BOM section widget for product detail
+class _BomSection extends ConsumerWidget {
+  final String productId;
+  const _BomSection({required this.productId});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final bomAsync = ref.watch(productBomProvider(productId));
+    final allPartsAsync = ref.watch(partsListProvider);
+    final levelsAsync = ref.watch(allInventoryLevelsProvider);
+    final stepsAsync = ref.watch(productionStepsProvider(productId));
+    final costsAsync = ref.watch(allPreferredCostsProvider);
+
+    return Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                'Bill of Materials',
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+              ),
+              Row(
+                children: [
+                  TextButton.icon(
+                    onPressed: () => _checkAvailability(context, ref),
+                    icon: const Icon(Icons.check_circle_outline, size: 18),
+                    label: const Text('Check Availability'),
+                  ),
+                  TextButton.icon(
+                    onPressed: () => _addBomLine(context, ref),
+                    icon: const Icon(Icons.add, size: 18),
+                    label: const Text('Add Part'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          bomAsync.when(
+            data: (bomLines) {
+              if (bomLines.isEmpty) {
+                return Text(
+                  'No parts in BOM. Add parts to define what\'s needed to build this product.',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: SaturdayColors.secondaryGrey,
+                      ),
+                );
+              }
+
+              final allParts = allPartsAsync.valueOrNull ?? [];
+              final levels = levelsAsync.valueOrNull ?? {};
+              final steps = stepsAsync.valueOrNull ?? [];
+              final costs = costsAsync.valueOrNull ?? {};
+
+              // Calculate total BOM cost
+              double? totalBomCost;
+              bool allHaveCosts = bomLines.isNotEmpty;
+              for (final line in bomLines) {
+                final unitCost = costs[line.partId];
+                if (unitCost != null) {
+                  totalBomCost =
+                      (totalBomCost ?? 0) + (unitCost * line.quantity);
+                } else {
+                  allHaveCosts = false;
+                }
+              }
+
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (totalBomCost != null)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: SaturdayColors.success.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.attach_money,
+                                size: 18, color: SaturdayColors.success),
+                            const SizedBox(width: 4),
+                            Text(
+                              'Estimated BOM cost: ${allHaveCosts ? '' : '~'}\$${totalBomCost.toStringAsFixed(2)} per unit',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                                color: SaturdayColors.success,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ...bomLines.map((line) {
+                  final part = allParts.where((p) => p.id == line.partId).firstOrNull;
+                  final step = line.productionStepId != null
+                      ? steps.where((s) => s.id == line.productionStepId).firstOrNull
+                      : null;
+                  final stock = levels[line.partId] ?? 0.0;
+                  final needed = line.quantity;
+                  final lineCost = costs[line.partId];
+                  final lineTotal =
+                      lineCost != null ? lineCost * line.quantity : null;
+
+                  return Card(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    child: ListTile(
+                      leading: Icon(
+                        stock >= needed ? Icons.check_circle : Icons.warning,
+                        color: stock >= needed
+                            ? SaturdayColors.success
+                            : Colors.orange,
+                        size: 20,
+                      ),
+                      title: Text(part?.name ?? 'Unknown Part'),
+                      subtitle: Text(
+                        '${line.quantity % 1 == 0 ? line.quantity.toInt() : line.quantity} ${part?.unitOfMeasure.displayName ?? ''}'
+                        '${lineTotal != null ? ' • \$${lineTotal.toStringAsFixed(2)}' : ''}'
+                        '${step != null ? ' • Step: ${step.name}' : ''}'
+                        '${line.notes != null && line.notes!.isNotEmpty ? ' • ${line.notes}' : ''}',
+                      ),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            '${stock % 1 == 0 ? stock.toInt() : stock.toStringAsFixed(1)} avail',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: stock >= needed
+                                  ? SaturdayColors.success
+                                  : Colors.orange,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          IconButton(
+                            icon: const Icon(Icons.delete_outline, size: 18),
+                            onPressed: () async {
+                              final confirmed = await showDialog<bool>(
+                                context: context,
+                                builder: (ctx) => AlertDialog(
+                                  title: const Text('Remove from BOM?'),
+                                  content: Text(
+                                      'Remove ${part?.name ?? 'this part'} from the BOM?'),
+                                  actions: [
+                                    TextButton(
+                                        onPressed: () => Navigator.pop(ctx, false),
+                                        child: const Text('Cancel')),
+                                    TextButton(
+                                      onPressed: () => Navigator.pop(ctx, true),
+                                      style: TextButton.styleFrom(
+                                          foregroundColor: SaturdayColors.error),
+                                      child: const Text('Remove'),
+                                    ),
+                                  ],
+                                ),
+                              );
+                              if (confirmed == true) {
+                                await ref.read(bomManagementProvider).deleteBomLine(
+                                      line.id,
+                                      productId: productId,
+                                    );
+                              }
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                }),
+                ],
+              );
+            },
+            loading: () => const LoadingIndicator(message: 'Loading BOM...'),
+            error: (error, stack) => Text(
+              'Failed to load BOM: $error',
+              style: const TextStyle(color: SaturdayColors.error),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _addBomLine(BuildContext context, WidgetRef ref) {
+    final allPartsAsync = ref.read(partsListProvider);
+    final stepsAsync = ref.read(productionStepsProvider(productId));
+    final allParts = allPartsAsync.valueOrNull ?? [];
+    final steps = stepsAsync.valueOrNull ?? [];
+
+    if (allParts.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('Create parts first before adding to BOM'),
+            backgroundColor: SaturdayColors.warning),
+      );
+      return;
+    }
+
+    String? selectedPartId;
+    String? selectedStepId;
+    final qtyController = TextEditingController(text: '1');
+    final notesController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Add Part to BOM'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              DropdownButtonFormField<String>(
+                decoration: const InputDecoration(labelText: 'Part *'),
+                isExpanded: true,
+                items: allParts
+                    .map((p) => DropdownMenuItem(
+                        value: p.id,
+                        child: Text('${p.name} (${p.partNumber})')))
+                    .toList(),
+                onChanged: (v) => selectedPartId = v,
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: qtyController,
+                decoration: const InputDecoration(labelText: 'Quantity *'),
+                keyboardType: TextInputType.number,
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                decoration: const InputDecoration(
+                    labelText: 'Production Step (optional)'),
+                isExpanded: true,
+                items: [
+                  const DropdownMenuItem(value: null, child: Text('None (product-level)')),
+                  ...steps.map((s) =>
+                      DropdownMenuItem(value: s.id, child: Text(s.name))),
+                ],
+                onChanged: (v) => selectedStepId = v,
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: notesController,
+                decoration:
+                    const InputDecoration(labelText: 'Notes (optional)'),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () async {
+              if (selectedPartId == null || qtyController.text.isEmpty) return;
+              final qty = double.tryParse(qtyController.text);
+              if (qty == null || qty <= 0) return;
+
+              try {
+                await ref.read(bomManagementProvider).createBomLine(
+                      productId: productId,
+                      partId: selectedPartId!,
+                      productionStepId: selectedStepId,
+                      quantity: qty,
+                      notes: notesController.text.isNotEmpty
+                          ? notesController.text
+                          : null,
+                    );
+                if (context.mounted) Navigator.pop(context);
+              } catch (e) {
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                        content: Text('Error: $e'),
+                        backgroundColor: SaturdayColors.error),
+                  );
+                }
+              }
+            },
+            child: const Text('Add'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _checkAvailability(BuildContext context, WidgetRef ref) {
+    final bomAsync = ref.read(productBomProvider(productId));
+    final allPartsAsync = ref.read(partsListProvider);
+    final levelsAsync = ref.read(allInventoryLevelsProvider);
+
+    final bomLines = bomAsync.valueOrNull ?? [];
+    final allParts = allPartsAsync.valueOrNull ?? [];
+    final levels = levelsAsync.valueOrNull ?? {};
+
+    if (bomLines.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('BOM is empty')),
+      );
+      return;
+    }
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('BOM Availability Check'),
+        content: SizedBox(
+          width: 400,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: bomLines.map((line) {
+              final part =
+                  allParts.where((p) => p.id == line.partId).firstOrNull;
+              final stock = levels[line.partId] ?? 0.0;
+              final sufficient = stock >= line.quantity;
+
+              return ListTile(
+                dense: true,
+                leading: Icon(
+                  sufficient ? Icons.check_circle : Icons.warning,
+                  color: sufficient ? SaturdayColors.success : Colors.orange,
+                  size: 18,
+                ),
+                title: Text(part?.name ?? 'Unknown'),
+                subtitle: Text(
+                    'Need: ${line.quantity % 1 == 0 ? line.quantity.toInt() : line.quantity}  •  Have: ${stock % 1 == 0 ? stock.toInt() : stock.toStringAsFixed(1)}'),
+              );
+            }).toList(),
+          ),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Close')),
+        ],
       ),
     );
   }

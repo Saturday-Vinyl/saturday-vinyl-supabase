@@ -51,6 +51,16 @@
 				<string>com.googleusercontent.apps.377986533099-5t64cg1sumr1qkag06mu7lq6ke2sjcho</string>
 			</array>
 		</dict>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>CFBundleURLName</key>
+			<string>saturday</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>saturday</string>
+			</array>
+		</dict>
 	</array>
 	<key>NSCameraUsageDescription</key>
 	<string>Saturday App needs camera access to scan QR codes and barcodes on production units.</string>

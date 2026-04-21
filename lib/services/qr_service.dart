@@ -16,6 +16,9 @@ enum QRCodeType {
 
   /// RFID tag QR code (URL: /tags/{epc})
   tag,
+
+  /// Parts inventory QR code (URI: saturday://part/{part_number})
+  part,
 }
 
 /// Service for generating and parsing QR codes for production units
@@ -86,10 +89,16 @@ class QRService {
     QRCodeType type = QRCodeType.unit,
   }) async {
     try {
-      final path = type == QRCodeType.unit
-          ? '${AppConstants.qrCodePathPrefix}$identifier'
-          : '${AppConstants.qrCodeTagPathPrefix}$identifier';
-      final qrData = '${EnvConfig.appBaseUrl}$path';
+      final String qrData;
+      if (type == QRCodeType.part) {
+        // Parts use a custom URI scheme
+        qrData = 'saturday://part/$identifier';
+      } else {
+        final path = type == QRCodeType.unit
+            ? '${AppConstants.qrCodePathPrefix}$identifier'
+            : '${AppConstants.qrCodeTagPathPrefix}$identifier';
+        qrData = '${EnvConfig.appBaseUrl}$path';
+      }
       AppLogger.info('Generating QR code for: $qrData');
 
       // Load logo image if embedding is enabled

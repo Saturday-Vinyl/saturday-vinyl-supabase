@@ -68,6 +68,9 @@ dependencies:
   flutter_svg: ^2.0.0
   cached_network_image: ^3.3.0
 
+  # Deep Linking
+  app_links: ^6.3.3
+
   # Utilities
   intl: ^0.18.0
   uuid: ^4.2.0

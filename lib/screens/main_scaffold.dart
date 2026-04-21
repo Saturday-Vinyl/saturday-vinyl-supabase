@@ -21,6 +21,9 @@ import 'package:saturday_app/screens/units/units_list_screen.dart';
 import 'package:saturday_app/screens/capabilities/capabilities_list_screen.dart';
 import 'package:saturday_app/screens/settings/settings_screen.dart';
 import 'package:saturday_app/screens/tags/tag_list_screen.dart';
+import 'package:saturday_app/providers/inventory_provider.dart';
+import 'package:saturday_app/screens/parts/parts_inventory_shell.dart';
+import 'package:saturday_app/screens/parts/mobile_parts_screen.dart';
 import 'package:saturday_app/screens/rolls/roll_list_screen.dart';
 import 'package:saturday_app/screens/users/user_management_screen.dart';
 import 'package:saturday_app/services/keyboard_listener_service.dart';
@@ -114,6 +117,13 @@ class _MainScaffoldState extends ConsumerState<MainScaffold> {
 
   /// Handle scanned data from USB scanner
   Future<void> _handleScannedData(String scannedData) async {
+    // On Parts & Inventory, forward to the parts barcode handler
+    if (_currentRoute == '/parts-inventory') {
+      AppLogger.info('On Parts & Inventory — forwarding to parts scan handler');
+      ref.read(usbBarcodeProvider.notifier).state = scannedData;
+      return;
+    }
+
     try {
       AppLogger.info('Processing scanned data: $scannedData');
       final uuid = await _qrScannerService.processScannedCode(scannedData);
@@ -202,6 +212,8 @@ class _MainScaffoldState extends ConsumerState<MainScaffold> {
         return const TagListScreen();
       case '/rolls':
         return const RollListScreen();
+      case '/parts-inventory':
+        return const PartsInventoryShell();
       case '/settings':
         return const SettingsScreen();
       default:
@@ -305,7 +317,10 @@ class _MainScaffoldState extends ConsumerState<MainScaffold> {
           // Tab 1: QR Scanner
           MobileQRScanTab(isActive: _mobileTabIndex == 1),
 
-          // Tab 2: Profile / Dashboard
+          // Tab 2: Parts & Inventory
+          const MobilePartsScreen(),
+
+          // Tab 3: Profile / Dashboard
           const DashboardScreen(),
         ],
       ),
@@ -315,16 +330,26 @@ class _MainScaffoldState extends ConsumerState<MainScaffold> {
         type: BottomNavigationBarType.fixed,
         selectedItemColor: SaturdayColors.primaryDark,
         unselectedItemColor: SaturdayColors.secondaryGrey,
-        items: const [
-          BottomNavigationBarItem(
+        items: [
+          const BottomNavigationBarItem(
             icon: Icon(Icons.inventory_2),
             label: 'Units',
           ),
-          BottomNavigationBarItem(
+          const BottomNavigationBarItem(
             icon: Icon(Icons.qr_code_scanner),
             label: 'Scan',
           ),
           BottomNavigationBarItem(
+            icon: Badge(
+              isLabelVisible:
+                  (ref.watch(lowStockCountProvider).valueOrNull ?? 0) > 0,
+              label: Text(
+                  '${ref.watch(lowStockCountProvider).valueOrNull ?? 0}'),
+              child: const Icon(Icons.widgets),
+            ),
+            label: 'Parts',
+          ),
+          const BottomNavigationBarItem(
             icon: Icon(Icons.person),
             label: 'Profile',
           ),

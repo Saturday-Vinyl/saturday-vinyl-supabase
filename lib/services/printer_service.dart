@@ -345,6 +345,93 @@ class PrinterService {
     }
   }
 
+  /// Generate a label for a parts inventory item.
+  ///
+  /// Creates a label with QR code (saturday://part/{part_number}),
+  /// part name, part number, and category. Sized for 1.25" x 1" labels
+  /// by default (wider than unit labels to fit text).
+  Future<Uint8List> generatePartLabel({
+    required String partName,
+    required String partNumber,
+    required String category,
+    required Uint8List qrImageData,
+    double labelWidth = 1.25,
+    double labelHeight = 1.0,
+  }) async {
+    try {
+      AppLogger.info('Generating part label for $partNumber');
+
+      final pdf = pw.Document();
+      final qrImage = pw.MemoryImage(qrImageData);
+
+      pdf.addPage(
+        pw.Page(
+          pageFormat: PdfPageFormat(
+              labelWidth * 72, labelHeight * 72,
+              marginAll: 0),
+          build: (pw.Context context) {
+            return pw.Padding(
+              padding: const pw.EdgeInsets.all(3),
+              child: pw.Row(
+                crossAxisAlignment: pw.CrossAxisAlignment.center,
+                children: [
+                  // QR code on the left
+                  pw.Image(
+                    qrImage,
+                    width: 48,
+                    height: 48,
+                    fit: pw.BoxFit.contain,
+                    dpi: 203,
+                  ),
+                  pw.SizedBox(width: 4),
+                  // Text on the right
+                  pw.Expanded(
+                    child: pw.Column(
+                      mainAxisAlignment: pw.MainAxisAlignment.center,
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        pw.Text(
+                          partName,
+                          style: pw.TextStyle(
+                            fontSize: 5,
+                            fontWeight: pw.FontWeight.bold,
+                          ),
+                          maxLines: 2,
+                          overflow: pw.TextOverflow.clip,
+                        ),
+                        pw.SizedBox(height: 2),
+                        pw.Text(
+                          partNumber,
+                          style: const pw.TextStyle(fontSize: 4),
+                          maxLines: 1,
+                        ),
+                        pw.SizedBox(height: 1),
+                        pw.Text(
+                          category,
+                          style: const pw.TextStyle(
+                            fontSize: 3.5,
+                            color: PdfColors.grey700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+      );
+
+      final bytes = await pdf.save();
+      AppLogger.info('Generated part label PDF (${bytes.length} bytes)');
+      return bytes;
+    } catch (e) {
+      AppLogger.error('Error generating part label', e);
+      rethrow;
+    }
+  }
+
   /// Print label to the default or selected printer
   ///
   /// Sends the label to the thermal printer. Shows a print dialog if no printer

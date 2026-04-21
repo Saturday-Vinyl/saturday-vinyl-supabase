@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:saturday_app/config/theme.dart';
 import 'package:saturday_app/providers/auth_provider.dart';
+import 'package:saturday_app/providers/inventory_provider.dart';
 import 'package:saturday_app/widgets/common/user_avatar.dart';
 
 class SidebarNav extends ConsumerWidget {
@@ -118,6 +119,13 @@ class SidebarNav extends ConsumerWidget {
                     route: '/rolls',
                     isSelected: currentRoute == '/rolls',
                   ),
+                  _buildNavItem(
+                    icon: Icons.widgets,
+                    label: 'Parts & Inventory',
+                    route: '/parts-inventory',
+                    isSelected: currentRoute == '/parts-inventory',
+                    badgeCount: ref.watch(lowStockCountProvider).valueOrNull ?? 0,
+                  ),
                   if (isAdmin) ...[
                     const Divider(
                       color: SaturdayColors.secondaryGrey,
@@ -222,6 +230,7 @@ class SidebarNav extends ConsumerWidget {
     required String route,
     required bool isSelected,
     bool isAdminOnly = false,
+    int badgeCount = 0,
   }) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
@@ -240,10 +249,15 @@ class SidebarNav extends ConsumerWidget {
             ),
             child: Row(
               children: [
-                Icon(
-                  icon,
-                  size: 20,
-                  color: isSelected ? Colors.white : SaturdayColors.light,
+                Badge(
+                  isLabelVisible: badgeCount > 0,
+                  label: Text('$badgeCount',
+                      style: const TextStyle(fontSize: 9)),
+                  child: Icon(
+                    icon,
+                    size: 20,
+                    color: isSelected ? Colors.white : SaturdayColors.light,
+                  ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
