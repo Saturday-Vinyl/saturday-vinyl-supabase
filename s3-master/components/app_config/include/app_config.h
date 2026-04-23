@@ -20,8 +20,8 @@
  ******************************************************************************/
 #define FW_VERSION_MAJOR    0
 #define FW_VERSION_MINOR    5
-#define FW_VERSION_PATCH    1
-#define FW_VERSION_STRING   "0.5.1"          /* From firmware JSON schema */
+#define FW_VERSION_PATCH    2
+#define FW_VERSION_STRING   "0.5.2"          /* From firmware JSON schema */
 #define DEVICE_TYPE         "hub-prototype"  /* From firmware JSON schema */
 
 /*******************************************************************************
@@ -31,29 +31,33 @@
 /* Button (active low, internal pull-up) */
 #define PIN_BUTTON              0   /* GPIO0 - BOOT button */
 
-/* RFID Module Enable */
+/* RFID Module Enable
+ * PCB rev 1 routes EN to GPIO5 (matches design target) */
 #define PIN_RFID_EN             5   /* RFID module enable (active high) */
 
 /* H2 Co-processor Control */
 #define PIN_H2_EN               6   /* H2 enable/reset (active low) */
 #define PIN_H2_BOOT             7   /* H2 boot mode select */
 
-/* UART2: H2 Communication */
-#define PIN_H2_TX               15  /* S3 TX -> H2 RX */
-#define PIN_H2_RX               16  /* S3 RX <- H2 TX */
+/* UART2: H2 Communication
+ * TEMPORARY: PCB rev 1 routes TX to GPIO9, RX to GPIO10 (design target is TX=15, RX=16) */
+#define PIN_H2_TX               9   /* S3 TX -> H2 RX */
+#define PIN_H2_RX               10  /* S3 RX <- H2 TX */
 #define H2_UART_NUM             UART_NUM_2
 #define H2_UART_BAUD            115200
 
-/* UART1: RFID Module (YRM100) */
-#define PIN_RFID_TX             17  /* S3 TX -> YRM100 RX */
-#define PIN_RFID_RX             18  /* S3 RX <- YRM100 TX */
+/* UART1: RFID Module (YRM100)
+ * TEMPORARY: PCB rev 1 routes TX to GPIO11, RX to GPIO12 (design target is TX=17, RX=18) */
+#define PIN_RFID_TX             11  /* S3 TX -> YRM100 RXD (pin 3) */
+#define PIN_RFID_RX             12  /* S3 RX <- YRM100 TXD (pin 4) */
 #define RFID_UART_NUM           UART_NUM_1
 #define RFID_UART_BAUD          115200
 
 /* External WS2812B LED Strip
- * Note: GPIO38 was the onboard LED on DevKit v1.1; now using external strip on GPIO10. */
-#define PIN_LED_STRIP           10  /* External WS2812B LED strip data pin */
-#define LED_STRIP_LENGTH        26  /* Number of LEDs on external strip */
+ * TEMPORARY: PCB rev 1 uses GPIO10 for H2 UART, so LED strip moved to GPIO21.
+ * Design target is GPIO10. */
+#define PIN_LED_STRIP           21  /* External WS2812B LED strip data pin */
+#define LED_STRIP_LENGTH        24  /* Number of LEDs on external strip */
 
 /*******************************************************************************
  * RFID Configuration Defaults

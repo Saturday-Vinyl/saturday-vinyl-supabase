@@ -189,6 +189,27 @@ bool h2_flasher_firmware_available(void)
     return (magic[0] == 0xE9 || magic[0] == 0xE7);
 }
 
+esp_err_t h2_flasher_clear_staging(void)
+{
+    const esp_partition_t *partition = esp_partition_find_first(
+        ESP_PARTITION_TYPE_DATA, 0x40, H2_FW_PARTITION_LABEL);
+
+    if (partition == NULL) {
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    /* Only erase the first sector (4KB) to invalidate the magic bytes.
+     * Erasing the full 1MB partition at 0x400000 causes a crash. */
+    esp_err_t ret = esp_partition_erase_range(partition, 0, 4096);
+    if (ret == ESP_OK) {
+        ESP_LOGI(TAG, "H2 staging partition header erased");
+    } else {
+        ESP_LOGE(TAG, "Failed to erase H2 staging partition: %s", esp_err_to_name(ret));
+    }
+
+    return ret;
+}
+
 esp_err_t h2_flasher_get_firmware_size(size_t *size)
 {
     if (size == NULL) {
@@ -288,7 +309,8 @@ esp_err_t h2_flasher_flash(uint32_t timeout_ms)
         }
     }
 
-    /* Reset target to normal operation (uses library's port functions) */
+    /* Reset H2 to normal operation. With the 10kΩ pull-up on GPIO9,
+     * a hardware reset boots normally (SPI flash mode). */
     loader_port_reset_target();
 
     /* Deinit serial flasher port */
@@ -328,12 +350,32 @@ static esp_err_t flash_firmware(const esp_partition_t *partition, size_t fw_size
         return ret;
     }
 
-    /* For ESP32-H2, the binary typically starts at offset 0x10000 */
-    /* We need to flash: bootloader, partition table, and app */
-
-    /* Calculate actual firmware size from header if available */
-    /* For now, use a reasonable maximum or detect end of valid data */
+    /* The staging partition contains a merged binary (bootloader + partition table + app).
+     * Find the actual end of data by scanning backwards from the end of the partition
+     * for the last non-0xFF byte, since the binary has 0xFF gaps between segments. */
     size_t actual_size = fw_size;
+    {
+        const size_t SCAN_CHUNK = 4096;
+        uint8_t *scan_buf = malloc(SCAN_CHUNK);
+        if (scan_buf != NULL) {
+            size_t pos = fw_size;
+            while (pos > 0) {
+                size_t chunk = (pos > SCAN_CHUNK) ? SCAN_CHUNK : pos;
+                pos -= chunk;
+                esp_partition_read(partition, pos, scan_buf, chunk);
+                for (int i = chunk - 1; i >= 0; i--) {
+                    if (scan_buf[i] != 0xFF) {
+                        actual_size = pos + i + 1;
+                        /* Align up to 4KB boundary */
+                        actual_size = (actual_size + SCAN_CHUNK - 1) & ~(SCAN_CHUNK - 1);
+                        pos = 0; /* break outer loop */
+                        break;
+                    }
+                }
+            }
+            free(scan_buf);
+        }
+    }
 
     ESP_LOGI(TAG, "Flashing %zu bytes to H2", actual_size);
 
@@ -362,21 +404,9 @@ static esp_err_t flash_firmware(const esp_partition_t *partition, size_t fw_size
             return ret;
         }
 
-        /* Check for end of valid firmware (all 0xFF = erased) */
-        bool all_ff = true;
-        for (size_t i = 0; i < chunk_size; i++) {
-            if (buffer[i] != 0xFF) {
-                all_ff = false;
-                break;
-            }
-        }
-        if (all_ff) {
-            ESP_LOGI(TAG, "End of firmware data at offset %zu", offset);
-            break;
-        }
-
-        /* Determine flash address based on offset */
-        uint32_t flash_addr = H2_APP_OFFSET + offset;
+        /* Flash address matches offset directly — merged binary is laid out
+         * with bootloader at 0x0, partition table at 0x8000, app at 0x10000 */
+        uint32_t flash_addr = offset;
 
         /* Start flash at this address */
         esp_loader_error_t loader_err = esp_loader_flash_start(

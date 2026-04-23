@@ -157,6 +157,17 @@ esp_err_t h2_flasher_reset_normal(void);
 esp_err_t h2_flasher_get_status(h2_flasher_status_t *status);
 
 /**
+ * @brief Erase the H2 staging partition
+ *
+ * Clears the h2_fw partition so that h2_flasher_firmware_available() returns
+ * false. Call after a successful factory flash to prevent re-flashing on
+ * every boot.
+ *
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t h2_flasher_clear_staging(void);
+
+/**
  * @brief Verify H2 firmware after flashing
  *
  * Computes checksum of flash contents and compares with expected.

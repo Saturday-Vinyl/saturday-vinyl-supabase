@@ -10,7 +10,7 @@
 
 #define H2_FW_VERSION_MAJOR    0
 #define H2_FW_VERSION_MINOR    5
-#define H2_FW_VERSION_PATCH    0
-#define H2_FW_VERSION_STRING   "0.5.0"
+#define H2_FW_VERSION_PATCH    2
+#define H2_FW_VERSION_STRING   "0.5.2"
 
 #endif /* H2_VERSION_H */

@@ -1169,8 +1169,11 @@ void app_main(void)
                 ESP_LOGI(TAG, "Staging H2 firmware version: %s", staged_version.string);
             }
 
-            /* Flash the H2 */
+            /* Suspend watchdog during blocking flash (~28s) */
+            watchdog_set_task_enabled(WATCHDOG_TASK_MAIN, false);
             ret = h2_flasher_flash(60000);  /* 60 second timeout */
+            watchdog_set_task_enabled(WATCHDOG_TASK_MAIN, true);
+            watchdog_feed();
             if (ret == ESP_OK) {
                 ESP_LOGI(TAG, "H2 flash successful");
                 ota_manager_h2_update_complete(true);
@@ -1178,6 +1181,23 @@ void app_main(void)
                 ESP_LOGE(TAG, "H2 flash failed: %s", esp_err_to_name(ret));
                 ota_manager_h2_update_complete(false);
                 /* Try to reset H2 to normal mode anyway */
+                h2_flasher_reset_normal();
+            }
+        } else if (h2_flasher_firmware_available()) {
+            /* Factory flash: H2 binary was staged via esptool without NVS flag */
+            ESP_LOGW(TAG, "H2 firmware found in staging partition (factory flash?) - flashing H2...");
+            led_set_state(LED_COLOR_CYAN, LED_PATTERN_PULSE, 500);
+
+            /* Suspend watchdog during blocking flash (~28s) */
+            watchdog_set_task_enabled(WATCHDOG_TASK_MAIN, false);
+            ret = h2_flasher_flash(60000);
+            watchdog_set_task_enabled(WATCHDOG_TASK_MAIN, true);
+            watchdog_feed();
+            if (ret == ESP_OK) {
+                ESP_LOGI(TAG, "H2 factory flash successful");
+                h2_flasher_clear_staging();
+            } else {
+                ESP_LOGE(TAG, "H2 factory flash failed: %s", esp_err_to_name(ret));
                 h2_flasher_reset_normal();
             }
         }

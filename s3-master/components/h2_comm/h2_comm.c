@@ -118,6 +118,11 @@ static esp_err_t send_command_wait_response(uint8_t cmd_type, const void *payloa
 
 static esp_err_t gpio_init_h2_control(void)
 {
+    /* Pre-set output levels BEFORE gpio_config to avoid glitching EN/BOOT low
+     * during pin reconfiguration, which would reset the H2 into download mode */
+    gpio_set_level(H2_COMM_BOOT_PIN, 1); /* Normal boot mode */
+    gpio_set_level(H2_COMM_EN_PIN, 1);   /* H2 enabled */
+
     gpio_config_t io_conf = {
         .pin_bit_mask = (1ULL << H2_COMM_EN_PIN) | (1ULL << H2_COMM_BOOT_PIN),
         .mode = GPIO_MODE_OUTPUT,
@@ -131,10 +136,6 @@ static esp_err_t gpio_init_h2_control(void)
         ESP_LOGE(TAG, "Failed to configure H2 control GPIOs: %s", esp_err_to_name(ret));
         return ret;
     }
-
-    /* Set default states: H2 enabled, normal boot mode */
-    gpio_set_level(H2_COMM_EN_PIN, 1);   /* H2 enabled */
-    gpio_set_level(H2_COMM_BOOT_PIN, 1); /* Normal boot mode */
 
     return ESP_OK;
 }
@@ -332,7 +333,7 @@ esp_err_t h2_comm_reset(void)
     /* Reset parser state */
     s_parse_state = PARSE_STATE_HEADER;
 
-    /* Hardware reset */
+    /* Hardware reset — with 10kΩ pull-up on GPIO9, H2 boots normally */
     h2_hw_reset(false);
 
     /* Mark as disconnected until PING succeeds */

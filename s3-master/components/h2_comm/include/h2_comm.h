@@ -34,15 +34,16 @@ extern "C" {
  * Configuration
  ******************************************************************************/
 
-/** UART configuration for H2 communication */
-#define H2_COMM_UART_NUM            UART_NUM_2
-#define H2_COMM_UART_BAUD           115200
-#define H2_COMM_UART_TX_PIN         15  /* S3 TX -> H2 RX */
-#define H2_COMM_UART_RX_PIN         16  /* S3 RX <- H2 TX */
+/** UART configuration for H2 communication (uses app_config.h pin definitions) */
+#include "app_config.h"
+#define H2_COMM_UART_NUM            H2_UART_NUM
+#define H2_COMM_UART_BAUD           H2_UART_BAUD
+#define H2_COMM_UART_TX_PIN         PIN_H2_TX
+#define H2_COMM_UART_RX_PIN         PIN_H2_RX
 
-/** GPIO for H2 control */
-#define H2_COMM_EN_PIN              6   /* H2 enable/reset (active high) */
-#define H2_COMM_BOOT_PIN            7   /* H2 boot mode (high=normal, low=download) */
+/** GPIO for H2 control (uses app_config.h pin definitions) */
+#define H2_COMM_EN_PIN              PIN_H2_EN
+#define H2_COMM_BOOT_PIN            PIN_H2_BOOT
 
 /** Buffer and timeout settings */
 #define H2_COMM_RX_BUF_SIZE         2048
