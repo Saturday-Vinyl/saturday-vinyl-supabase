@@ -28,7 +28,11 @@ For projects with one SoC (e.g., a standalone ESP32-S3 or ESP32-C6):
 
 3. **Flash offset:** `0x0` (merged binaries always start at offset zero).
 
-4. **Upload to admin app:**
+4. **Upload to admin app — TWO binaries per release:**
+
+   The merged binary and the app-only binary serve different purposes and **both** must be uploaded for a release that supports both factory flashing and remote OTA.
+
+   **Factory flash binary** (used by the admin app to flash a fresh device over USB):
 
    | Field | Value |
    |-------|-------|
@@ -36,6 +40,19 @@ For projects with one SoC (e.g., a standalone ESP32-S3 or ESP32-C6):
    | SoC type | Match the chip (e.g., `esp32s3`, `esp32c6`, `esp32h2`) |
    | Is master | `true` (only one SoC) |
    | Flash offset | `0` |
+   | Purpose | Factory |
+
+   **OTA update binary** (URL sent to the device via the `ota_update` realtime command):
+
+   | Field | Value |
+   |-------|-------|
+   | Binary file | `build/<project-name>.bin` (app-only — **not** the merged file) |
+   | SoC type | Match the chip |
+   | Is master | `true` |
+   | Flash offset | `0` |
+   | Purpose | OTA |
+
+   > **Why two binaries:** the OTA partition on the device holds only the app slot — the bootloader does not change between OTA updates. If you upload the merged binary for OTA, `esp_https_ota` will parse the bootloader's header where it expects the app's, and validation fails with a misleading error like `Image requires efuse blk rev >= v292.95, but chip is v1.4`.
 
 ---
 
@@ -112,17 +129,29 @@ After build + merge, each SoC directory contains two binaries:
 
 ### Upload to Admin App
 
-**Master SoC binary:**
+**Master SoC needs TWO binary uploads per release** — one for factory flashing, one for OTA. They are not interchangeable.
+
+**Master SoC — factory flash binary:**
 - SoC type: `esp32s3` (or whichever chip the master uses)
 - Is master: `true`
 - Flash offset: `0`
-- Binary: the **merged** binary (`*-merged.bin`) for factory flashing
+- Binary: the **merged** binary (`*-merged.bin`) — used by the admin app to flash a fresh device over USB
+- Purpose: Factory
 
-**Secondary SoC binary:**
+**Master SoC — OTA binary:**
+- SoC type: same as factory entry
+- Is master: `true`
+- Flash offset: `0`
+- Binary: the **app-only** binary (`*.bin`, NOT the `*-merged.bin`) — URL sent to the device via the `ota_update` realtime command
+- Purpose: OTA
+
+> **Why two binaries:** the OTA partition on the device holds only the app slot — the bootloader does not change between OTA updates. If you upload the merged binary for OTA, `esp_https_ota` parses the bootloader's header where it expects the app's, and validation fails with a misleading error like `Image requires efuse blk rev >= v292.95, but chip is v1.4`.
+
+**Secondary SoC binary** (one upload — same binary for both factory and OTA):
 - SoC type: `esp32h2` (or whichever chip the secondary uses)
 - Is master: `false`
 - Flash offset: the master's staging partition offset (see below)
-- Binary: the **merged** binary (`*-merged.bin`) — the secondary is always flashed from scratch by the master, including bootloader and partition table
+- Binary: the **merged** binary (`*-merged.bin`) — the secondary is always flashed from scratch by the master, including bootloader and partition table. The OTA flow stages the same merged binary into the master's staging partition, then the master flashes it on next boot.
 
 ### Finding the Secondary Flash Offset
 
@@ -177,9 +206,11 @@ Subsequent OTA updates follow the same staging flow: the master downloads the ne
 
 | SoC Role | Binary | Upload as | Flash Offset | Used for |
 |----------|--------|-----------|-------------|----------|
-| Master (or single-SoC) | `*-merged.bin` | `is_master: true` | `0` | Factory flash |
-| Master OTA | `*.bin` (app only) | `is_master: true` | `0` | OTA update |
-| Secondary | `*-merged.bin` | `is_master: false` | From master's `partitions.csv` | Factory flash + OTA staging |
+| Master (or single-SoC) — factory | `*-merged.bin` | `is_master: true`, purpose: factory | `0` | Admin app USB-flashes a fresh device |
+| Master (or single-SoC) — OTA | `*.bin` (app only) | `is_master: true`, purpose: OTA | `0` | Device receives `ota_update` realtime command |
+| Secondary | `*-merged.bin` | `is_master: false` | From master's `partitions.csv` (e.g. `0x400000`) | Factory flash + OTA staging (one binary covers both) |
+
+> A release for a multi-SoC device therefore uploads **three** files: master-merged, master-app-only, and secondary-merged. A single-SoC release uploads **two**: merged and app-only.
 
 ---
 
@@ -257,9 +288,11 @@ git log $(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || git rev-list --ma
 #    the device, not someone reading the diff.
 
 # 7. Push tag and create GitHub release with binaries and notes
+#    Attach all three binaries: S3 merged (factory), S3 app-only (OTA), H2 merged.
 git push origin v0.6.0
 gh release create v0.6.0 \
   s3-master/build/sv-hub-s3-master-merged.bin \
+  s3-master/build/sv-hub-s3-master.bin \
   h2-thread-br/build/sv-hub-h2-thread-br-merged.bin \
   --title "v0.6.0" \
   --notes "$(cat <<'EOF'
@@ -273,9 +306,10 @@ gh release create v0.6.0 \
 EOF
 )"
 
-# 7. Upload binaries to the Saturday Admin App
-#    - S3 merged binary: is_master=true, offset=0
-#    - H2 merged binary: is_master=false, offset=0x400000
+# 8. Upload binaries to the Saturday Admin App (THREE files for multi-SoC):
+#    - S3 merged binary: is_master=true,  offset=0,         purpose=Factory
+#    - S3 app-only binary: is_master=true,  offset=0,         purpose=OTA
+#    - H2 merged binary:   is_master=false, offset=0x400000   (covers both factory + OTA)
 ```
 
 ### Version Bumping Rules
@@ -288,9 +322,8 @@ EOF
 
 ## Notes
 
-- Always use the **merged binary** (`*-merged.bin`) for factory flashing and secondary SoC staging
-- For master SoC OTA updates, the app-only binary (`*.bin`) is sufficient — the bootloader doesn't change
-- For secondary SoC updates (both factory and OTA), always use the merged binary — the master flashes bootloader + partition table + app to the secondary from scratch
-- The merged binary is NOT generated automatically by `idf.py build` — you must run `esptool.py merge_bin` as a separate step
-- The secondary flash offset is relative to the **master SoC's flash address space**, not the secondary's
-- The secondary SoC's own partition layout is irrelevant for the admin app upload — the master firmware handles the internal flashing
+- The master SoC requires **two uploads per release**: merged binary for factory flashing, app-only binary for OTA. They are not interchangeable — uploading the merged binary as the OTA file causes `esp_https_ota` to misparse the bootloader header as the app header and fail validation with errors like `Image requires efuse blk rev >= v292.95`.
+- For secondary SoC updates (both factory and OTA), always use the merged binary — the master flashes bootloader + partition table + app to the secondary from scratch.
+- The merged binary is NOT generated automatically by `idf.py build` — you must run `esptool.py merge_bin` as a separate step.
+- The secondary flash offset is relative to the **master SoC's flash address space**, not the secondary's.
+- The secondary SoC's own partition layout is irrelevant for the admin app upload — the master firmware handles the internal flashing.
