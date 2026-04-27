@@ -1466,7 +1466,13 @@ static void handle_command(const cJSON *payload)
         cJSON_DeleteItemFromObject(payload_copy, "command");
         char *payload_str = cJSON_PrintUnformatted(payload_copy);
         if (payload_str != NULL) {
+            size_t payload_len = strlen(payload_str);
+            if (payload_len >= sizeof(event.parameters)) {
+                ESP_LOGE(TAG, "Command params truncated: %zu bytes > %zu buf",
+                         payload_len, sizeof(event.parameters));
+            }
             strncpy(event.parameters, payload_str, sizeof(event.parameters) - 1);
+            event.parameters[sizeof(event.parameters) - 1] = '\0';
             free(payload_str);
         }
         cJSON_Delete(payload_copy);

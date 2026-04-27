@@ -77,7 +77,7 @@ typedef struct {
 typedef struct {
     char command_id[40];        /**< Command UUID */
     char command[32];           /**< Command name (e.g., "reboot", "factory_reset") */
-    char parameters[256];       /**< JSON parameters string */
+    char parameters[1024];      /**< JSON parameters string (sized for ota_update firmware URLs) */
 } realtime_command_event_t;
 
 /**

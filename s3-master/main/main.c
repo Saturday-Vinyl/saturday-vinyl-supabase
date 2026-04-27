@@ -14,6 +14,7 @@
 #include "nvs_flash.h"
 
 #include "esp_event.h"
+#include "esp_task_wdt.h"
 
 #include "app_config.h"
 #include "led_manager.h"
@@ -55,6 +56,12 @@ static bool s_h2_connected = false;
 /* Track OTA boot validation */
 static bool s_boot_validated = false;
 
+/* H2 flash state — visible to the WiFi event handler (which runs on sys_evt
+ * concurrently with the H2 flash blocking app_main) and to the cross-boot ack
+ * task (which must wait for the actual flash result before reporting). */
+static volatile bool s_h2_flash_active = false;
+static volatile bool s_h2_flash_succeeded = false;
+
 /* PROD-2.4: Error tracking for graceful degradation */
 static uint32_t s_h2_error_count = 0;
 static uint32_t s_wifi_error_count = 0;
@@ -77,6 +84,56 @@ static struct {
     uint8_t ext_addr[8];
     TickType_t last_tick;
 } s_nudge_cooldown[MAX_NUDGE_DEVICES];
+
+/* Pending OTA tracking — persists the realtime command_id across the OTA
+ * reboot so the new firmware can emit the terminal command_result heartbeat
+ * once it confirms the boot is good (or rolls back). */
+#define OTA_PENDING_NS      "sv_cmd"
+#define OTA_PENDING_KEY     "ota_pending"
+typedef struct {
+    char command_id[40];
+    char target_version[16];
+    char firmware_id[40];
+    bool h2_staged;
+} ota_pending_t;
+
+static esp_err_t ota_pending_save(const ota_pending_t *p)
+{
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(OTA_PENDING_NS, NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    err = nvs_set_blob(h, OTA_PENDING_KEY, p, sizeof(*p));
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    return err;
+}
+
+static esp_err_t ota_pending_load(ota_pending_t *p)
+{
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(OTA_PENDING_NS, NVS_READONLY, &h);
+    if (err != ESP_OK) return err;
+    size_t len = sizeof(*p);
+    err = nvs_get_blob(h, OTA_PENDING_KEY, p, &len);
+    nvs_close(h);
+    if (err == ESP_OK && len != sizeof(*p)) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+    return err;
+}
+
+static esp_err_t ota_pending_clear(void)
+{
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(OTA_PENDING_NS, NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    err = nvs_erase_key(h, OTA_PENDING_KEY);
+    if (err == ESP_OK || err == ESP_ERR_NVS_NOT_FOUND) {
+        nvs_commit(h);
+    }
+    nvs_close(h);
+    return err;
+}
 
 /**
  * @brief Now Playing event handler - LED feedback for tag place/remove
@@ -123,6 +180,61 @@ static void on_poll_complete(bool tag_detected, void *user_data)
     }
 }
 
+/* Cross-boot OTA ack runs in its own task — sending the command_result
+ * heartbeat triggers a TLS handshake (~8-12KB stack) which would overflow
+ * the system event loop's small stack if run inline. */
+static void ota_pending_ack_task(void *arg)
+{
+    (void)arg;
+    ota_pending_t pending;
+    if (ota_pending_load(&pending) != ESP_OK || pending.command_id[0] == '\0') {
+        vTaskDelete(NULL);
+        return;
+    }
+
+    /* If the H2 binary was staged this OTA, the boot trigger flashes it now.
+     * Wait for that to finish before reporting, so h2_updated reflects the
+     * actual flash outcome instead of just "we downloaded it". 90s cap covers
+     * the ~28s flash plus margin for slow connections. */
+    bool h2_actually_updated = false;
+    if (pending.h2_staged) {
+        const int max_wait_ms = 90000;
+        const int poll_ms = 500;
+        int waited = 0;
+        while (s_h2_flash_active && waited < max_wait_ms) {
+            vTaskDelay(pdMS_TO_TICKS(poll_ms));
+            waited += poll_ms;
+        }
+        if (s_h2_flash_active) {
+            ESP_LOGW(TAG, "H2 flash still active after %dms — reporting h2_updated=false", max_wait_ms);
+            h2_actually_updated = false;
+        } else {
+            h2_actually_updated = s_h2_flash_succeeded;
+        }
+    }
+
+    ota_boot_status_t bs = ota_manager_get_boot_status();
+    if (bs == OTA_BOOT_PENDING_VERIFY || s_boot_validated) {
+        char result[160];
+        snprintf(result, sizeof(result),
+            "{\"s3_updated\":true,\"h2_updated\":%s,\"target_version\":\"%s\"}",
+            h2_actually_updated ? "true" : "false", pending.target_version);
+        realtime_client_ack_command(pending.command_id, "completed", result);
+        ESP_LOGI(TAG, "Sent ota_update completed for cmd %s (h2_updated=%s)",
+                 pending.command_id, h2_actually_updated ? "true" : "false");
+    } else if (bs == OTA_BOOT_ROLLBACK) {
+        realtime_client_ack_command(pending.command_id, "failed",
+            "{\"error\":\"rollback\",\"message\":\"OTA rolled back to previous firmware\"}");
+        ESP_LOGW(TAG, "Sent ota_update failed (rollback) for cmd %s", pending.command_id);
+    } else {
+        realtime_client_ack_command(pending.command_id, "failed",
+            "{\"error\":\"interrupted\",\"message\":\"OTA interrupted before reboot\"}");
+        ESP_LOGW(TAG, "Sent ota_update failed (interrupted) for cmd %s", pending.command_id);
+    }
+    ota_pending_clear();
+    vTaskDelete(NULL);
+}
+
 /**
  * @brief WiFi manager event handler - LED feedback for connection state
  */
@@ -142,8 +254,10 @@ static void on_wifi_event(void *handler_args, esp_event_base_t base,
             }
             /* Notify event reporter of WiFi state */
             event_reporter_set_wifi_state(true);
-            /* Flash cyan to indicate WiFi connected, then return to green pulse */
-            if (!s_ble_prov_active && !s_service_mode_active) {
+            /* Flash cyan to indicate WiFi connected, then return to green pulse —
+             * but skip the LED override if the H2 flash is in progress, since
+             * that path owns the LED (cyan pulse) until the flash completes. */
+            if (!s_ble_prov_active && !s_service_mode_active && !s_h2_flash_active) {
                 led_flash(LED_COLOR_CYAN, 500);
                 vTaskDelay(pdMS_TO_TICKS(500));
                 led_set_state(LED_COLOR_GREEN, LED_PATTERN_PULSE, 3000);
@@ -155,6 +269,21 @@ static void on_wifi_event(void *handler_args, esp_event_base_t base,
                 esp_err_t ota_ret = ota_manager_validate_boot();
                 if (ota_ret == ESP_OK) {
                     s_boot_validated = true;
+                }
+            }
+
+            /* If a realtime ota_update command_id is pending in NVS, send the
+             * terminal command_result heartbeat now that the cloud is reachable.
+             * Spawned on a dedicated task — TLS handshake would overflow the
+             * sys_evt task's stack if run inline. */
+            {
+                static bool s_ota_ack_dispatched = false;
+                if (!s_ota_ack_dispatched) {
+                    s_ota_ack_dispatched = true;
+                    if (xTaskCreate(ota_pending_ack_task, "ota_ack", 8192, NULL, 5, NULL) != pdPASS) {
+                        ESP_LOGE(TAG, "Failed to spawn ota_pending_ack_task");
+                        s_ota_ack_dispatched = false;
+                    }
                 }
             }
             /* Release BLE stack memory after successful WiFi connection.
@@ -743,6 +872,185 @@ done:
     vTaskDelete(NULL);
 }
 
+/* Look up the H2 secondary firmware file for a given firmware_id.
+ * Returns ESP_OK with url_out populated, ESP_ERR_NOT_FOUND if no H2 row,
+ * or another error on transport/parse failure. */
+static esp_err_t lookup_h2_firmware_url(const char *firmware_id,
+                                        char *url_out, size_t url_out_len)
+{
+    if (firmware_id == NULL || url_out == NULL || url_out_len == 0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    /* The H2 secondary always uses the factory (merged) binary — the master
+     * stages it then flashes via esp-serial-flasher, which writes bootloader +
+     * partition table + app starting at flash offset 0. */
+    char path[256];
+    snprintf(path, sizeof(path),
+             "firmware_files?firmware_id=eq.%s&soc_type=eq.esp32h2&purpose=eq.factory&select=file_url",
+             firmware_id);
+
+    supabase_response_t response = {0};
+    esp_err_t err = supabase_get(path, &response, 10000);
+    if (err != ESP_OK) {
+        supabase_response_free(&response);
+        return err;
+    }
+    if (response.status_code != 200 || response.body == NULL) {
+        ESP_LOGW(TAG, "firmware_files GET status=%d", response.status_code);
+        supabase_response_free(&response);
+        return ESP_FAIL;
+    }
+
+    cJSON *root = cJSON_Parse(response.body);
+    supabase_response_free(&response);
+    if (root == NULL) {
+        return ESP_FAIL;
+    }
+
+    cJSON *item = cJSON_GetArrayItem(root, 0);
+    if (item == NULL) {
+        cJSON_Delete(root);
+        return ESP_ERR_NOT_FOUND;
+    }
+    cJSON *file_url = cJSON_GetObjectItem(item, "file_url");
+    if (!cJSON_IsString(file_url)) {
+        cJSON_Delete(root);
+        return ESP_ERR_NOT_FOUND;
+    }
+
+    strncpy(url_out, file_url->valuestring, url_out_len - 1);
+    url_out[url_out_len - 1] = '\0';
+    cJSON_Delete(root);
+    return ESP_OK;
+}
+
+static void ota_update_task(void *arg)
+{
+    realtime_command_event_t *event = (realtime_command_event_t *)arg;
+
+    /* event->parameters wraps the broadcast payload (minus id/command). The
+     * device_commands trigger embeds the parameters JSONB column directly, but
+     * because the admin app stores it as a stringified JSON value, the inner
+     * "parameters" field can arrive as either a nested object or a JSON-encoded
+     * string. Handle both, and also fall back to top-level if the wrapper is
+     * absent (legacy run_test shape). */
+    cJSON *params = cJSON_Parse(event->parameters);
+    if (params == NULL) {
+        ESP_LOGE(TAG, "ota_update params parse failed (len=%zu): %.200s",
+                 strlen(event->parameters), event->parameters);
+    }
+    cJSON *params_obj = NULL;
+    cJSON *params_inner = NULL;  /* second parse if the field was a string */
+    if (params != NULL) {
+        cJSON *p = cJSON_GetObjectItem(params, "parameters");
+        if (p != NULL) {
+            if (cJSON_IsObject(p)) {
+                params_obj = p;
+            } else if (cJSON_IsString(p)) {
+                params_inner = cJSON_Parse(p->valuestring);
+                if (params_inner != NULL && cJSON_IsObject(params_inner)) {
+                    params_obj = params_inner;
+                }
+            }
+        }
+        if (params_obj == NULL) {
+            params_obj = params;  /* legacy: fields at top level */
+        }
+    }
+
+    const char *firmware_url = NULL;
+    const char *target_version = NULL;
+    const char *firmware_id = NULL;
+    if (params_obj != NULL) {
+        cJSON *j = cJSON_GetObjectItem(params_obj, "firmware_url");
+        if (cJSON_IsString(j)) firmware_url = j->valuestring;
+        j = cJSON_GetObjectItem(params_obj, "target_version");
+        if (cJSON_IsString(j)) target_version = j->valuestring;
+        j = cJSON_GetObjectItem(params_obj, "firmware_id");
+        if (cJSON_IsString(j)) firmware_id = j->valuestring;
+    }
+
+    if (firmware_url == NULL) {
+        ESP_LOGE(TAG, "ota_update missing firmware_url");
+        realtime_client_ack_command(event->command_id, "failed",
+            "{\"error\":\"missing_params\",\"message\":\"firmware_url required\"}");
+        if (params_inner != NULL) cJSON_Delete(params_inner);
+        if (params != NULL) cJSON_Delete(params);
+        free(event);
+        vTaskDelete(NULL);
+        return;
+    }
+
+    /* Persist command_id so the new firmware can ack after boot validation.
+     * Save before doing any work — covers the rare power-cycle-mid-OTA case. */
+    ota_pending_t pending = {0};
+    strncpy(pending.command_id, event->command_id, sizeof(pending.command_id) - 1);
+    if (target_version) {
+        strncpy(pending.target_version, target_version, sizeof(pending.target_version) - 1);
+    }
+    if (firmware_id) {
+        strncpy(pending.firmware_id, firmware_id, sizeof(pending.firmware_id) - 1);
+    }
+    esp_err_t nvs_err = ota_pending_save(&pending);
+    if (nvs_err != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to persist ota_pending: %s", esp_err_to_name(nvs_err));
+        /* Continue anyway — terminal ack will be missed but OTA can still proceed. */
+    }
+
+    /* Stage H2 secondary if firmware_files has one. Non-fatal on failure. */
+    if (firmware_id != NULL) {
+        char h2_url[256];
+        esp_err_t h2_lookup = lookup_h2_firmware_url(firmware_id, h2_url, sizeof(h2_url));
+        if (h2_lookup == ESP_OK) {
+            ESP_LOGI(TAG, "Staging H2 secondary from %s", h2_url);
+            esp_err_t h2_err = ota_manager_update_h2(h2_url);
+            if (h2_err == ESP_OK) {
+                pending.h2_staged = true;
+                ota_pending_save(&pending);
+            } else {
+                ESP_LOGW(TAG, "H2 staging failed: %s — proceeding with S3 only",
+                         esp_err_to_name(h2_err));
+            }
+        } else if (h2_lookup == ESP_ERR_NOT_FOUND) {
+            ESP_LOGI(TAG, "No H2 secondary for firmware_id=%s — S3-only update", firmware_id);
+        } else {
+            ESP_LOGW(TAG, "H2 lookup failed: %s — proceeding with S3 only",
+                     esp_err_to_name(h2_lookup));
+        }
+    } else {
+        ESP_LOGW(TAG, "ota_update missing firmware_id — skipping H2 secondary lookup");
+    }
+
+    ESP_LOGI(TAG, "Starting S3 OTA from %s", firmware_url);
+    esp_err_t s3_err = ota_manager_update_s3(firmware_url);
+
+    if (s3_err == ESP_OK) {
+        ESP_LOGI(TAG, "S3 OTA succeeded — rebooting in 2s");
+        if (params_inner != NULL) cJSON_Delete(params_inner);
+        if (params != NULL) cJSON_Delete(params);
+        free(event);
+        ota_manager_reboot(2000);
+        /* Should not return — reboot pending. */
+        vTaskDelete(NULL);
+        return;
+    }
+
+    /* S3 failed — clear NVS, send failure result. */
+    ESP_LOGE(TAG, "S3 OTA failed: %s", esp_err_to_name(s3_err));
+    ota_pending_clear();
+
+    char err_msg[128];
+    snprintf(err_msg, sizeof(err_msg),
+             "{\"error\":\"ota_failed\",\"message\":\"%s\"}", esp_err_to_name(s3_err));
+    realtime_client_ack_command(event->command_id, "failed", err_msg);
+
+    if (params_inner != NULL) cJSON_Delete(params_inner);
+    if (params != NULL) cJSON_Delete(params);
+    free(event);
+    vTaskDelete(NULL);
+}
+
 /**
  * @brief Realtime client event handler - handles push notifications from cloud
  */
@@ -783,6 +1091,17 @@ static void on_realtime_event(void *handler_args, esp_event_base_t base,
                         ESP_LOGE(TAG, "Failed to create run_test task");
                         realtime_client_ack_command(event->command_id, "failed",
                             "{\"error\":\"task_failed\",\"message\":\"Could not create test task\"}");
+                        free(event_copy);
+                    }
+                }
+            } else if (strcmp(event->command, "ota_update") == 0) {
+                realtime_command_event_t *event_copy = malloc(sizeof(*event_copy));
+                if (event_copy != NULL) {
+                    memcpy(event_copy, event, sizeof(*event_copy));
+                    if (xTaskCreate(ota_update_task, "ota_update", 8192, event_copy, 5, NULL) != pdPASS) {
+                        ESP_LOGE(TAG, "Failed to create ota_update task");
+                        realtime_client_ack_command(event->command_id, "failed",
+                            "{\"error\":\"task_failed\",\"message\":\"Could not create OTA task\"}");
                         free(event_copy);
                     }
                 }
@@ -1159,46 +1478,74 @@ void app_main(void)
             ESP_LOGW(TAG, "Failed to register H2 flasher event handler: %s", esp_err_to_name(ret));
         }
 
+        /* Safety net: if the previous boot ended in any abnormal way (watchdog,
+         * panic/stack-overflow, brownout, etc.), the H2 flash is the most likely
+         * culprit since it's the longest blocking operation early in boot. Clear
+         * the pending flag and wipe staging so the device can reach a healthy
+         * idle state — the OTA can be re-triggered after the underlying bug
+         * is fixed. ESP_RST_POWERON and ESP_RST_SW (intentional reboot) are the
+         * only "trustworthy" reset reasons. */
+        esp_reset_reason_t rst = esp_reset_reason();
+        bool prev_boot_abnormal = (rst != ESP_RST_POWERON && rst != ESP_RST_SW);
+
         /* Check if H2 update is pending */
         if (ota_manager_h2_update_pending()) {
-            ESP_LOGW(TAG, "H2 firmware update pending - flashing H2...");
-            led_set_state(LED_COLOR_CYAN, LED_PATTERN_PULSE, 500);
-
-            ota_version_t staged_version;
-            if (ota_manager_get_staged_h2_version(&staged_version) == ESP_OK) {
-                ESP_LOGI(TAG, "Staging H2 firmware version: %s", staged_version.string);
-            }
-
-            /* Suspend watchdog during blocking flash (~28s) */
-            watchdog_set_task_enabled(WATCHDOG_TASK_MAIN, false);
-            ret = h2_flasher_flash(60000);  /* 60 second timeout */
-            watchdog_set_task_enabled(WATCHDOG_TASK_MAIN, true);
-            watchdog_feed();
-            if (ret == ESP_OK) {
-                ESP_LOGI(TAG, "H2 flash successful");
-                ota_manager_h2_update_complete(true);
-            } else {
-                ESP_LOGE(TAG, "H2 flash failed: %s", esp_err_to_name(ret));
+            if (prev_boot_abnormal) {
+                ESP_LOGE(TAG, "H2 update pending after abnormal reset (reason %d) — aborting to break loop", rst);
                 ota_manager_h2_update_complete(false);
-                /* Try to reset H2 to normal mode anyway */
-                h2_flasher_reset_normal();
+                h2_flasher_clear_staging();
+            } else {
+                ESP_LOGW(TAG, "H2 firmware update pending - flashing H2...");
+                led_set_state(LED_COLOR_CYAN, LED_PATTERN_PULSE, 500);
+
+                ota_version_t staged_version;
+                if (ota_manager_get_staged_h2_version(&staged_version) == ESP_OK) {
+                    ESP_LOGI(TAG, "Staging H2 firmware version: %s", staged_version.string);
+                }
+
+                /* Detach main from TWDT during the ~28s blocking flash.
+                 * watchdog_set_task_enabled() only stops feeding — the task
+                 * is still subscribed to esp_task_wdt, which fires at 30s. */
+                s_h2_flash_active = true;
+                esp_task_wdt_delete(NULL);
+                ret = h2_flasher_flash(60000);  /* 60 second timeout */
+                esp_task_wdt_add(NULL);
+                watchdog_feed();
+                s_h2_flash_succeeded = (ret == ESP_OK);
+                s_h2_flash_active = false;
+                if (ret == ESP_OK) {
+                    ESP_LOGI(TAG, "H2 flash successful");
+                    ota_manager_h2_update_complete(true);
+                } else {
+                    ESP_LOGE(TAG, "H2 flash failed: %s", esp_err_to_name(ret));
+                    ota_manager_h2_update_complete(false);
+                    /* Try to reset H2 to normal mode anyway */
+                    h2_flasher_reset_normal();
+                }
             }
         } else if (h2_flasher_firmware_available()) {
             /* Factory flash: H2 binary was staged via esptool without NVS flag */
-            ESP_LOGW(TAG, "H2 firmware found in staging partition (factory flash?) - flashing H2...");
-            led_set_state(LED_COLOR_CYAN, LED_PATTERN_PULSE, 500);
-
-            /* Suspend watchdog during blocking flash (~28s) */
-            watchdog_set_task_enabled(WATCHDOG_TASK_MAIN, false);
-            ret = h2_flasher_flash(60000);
-            watchdog_set_task_enabled(WATCHDOG_TASK_MAIN, true);
-            watchdog_feed();
-            if (ret == ESP_OK) {
-                ESP_LOGI(TAG, "H2 factory flash successful");
+            if (prev_boot_abnormal) {
+                ESP_LOGE(TAG, "H2 staging present after abnormal reset (reason %d) — clearing to break loop", rst);
                 h2_flasher_clear_staging();
             } else {
-                ESP_LOGE(TAG, "H2 factory flash failed: %s", esp_err_to_name(ret));
-                h2_flasher_reset_normal();
+                ESP_LOGW(TAG, "H2 firmware found in staging partition (factory flash?) - flashing H2...");
+                led_set_state(LED_COLOR_CYAN, LED_PATTERN_PULSE, 500);
+
+                s_h2_flash_active = true;
+                esp_task_wdt_delete(NULL);
+                ret = h2_flasher_flash(60000);
+                esp_task_wdt_add(NULL);
+                watchdog_feed();
+                s_h2_flash_succeeded = (ret == ESP_OK);
+                s_h2_flash_active = false;
+                if (ret == ESP_OK) {
+                    ESP_LOGI(TAG, "H2 factory flash successful");
+                    h2_flasher_clear_staging();
+                } else {
+                    ESP_LOGE(TAG, "H2 factory flash failed: %s", esp_err_to_name(ret));
+                    h2_flasher_reset_normal();
+                }
             }
         }
     }

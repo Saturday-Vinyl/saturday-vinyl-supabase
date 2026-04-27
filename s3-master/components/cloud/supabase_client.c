@@ -541,6 +541,83 @@ esp_err_t supabase_post(const char *table, const char *json_body,
     return err;
 }
 
+esp_err_t supabase_get(const char *path, supabase_response_t *response,
+                       uint32_t timeout_ms)
+{
+    if (path == NULL || response == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (!supabase_is_configured()) {
+        ESP_LOGE(TAG, "Supabase not configured");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    memset(response, 0, sizeof(supabase_response_t));
+
+    char url[MAX_URL_SIZE];
+    int url_len = snprintf(url, sizeof(url), "%s/rest/v1/%s",
+                           s_state.config.url, path);
+    if (url_len >= sizeof(url)) {
+        ESP_LOGE(TAG, "URL too long");
+        return ESP_ERR_INVALID_SIZE;
+    }
+
+    uint32_t per_attempt_timeout = (timeout_ms > 0) ? timeout_ms : RETRY_TIMEOUT_MS;
+
+    char auth_header[SUPABASE_ANON_KEY_MAX_LEN + 8];
+    snprintf(auth_header, sizeof(auth_header), "Bearer %s", s_state.config.anon_key);
+
+    response_buffer_t resp_buf = {
+        .buffer = malloc(MAX_RESPONSE_SIZE),
+        .buffer_size = MAX_RESPONSE_SIZE,
+        .data_len = 0,
+    };
+    if (resp_buf.buffer == NULL) {
+        return ESP_ERR_NO_MEM;
+    }
+    resp_buf.buffer[0] = '\0';
+
+    esp_http_client_config_t http_config = {
+        .url = url,
+        .event_handler = http_event_handler,
+        .user_data = &resp_buf,
+        .timeout_ms = per_attempt_timeout,
+        .cert_pem = supabase_ca_pem_start,
+        .buffer_size = 2048,
+        .buffer_size_tx = 1024,
+    };
+
+    esp_http_client_handle_t client = esp_http_client_init(&http_config);
+    if (client == NULL) {
+        free(resp_buf.buffer);
+        return ESP_FAIL;
+    }
+
+    esp_http_client_set_method(client, HTTP_METHOD_GET);
+    esp_http_client_set_header(client, "apikey", s_state.config.anon_key);
+    esp_http_client_set_header(client, "Authorization", auth_header);
+    esp_http_client_set_header(client, "Accept", "application/json");
+
+    int64_t start = esp_timer_get_time();
+    esp_err_t err = esp_http_client_perform(client);
+    response->request_time_ms = (esp_timer_get_time() - start) / 1000;
+
+    if (err == ESP_OK) {
+        response->status_code = esp_http_client_get_status_code(client);
+        response->body = resp_buf.buffer;
+        response->body_len = resp_buf.data_len;
+        ESP_LOGI(TAG, "GET %s: %d (%lldms)",
+                 path, response->status_code, response->request_time_ms);
+    } else {
+        ESP_LOGE(TAG, "GET %s failed: %s", path, esp_err_to_name(err));
+        free(resp_buf.buffer);
+    }
+
+    esp_http_client_cleanup(client);
+    return err;
+}
+
 void supabase_response_free(supabase_response_t *response)
 {
     if (response != NULL && response->body != NULL) {

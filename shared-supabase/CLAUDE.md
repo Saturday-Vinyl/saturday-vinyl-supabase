@@ -43,6 +43,7 @@ YYYYMMDDHHMMSS_{project}_description.sql
 | saturday-admin-app | `admin` |
 | saturday-mobile-app | `mobile` |
 | sv-hub-firmware | `firmware` |
+| saturday-apple-tv | `tv` |
 | cross-project | `shared` |
 
 Examples:

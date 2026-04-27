@@ -145,6 +145,21 @@ esp_err_t supabase_post(const char *table, const char *json_body,
                         supabase_response_t *response, uint32_t timeout_ms);
 
 /**
+ * @brief GET from a Supabase REST endpoint
+ *
+ * Performs an authenticated GET request. Path is appended to {base_url}/rest/v1/
+ * and may include a PostgREST query string (e.g. "firmware_files?firmware_id=eq.X").
+ * Adds apikey + Authorization headers.
+ *
+ * @param path PostgREST path with optional query (e.g. "firmware_files?id=eq.X")
+ * @param response Output response (caller must call supabase_response_free)
+ * @param timeout_ms Request timeout in ms (0 for default 10s)
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t supabase_get(const char *path, supabase_response_t *response,
+                       uint32_t timeout_ms);
+
+/**
  * @brief Free response body memory
  *
  * @param response Response to free
