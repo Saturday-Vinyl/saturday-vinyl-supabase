@@ -1,7 +1,7 @@
 # Saturday Device Command Protocol
 
-**Version:** 1.4.0
-**Last Updated:** 2026-02-23
+**Version:** 1.3.1
+**Last Updated:** 2026-03-09
 **Audience:** Saturday Admin App developers, Firmware engineers, Consumer App developers
 
 ---
@@ -21,16 +21,15 @@
    - [factory_reset](#factory_reset)
 6. [Heartbeat Protocol](#heartbeat-protocol)
 7. [Command Acknowledgement Protocol](#command-acknowledgement-protocol)
-8. [Mesh Command Relay](#mesh-command-relay)
-9. [Capability Model](#capability-model)
-10. [Firmware JSON Schema](#firmware-json-schema)
-11. [ESP-IDF Implementation Guide](#esp-idf-implementation-guide)
-12. [Attribute Schema Reference](#attribute-schema-reference)
-13. [Thread Network Diagnostics](#thread-network-diagnostics)
-14. [Error Codes](#error-codes)
-15. [Migration from Service Mode Protocol](#migration-from-service-mode-protocol)
-16. [Implementation Reference](#implementation-reference)
-17. [Version History](#version-history)
+8. [Capability Model](#capability-model)
+9. [Firmware JSON Schema](#firmware-json-schema)
+10. [ESP-IDF Implementation Guide](#esp-idf-implementation-guide)
+11. [Attribute Schema Reference](#attribute-schema-reference)
+12. [Thread Network Diagnostics](#thread-network-diagnostics)
+13. [Error Codes](#error-codes)
+14. [Migration from Service Mode Protocol](#migration-from-service-mode-protocol)
+15. [Implementation Reference](#implementation-reference)
+16. [Version History](#version-history)
 
 ---
 
@@ -588,6 +587,98 @@ On each INSERT, a trigger (`sync_heartbeat_to_device_and_unit`) automatically:
 1. Updates `devices.latest_telemetry` and `devices.last_seen_at` (matched by `mac_address`)
 2. Aggregates consumer-facing fields to typed columns on the `units` table (`battery_level`, `is_online`, `wifi_rssi`, `temperature_c`, `humidity_pct`, etc.) matched by `unit_id` → `units.serial_number`
 
+### Heartbeat POST Format
+
+Devices POST heartbeats to the Supabase PostgREST API:
+
+**Endpoint:** `POST /rest/v1/device_heartbeats`
+
+**Headers:**
+```
+Authorization: Bearer <supabase_anon_key>
+apikey: <supabase_anon_key>
+Content-Type: application/json
+Prefer: return=minimal
+```
+
+Two POST formats are supported. A BEFORE INSERT trigger (`populate_heartbeat_telemetry`) normalizes both into the same stored result — typed columns populated AND complete telemetry JSONB.
+
+**Format A — Telemetry-wrapped (recommended for relays and forward compatibility):**
+
+Routing fields as top-level keys, all sensor data in the `telemetry` JSONB key. This preserves fields that don't have dedicated table columns (e.g., `temperature_c`, `rfid_tag_count`, `battery_mv`).
+
+```json
+{
+  "mac_address": "AA:BB:CC:DD:EE:FF",
+  "unit_id": "SV-CRT-000001",
+  "device_type": "crate",
+  "firmware_version": "1.2.0",
+  "type": "status",
+  "relay_device_type": "hub",
+  "relay_instance_id": "SV-HUB-00001",
+  "telemetry": {
+    "uptime_sec": 1051,
+    "free_heap": 119116,
+    "min_free_heap": 114512,
+    "largest_free_block": 98304,
+    "battery_level": 16,
+    "battery_charging": true,
+    "thread_rssi": -71,
+    "temperature_c": 25.50,
+    "humidity_pct": 39.42,
+    "rfid_tag_count": 0
+  }
+}
+```
+
+The trigger extracts known fields (`battery_level`, `uptime_sec`, `free_heap`, etc.) from `telemetry` into their typed columns, and merges routing fields into the `telemetry` JSONB so it becomes a complete record.
+
+**Format B — Flat (for devices posting directly):**
+
+All fields at top level matching table column names. The trigger auto-builds the `telemetry` JSONB from columns. Note: fields without matching columns (e.g., `temperature_c`, `humidity_pct`) are silently dropped by PostgREST and will not be stored.
+
+```json
+{
+  "mac_address": "AA:BB:CC:DD:EE:FF",
+  "unit_id": "SV-CRT-000001",
+  "device_type": "crate",
+  "firmware_version": "1.2.0",
+  "type": "status",
+  "uptime_sec": 1051,
+  "free_heap": 119116,
+  "min_free_heap": 114512,
+  "largest_free_block": 98304,
+  "battery_level": 16,
+  "battery_charging": true,
+  "wifi_rssi": -55
+}
+```
+
+**Recommendation:** Use Format A when the device sends fields beyond the standard column set (e.g., `temperature_c`, `rfid_tag_count`). Format B is acceptable for devices that only send fields with matching table columns, but Format A is preferred for forward compatibility.
+
+**Typed Columns Available:**
+
+The following fields have dedicated typed columns on `device_heartbeats`. All other fields are only preserved in the `telemetry` JSONB.
+
+| Column | Type | Extracted from telemetry |
+|--------|------|--------------------------|
+| `mac_address` | varchar(17) | Routing (top-level only) |
+| `unit_id` | text | Routing (top-level only) |
+| `device_type` | text | Routing (top-level only) |
+| `firmware_version` | text | Yes |
+| `type` | text | Routing (top-level only) |
+| `command_id` | uuid | Routing (top-level only) |
+| `relay_device_type` | text | Routing (top-level only) |
+| `relay_instance_id` | text | Routing (top-level only) |
+| `battery_level` | integer | Yes |
+| `battery_charging` | boolean | Yes |
+| `wifi_rssi` | integer | Yes |
+| `thread_rssi` | integer | Yes |
+| `uptime_sec` | integer | Yes |
+| `free_heap` | integer | Yes |
+| `min_free_heap` | integer | Yes |
+| `largest_free_block` | integer | Yes |
+
 ### Relayed Heartbeats
 
 Some devices lack direct cloud connectivity (e.g., Thread-only devices without WiFi). These devices send heartbeats through a **relay** - another device or application that has cloud access.
@@ -686,7 +777,7 @@ All standard heartbeat fields should also be included.
 
 ### Result Heartbeat Format
 
-After command execution, send a result heartbeat. The command result fields (`status`, `result`, `error_message`) are included inside the `telemetry` JSONB column alongside standard telemetry metrics. The database trigger `update_command_on_ack()` extracts what it needs from this single column.
+After command execution, send a result heartbeat:
 
 ```json
 {
@@ -694,19 +785,19 @@ After command execution, send a result heartbeat. The command result fields (`st
   "unit_id": "SV-CRT-000001",
   "device_type": "crate",
   "firmware_version": "1.2.0",
+  "uptime_sec": 123460,
+  "free_heap": 245760,
+  "min_free_heap": 180224,
+  "largest_free_block": 114688,
   "type": "command_result",
   "command_id": "550e8400-e29b-41d4-a716-446655440000",
-  "telemetry": {
+  "heartbeat_data": {
     "status": "completed",
     "result": {
       "device_type": "crate",
       "firmware_version": "1.2.0",
       "mac_address": "AA:BB:CC:DD:EE:FF"
-    },
-    "uptime_sec": 123460,
-    "free_heap": 245760,
-    "min_free_heap": 180224,
-    "largest_free_block": 114688
+    }
   }
 }
 ```
@@ -719,15 +810,15 @@ After command execution, send a result heartbeat. The command result fields (`st
   "unit_id": "SV-CRT-000001",
   "device_type": "crate",
   "firmware_version": "1.2.0",
+  "uptime_sec": 123460,
+  "free_heap": 245760,
+  "min_free_heap": 180224,
+  "largest_free_block": 114688,
   "type": "command_result",
   "command_id": "550e8400-e29b-41d4-a716-446655440000",
-  "telemetry": {
+  "heartbeat_data": {
     "status": "failed",
-    "error_message": "WiFi connection timed out",
-    "uptime_sec": 123460,
-    "free_heap": 245760,
-    "min_free_heap": 180224,
-    "largest_free_block": 114688
+    "error_message": "WiFi connection timed out"
   }
 }
 ```
@@ -738,11 +829,9 @@ After command execution, send a result heartbeat. The command result fields (`st
 |-------|------|-------------|
 | `type` | string | Must be `"command_result"` |
 | `command_id` | uuid | The `id` field from the received command |
-| `telemetry.status` | string | `"completed"` or `"failed"` |
-| `telemetry.result` | object | Command result data (for successful commands) |
-| `telemetry.error_message` | string | Error description (for failed commands) |
-
-Note: The `telemetry` object contains **both** the command result fields and the standard telemetry metrics (uptime, heap, battery, etc.). The `type` and `command_id` fields are top-level columns on `device_heartbeats`, not nested inside `telemetry`.
+| `heartbeat_data.status` | string | `"completed"` or `"failed"` |
+| `heartbeat_data.result` | object | Command result data (for successful commands) |
+| `heartbeat_data.error_message` | string | Error description (for failed commands) |
 
 ### Database Status Updates
 
@@ -775,33 +864,21 @@ void send_command_ack(const char *command_id) {
 // Send command result
 void send_command_result(const char *command_id, bool success,
                          cJSON *result, const char *error_message) {
-    cJSON *heartbeat = cJSON_CreateObject();
-    cJSON_AddStringToObject(heartbeat, "mac_address", get_mac_address());
-    cJSON_AddStringToObject(heartbeat, "unit_id", get_unit_id());
-    cJSON_AddStringToObject(heartbeat, "device_type", DEVICE_TYPE);
-    cJSON_AddStringToObject(heartbeat, "firmware_version", FIRMWARE_VERSION);
+    cJSON *heartbeat = create_standard_heartbeat();
     cJSON_AddStringToObject(heartbeat, "type", "command_result");
     cJSON_AddStringToObject(heartbeat, "command_id", command_id);
 
-    // Build telemetry JSONB: command result fields + standard metrics
-    cJSON *telemetry = cJSON_CreateObject();
-    cJSON_AddStringToObject(telemetry, "status", success ? "completed" : "failed");
+    cJSON *data = cJSON_CreateObject();
+    cJSON_AddStringToObject(data, "status", success ? "completed" : "failed");
 
     if (success && result) {
-        cJSON_AddItemToObject(telemetry, "result", cJSON_Duplicate(result, true));
+        cJSON_AddItemToObject(data, "result", cJSON_Duplicate(result, true));
     }
     if (!success && error_message) {
-        cJSON_AddStringToObject(telemetry, "error_message", error_message);
+        cJSON_AddStringToObject(data, "error_message", error_message);
     }
 
-    // Include standard telemetry metrics alongside result
-    cJSON_AddNumberToObject(telemetry, "uptime_sec", esp_timer_get_time() / 1000000);
-    cJSON_AddNumberToObject(telemetry, "free_heap", esp_get_free_heap_size());
-    cJSON_AddNumberToObject(telemetry, "min_free_heap", esp_get_minimum_free_heap_size());
-    cJSON_AddNumberToObject(telemetry, "largest_free_block",
-        heap_caps_get_largest_free_block(MALLOC_CAP_8BIT));
-
-    cJSON_AddItemToObject(heartbeat, "telemetry", telemetry);
+    cJSON_AddItemToObject(heartbeat, "heartbeat_data", data);
 
     char *json_str = cJSON_PrintUnformatted(heartbeat);
     post_to_supabase("/rest/v1/device_heartbeats", json_str);
@@ -831,72 +908,6 @@ void handle_websocket_command(const char *json_str) {
     cJSON_Delete(cmd);
 }
 ```
-
----
-
-## Mesh Command Relay
-
-Thread mesh devices (Crates, Speakers, etc.) lack direct cloud connectivity — they communicate exclusively over 802.15.4 radio through a Hub acting as Thread Border Router. Commands targeting these devices are automatically routed through their Hub.
-
-### How It Works
-
-The admin app does **not** need special handling for mesh devices. The database trigger `broadcast_device_command()` handles routing automatically:
-
-```
-1. Admin App → INSERT into device_commands with target device's mac_address
-2. DB trigger checks devices.hub_mac_address for the target device
-3a. If hub_mac_address is set → broadcast to Hub's channel with target_mac field
-3b. If hub_mac_address is NULL → broadcast directly to device's channel (normal path)
-4. Hub receives command on its WebSocket channel
-5. Hub resolves target_mac → Thread extended address from identity cache
-6. Hub encodes command as CBOR and sends via UART → H2 → CoAP POST /cmd
-7. Mesh node processes command, sends ack/result telemetry back
-8. Telemetry flows: CoAP → H2 → UART → Hub → Supabase POST device_heartbeats
-```
-
-### Hub MAC Auto-Population
-
-The `devices.hub_mac_address` column is automatically populated from relayed heartbeats. When a Hub relays a heartbeat for a mesh device (with `relay_device_type: "hub"`), the `sync_heartbeat_to_device_and_unit()` trigger resolves the Hub's MAC from `relay_instance_id` and stores it in `devices.hub_mac_address`. No manual configuration is needed — as soon as a mesh device sends its first heartbeat through a Hub, the routing relationship is established.
-
-If a device sends a direct heartbeat (no relay fields), `hub_mac_address` is cleared — the device has direct cloud access and doesn't need relay routing.
-
-### WebSocket Payload for Relayed Commands
-
-When a command is routed through a Hub, the broadcast payload includes a `target_mac` field identifying the actual target device:
-
-```json
-{
-  "id": "550e8400-e29b-41d4-a716-446655440000",
-  "command": "get_dataset",
-  "capability": null,
-  "test_name": null,
-  "parameters": null,
-  "target_mac": "74:4D:BD:60:29:76"
-}
-```
-
-The Hub firmware:
-1. Detects the `target_mac` field (different from its own MAC)
-2. Looks up the Thread extended address for that MAC in its identity cache
-3. Encodes the command as CBOR: `{"id":"<uuid>","cmd":"<command>","params":{...}}`
-4. Sends via UART → H2 → CoAP POST to the mesh node
-
-### Command Acknowledgement for Relayed Commands
-
-Ack and result telemetry flows back as `device_heartbeats` rows with the **mesh device's** identity (`mac_address`, `unit_id`), not the Hub's. The `command_id` column links back to the original `device_commands` row. The `update_command_on_ack()` trigger updates command status as normal — no special handling for relayed commands.
-
-The Hub adds `relay_device_type: "hub"` and `relay_instance_id` to these heartbeats, same as for regular telemetry.
-
-### Hub-Initiated Re-registration
-
-When a Hub reboots, its in-memory identity cache (mapping Thread extended addresses to MAC/unit_id) is cleared. The Hub detects unidentified mesh devices when their telemetry arrives without a cached identity, and automatically sends a `register` command via H2 → CoAP to trigger re-registration. This is transparent to the admin app.
-
-### Admin App Requirements
-
-- **No special handling needed**: INSERT commands into `device_commands` with the target device's own `mac_address`, regardless of whether it connects directly or through a Hub
-- **Hub routing is automatic**: The `hub_mac_address` column is maintained by heartbeat triggers; the broadcast trigger uses it for routing
-- **Commands to offline devices**: If the Hub is offline or the mesh device has never sent a heartbeat (`hub_mac_address` is NULL), the command will be broadcast to a channel with no listener. The `device_commands` row remains in `pending` status
-- **Status tracking works normally**: Ack/result heartbeats reference `command_id`, and the `update_command_on_ack()` trigger updates `device_commands.status` the same way as for directly-connected devices
 
 ---
 
@@ -1703,8 +1714,7 @@ Key components:
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.4.0 | 2026-02-23 | Added Mesh Command Relay section: documents automatic routing of commands through Hubs to Thread mesh devices via `devices.hub_mac_address`; covers WebSocket `target_mac` field, hub MAC auto-population from relayed heartbeats, ack/result flow, and admin app integration (no special handling needed) |
-| 1.3.1 | 2026-02-22 | Fixed Command Acknowledgement Protocol: command result heartbeats use `telemetry` JSONB column (not `heartbeat_data`); `type` and `command_id` are top-level columns; `status`, `result`, and `error_message` go inside `telemetry` alongside standard metrics; updated ESP-IDF example to match |
+| 1.3.1 | 2026-03-09 | Added Heartbeat POST Format section documenting the two supported POST formats (telemetry-wrapped and flat) and the BEFORE INSERT trigger that normalizes both; listed typed columns available for extraction |
 | 1.3.0 | 2026-02-20 | Replaced `run_test` meta-command with flat capability commands (`connect`, `scan`, `get_dataset`, `register`, etc.); renamed `tests` → `commands` in schema references; `run_test` kept as deprecated alias; added `register` command for hub-initiated re-registration |
 | 1.2.7 | 2026-02-18 | Added Thread Network Diagnostics section with `get_dataset` test command and troubleshooting workflow for debugging Thread join failures |
 | 1.2.6 | 2026-02-06 | Clarified that `provision_data` stores only device response data (`_output` schemas), not input params; added validation requirement - provisioning must fail if required `factory_output` fields are missing |
