@@ -110,6 +110,10 @@ serve(async (req) => {
 
     console.log('Found devices:', devices)
 
+    // Step 1.5: Check for pending tag associations (hub-based tag identification)
+    const userIds = [...new Set(devices.map(d => d.user_id))]
+    await fulfillPendingAssociation(supabase, event.unit_id, event.epc, userIds)
+
     // Step 2: Resolve EPC to album info
     const albumInfo = await resolveEpcToAlbum(supabase, event.epc)
     console.log('Resolved album:', albumInfo)
@@ -405,6 +409,57 @@ async function sendPushNotifications(
   }
 
   return results
+}
+
+async function fulfillPendingAssociation(
+  supabase: ReturnType<typeof createClient>,
+  unitId: string,
+  epc: string,
+  userIds: string[]
+): Promise<void> {
+  if (userIds.length === 0) return
+
+  try {
+    // Find pending association requests for this hub from any of its owners
+    const { data: pending, error: findError } = await supabase
+      .from('pending_tag_associations')
+      .select('id, user_id')
+      .eq('unit_id', unitId)
+      .eq('status', 'pending')
+      .in('user_id', userIds)
+      .limit(1)
+      .maybeSingle()
+
+    if (findError) {
+      console.error('Error checking pending associations:', findError)
+      return
+    }
+
+    if (!pending) {
+      return
+    }
+
+    console.log('Fulfilling pending tag association:', pending.id, 'with EPC:', epc)
+
+    const { error: updateError } = await supabase
+      .from('pending_tag_associations')
+      .update({
+        status: 'fulfilled',
+        detected_epc: epc,
+        fulfilled_at: new Date().toISOString(),
+      })
+      .eq('id', pending.id)
+      .eq('status', 'pending')  // guard against race condition
+
+    if (updateError) {
+      console.error('Error fulfilling pending association:', updateError)
+    } else {
+      console.log('Pending tag association fulfilled:', pending.id)
+    }
+  } catch (error) {
+    // Don't let pending association failures block normal now-playing processing
+    console.error('Pending association check failed:', error)
+  }
 }
 
 async function sendFirebasePush(
