@@ -8,6 +8,7 @@ import 'package:saturday_consumer_app/models/library_album.dart';
 import 'package:saturday_consumer_app/providers/current_track_provider.dart';
 import 'package:saturday_consumer_app/providers/now_playing_provider.dart';
 import 'package:saturday_consumer_app/providers/app_lifecycle_provider.dart';
+import 'package:saturday_consumer_app/providers/playback_queue_provider.dart';
 import 'package:saturday_consumer_app/providers/playback_sync_provider.dart';
 import 'package:saturday_consumer_app/providers/realtime_now_playing_provider.dart';
 import 'package:saturday_consumer_app/widgets/common/loading_indicator.dart';
@@ -20,6 +21,7 @@ import 'package:saturday_consumer_app/widgets/now_playing/now_playing_empty_stat
 import 'package:saturday_consumer_app/widgets/now_playing/now_playing_info.dart';
 import 'package:saturday_consumer_app/widgets/now_playing/current_track_card.dart';
 import 'package:saturday_consumer_app/widgets/now_playing/now_playing_track_list.dart';
+import 'package:saturday_consumer_app/widgets/now_playing/queue_app_bar_button.dart';
 import 'package:saturday_consumer_app/widgets/now_playing/side_selector.dart';
 import 'package:saturday_consumer_app/widgets/now_playing/track_timing_banner.dart';
 import 'package:saturday_consumer_app/widgets/now_playing/track_timing_session.dart';
@@ -51,10 +53,16 @@ class NowPlayingScreen extends ConsumerWidget {
     // App lifecycle observer for foreground recovery
     ref.watch(appLifecycleProvider);
 
+    // Auto-advance the persisted queue on RFID detection: when the
+    // detected library_album_id matches an item in the queue, the
+    // lowest-position match is removed.
+    ref.watch(queueAutoAdvanceProvider);
+
     return Scaffold(
       appBar: const SaturdayAppBar(
         showLibrarySwitcher: true,
         showSearch: true,
+        actions: [QueueAppBarButton()],
       ),
       body: SafeArea(
         child: nowPlayingState.isPlaying
@@ -298,6 +306,13 @@ class NowPlayingScreen extends ConsumerWidget {
               },
             ),
           ),
+
+          Spacing.sectionGap,
+
+          // Up next (queue items with location/LED, or recommendations)
+          // surfaces the queue here so a user with nothing playing can see
+          // what they planned to listen to next and find those records.
+          const UpNextCarousel(),
 
           Spacing.sectionGap,
 

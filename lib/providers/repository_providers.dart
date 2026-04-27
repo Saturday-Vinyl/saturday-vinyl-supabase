@@ -16,6 +16,17 @@ final albumRepositoryProvider = Provider<AlbumRepository>((ref) {
   return AlbumRepository();
 });
 
+/// Provider for CratelistRepository.
+final cratelistRepositoryProvider = Provider<CratelistRepository>((ref) {
+  return CratelistRepository();
+});
+
+/// Provider for PlaybackQueueRepository.
+final playbackQueueRepositoryProvider =
+    Provider<PlaybackQueueRepository>((ref) {
+  return PlaybackQueueRepository();
+});
+
 /// Provider for TagRepository.
 final tagRepositoryProvider = Provider<TagRepository>((ref) {
   return TagRepository();

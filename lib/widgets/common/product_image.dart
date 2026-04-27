@@ -36,7 +36,11 @@ class ProductImageWidget extends StatefulWidget {
   final Device device;
   final String? albumCoverUrl;
   final String angle;
-  final String capacity;
+
+  /// Optional override for the slot capacity bucket (`'empty'`, `'half'`,
+  /// `'full'`). When null, the widget uses [Device.crateCapacity], which is
+  /// derived from the crate's current RFID inventory.
+  final String? capacity;
   final double size;
   final Widget? fallback;
 
@@ -45,10 +49,14 @@ class ProductImageWidget extends StatefulWidget {
     required this.device,
     this.albumCoverUrl,
     this.angle = 'front',
-    this.capacity = 'full',
+    this.capacity,
     this.size = 48,
     this.fallback,
   });
+
+  /// Effective capacity used to fetch slot geometry: explicit override if set,
+  /// otherwise the device's inventory-derived bucket.
+  String get _effectiveCapacity => capacity ?? device.crateCapacity;
 
   @override
   State<ProductImageWidget> createState() => _ProductImageWidgetState();
@@ -73,7 +81,7 @@ class _ProductImageWidgetState extends State<ProductImageWidget> {
     if (oldWidget.device.sku != widget.device.sku ||
         oldWidget.device.productHandle != widget.device.productHandle ||
         oldWidget.angle != widget.angle ||
-        oldWidget.capacity != widget.capacity ||
+        oldWidget._effectiveCapacity != widget._effectiveCapacity ||
         oldWidget.albumCoverUrl != widget.albumCoverUrl) {
       _disposeImages();
       _loadImages();
@@ -120,7 +128,7 @@ class _ProductImageWidgetState extends State<ProductImageWidget> {
           ? ProductImageService.getSlot(
               productId: widget.device.productId!,
               angle: widget.angle,
-              capacity: widget.capacity,
+              capacity: widget._effectiveCapacity,
             )
           : Future.value(null);
 

@@ -170,6 +170,17 @@ class Device extends Equatable {
   /// Shopify product handle (URL-safe slug, e.g., "saturday-crate").
   final String? productHandle;
 
+  /// Total album-slot capacity for this variant (e.g. 24 for a standard crate).
+  /// Null for non-crate variants or when not configured.
+  final int? maxSlots;
+
+  // === Inventory (from latest_crate_inventory join, crates only) ===
+
+  /// Number of records currently detected in the crate via RFID.
+  /// Null when no inventory snapshot exists yet (e.g. hubs, or crates that
+  /// have never reported inventory).
+  final int? currentRecordCount;
+
   // === Metadata ===
 
   /// When the unit was created (factory provisioning time).
@@ -199,6 +210,8 @@ class Device extends Equatable {
     this.productId,
     this.sku,
     this.productHandle,
+    this.maxSlots,
+    this.currentRecordCount,
     required this.createdAt,
     this.provisionData,
   });
@@ -277,15 +290,21 @@ class Device extends Equatable {
     String? productId;
     String? sku;
     String? productHandle;
+    int? maxSlots;
     final variantsList = json['product_variants'] as Map<String, dynamic>?;
     if (variantsList != null) {
       sku = variantsList['sku'] as String?;
       productId = variantsList['product_id'] as String?;
+      maxSlots = variantsList['max_slots'] as int?;
       final productsData = variantsList['products'] as Map<String, dynamic>?;
       if (productsData != null) {
         productHandle = productsData['shopify_product_handle'] as String?;
       }
     }
+
+    // current_record_count is injected by UnitRepository after merging with
+    // the latest_crate_inventory view; it does not come from the units row.
+    final currentRecordCount = json['current_record_count'] as int?;
 
     return Device(
       id: json['id'] as String,
@@ -307,6 +326,8 @@ class Device extends Equatable {
       productId: productId,
       sku: sku,
       productHandle: productHandle,
+      maxSlots: maxSlots,
+      currentRecordCount: currentRecordCount,
       createdAt: DateTime.parse(json['created_at'] as String),
       provisionData: provisionData,
     );
@@ -333,6 +354,8 @@ class Device extends Equatable {
       'product_id': productId,
       'sku': sku,
       'product_handle': productHandle,
+      'max_slots': maxSlots,
+      'current_record_count': currentRecordCount,
       'created_at': createdAt.toIso8601String(),
       'provision_data': provisionData,
     };
@@ -358,6 +381,8 @@ class Device extends Equatable {
     String? productId,
     String? sku,
     String? productHandle,
+    int? maxSlots,
+    int? currentRecordCount,
     DateTime? createdAt,
     Map<String, dynamic>? provisionData,
   }) {
@@ -381,6 +406,8 @@ class Device extends Equatable {
       productId: productId ?? this.productId,
       sku: sku ?? this.sku,
       productHandle: productHandle ?? this.productHandle,
+      maxSlots: maxSlots ?? this.maxSlots,
+      currentRecordCount: currentRecordCount ?? this.currentRecordCount,
       createdAt: createdAt ?? this.createdAt,
       provisionData: provisionData ?? this.provisionData,
     );
@@ -418,6 +445,26 @@ class Device extends Equatable {
   /// Whether this device has product image asset data available.
   bool get hasProductImageData => productHandle != null && sku != null;
 
+  /// Crate fullness bucket for product image compositing.
+  ///
+  /// Maps the ratio of [currentRecordCount] / [maxSlots] to the discrete
+  /// capacity values stored in `product_image_slots`:
+  /// - ≤ 1/3 → `'empty'`
+  /// - ≤ 2/3 → `'half'`
+  /// - otherwise → `'full'`
+  ///
+  /// Defaults to `'full'` when inventory or capacity data is missing
+  /// (e.g. hubs, never-scanned crates, variants without [maxSlots] configured).
+  String get crateCapacity {
+    final max = maxSlots;
+    final count = currentRecordCount;
+    if (max == null || max <= 0 || count == null) return 'full';
+    final ratio = count / max;
+    if (ratio <= 1 / 3) return 'empty';
+    if (ratio <= 2 / 3) return 'half';
+    return 'full';
+  }
+
   @override
   List<Object?> get props => [
         id,
@@ -439,6 +486,8 @@ class Device extends Equatable {
         productId,
         sku,
         productHandle,
+        maxSlots,
+        currentRecordCount,
         createdAt,
         provisionData,
       ];

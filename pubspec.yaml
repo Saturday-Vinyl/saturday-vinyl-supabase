@@ -2,7 +2,7 @@ name: saturday_consumer_app
 description: "Saturday Consumer App - Your vinyl companion for managing record collections and Saturday devices."
 publish_to: 'none'
 
-version: 1.0.0+1
+version: 1.0.0+2
 
 environment:
   sdk: ^3.9.2

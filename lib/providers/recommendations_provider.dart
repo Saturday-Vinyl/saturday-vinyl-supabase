@@ -1,9 +1,11 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:saturday_consumer_app/models/album_recommendation.dart';
 import 'package:saturday_consumer_app/models/library_album.dart';
 import 'package:saturday_consumer_app/providers/album_provider.dart';
 import 'package:saturday_consumer_app/providers/library_provider.dart';
 import 'package:saturday_consumer_app/providers/now_playing_provider.dart';
 import 'package:saturday_consumer_app/services/recommendation_service.dart';
+import 'package:saturday_consumer_app/services/server_recommendation_service.dart';
 
 /// Provider for the RecommendationService singleton.
 final recommendationServiceProvider = Provider<RecommendationService>((ref) {
@@ -75,4 +77,27 @@ final upNextProvider = FutureProvider<List<LibraryAlbum>>((ref) async {
   }
 
   return combined;
+});
+
+/// Provider for the server-side recommendation edge function. Used for the
+/// "your queue is empty" carousel, where we want server-scored results
+/// (affinity + staleness + last-known location) rather than the local
+/// affinity-only logic above.
+final serverRecommendationServiceProvider =
+    Provider<ServerRecommendationService>((ref) {
+  return ServerRecommendationService();
+});
+
+/// Server-scored recommendations seeded by the currently-playing album, if
+/// any. Returns up to [limit] suggestions. Surfaced in the empty-queue
+/// state on the Now Playing screen.
+final serverRecommendationsProvider =
+    FutureProvider.family<List<AlbumRecommendation>, int>(
+        (ref, limit) async {
+  final nowPlaying = ref.watch(nowPlayingProvider);
+  final service = ref.watch(serverRecommendationServiceProvider);
+  return service.getRecommendations(
+    currentLibraryAlbumId: nowPlaying.currentAlbum?.id,
+    limit: limit,
+  );
 });

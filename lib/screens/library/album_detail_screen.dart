@@ -13,6 +13,7 @@ import 'package:saturday_consumer_app/providers/library_provider.dart';
 import 'package:saturday_consumer_app/providers/realtime_album_location_provider.dart';
 import 'package:saturday_consumer_app/providers/repository_providers.dart';
 import 'package:saturday_consumer_app/providers/now_playing_provider.dart';
+import 'package:saturday_consumer_app/providers/playback_queue_provider.dart';
 import 'package:saturday_consumer_app/providers/tag_provider.dart';
 import 'package:saturday_consumer_app/utils/epc_validator.dart';
 import 'package:saturday_consumer_app/widgets/library/tag_method_picker.dart';
@@ -313,23 +314,36 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
         ? (accentColor.computeLuminance() > 0.4 ? SaturdayColors.black : Colors.white)
         : null;
 
-    return Row(
+    return Column(
       children: [
-        Expanded(
-          child: ElevatedButton.icon(
-            onPressed: () => _setAsNowPlaying(libraryAlbum),
-            icon: const Icon(Icons.play_circle_outline),
-            label: const Text('Now Playing'),
-            style: accentColor != null
-                ? ElevatedButton.styleFrom(
-                    backgroundColor: accentColor,
-                    foregroundColor: buttonFg,
-                  )
-                : null,
-          ),
+        Row(
+          children: [
+            Expanded(
+              child: ElevatedButton.icon(
+                onPressed: () => _setAsNowPlaying(libraryAlbum),
+                icon: const Icon(Icons.play_circle_outline),
+                label: const Text('Now Playing'),
+                style: accentColor != null
+                    ? ElevatedButton.styleFrom(
+                        backgroundColor: accentColor,
+                        foregroundColor: buttonFg,
+                      )
+                    : null,
+              ),
+            ),
+            const SizedBox(width: Spacing.md),
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: () => _addToQueue(libraryAlbum),
+                icon: const Icon(Icons.playlist_add),
+                label: const Text('Queue'),
+              ),
+            ),
+          ],
         ),
-        const SizedBox(width: Spacing.md),
-        Expanded(
+        const SizedBox(height: Spacing.sm),
+        SizedBox(
+          width: double.infinity,
           child: hasTag
               ? Container(
                   padding: const EdgeInsets.symmetric(
@@ -360,7 +374,7 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
                     ],
                   ),
                 )
-              : OutlinedButton.icon(
+              : TextButton.icon(
                   onPressed: () => _associateTag(libraryAlbum),
                   icon: const Icon(Icons.nfc),
                   label: const Text('Associate Tag'),
@@ -368,6 +382,31 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
         ),
       ],
     );
+  }
+
+  Future<void> _addToQueue(LibraryAlbum libraryAlbum) async {
+    try {
+      await ref
+          .read(playbackQueueProvider.notifier)
+          .addAlbum(libraryAlbum.id);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+          SnackBar(
+            content: Text('Added "${libraryAlbum.album?.title}" to queue'),
+            action: SnackBarAction(
+              label: 'View',
+              onPressed: () => context.push('/now-playing/queue'),
+            ),
+          ),
+        );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not add to queue: $e')),
+      );
+    }
   }
 
   Widget _buildLocationSection(BuildContext context, LibraryAlbum libraryAlbum) {

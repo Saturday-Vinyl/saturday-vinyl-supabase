@@ -4,38 +4,53 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:saturday_consumer_app/config/styles.dart';
 import 'package:saturday_consumer_app/config/theme.dart';
-import 'package:saturday_consumer_app/models/library_album.dart';
-import 'package:saturday_consumer_app/providers/now_playing_provider.dart';
+import 'package:saturday_consumer_app/models/album_recommendation.dart';
+import 'package:saturday_consumer_app/models/playback_queue_item.dart';
+import 'package:saturday_consumer_app/providers/device_provider.dart';
+import 'package:saturday_consumer_app/providers/playback_queue_provider.dart';
+import 'package:saturday_consumer_app/providers/realtime_album_location_provider.dart';
 import 'package:saturday_consumer_app/providers/recommendations_provider.dart';
+import 'package:saturday_consumer_app/providers/repository_providers.dart';
 
-/// A horizontal carousel showing recommended albums for "Up Next".
+/// "Up next" surface on the Now Playing screen.
 ///
-/// Shows albums based on the currently playing album's genre/style,
-/// supplemented by recently played albums.
+/// When the user has a persisted playback queue, this shows the next 1–3
+/// items with cover, title, artist, runtime and a crate-location pill
+/// that doubles as a LED-locate trigger. Tapping a row opens the full
+/// queue. When the queue is empty, this falls back to a horizontal
+/// carousel of server-scored recommendations from the recommend-albums
+/// edge function — tapping a recommendation appends it to the queue.
 class UpNextCarousel extends ConsumerWidget {
   const UpNextCarousel({super.key});
 
+  static const int _maxQueuePreview = 3;
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final upNext = ref.watch(upNextProvider);
+    final queue = ref.watch(playbackQueueProvider);
 
-    return upNext.when(
-      data: (albums) {
-        if (albums.isEmpty) {
-          return const SizedBox.shrink();
-        }
-        return _UpNextContent(albums: albums);
-      },
-      loading: () => const _UpNextLoading(),
-      error: (_, __) => const SizedBox.shrink(),
+    if (queue.isLoading && queue.items.isEmpty) {
+      return const _LoadingShell();
+    }
+
+    final upcoming = queue.items.take(_maxQueuePreview).toList();
+
+    if (upcoming.isEmpty) {
+      return const _EmptyQueueRecommendations();
+    }
+
+    return _QueueUpNext(
+      upcoming: upcoming,
+      totalCount: queue.items.length,
     );
   }
 }
 
-class _UpNextContent extends StatelessWidget {
-  const _UpNextContent({required this.albums});
+class _QueueUpNext extends StatelessWidget {
+  const _QueueUpNext({required this.upcoming, required this.totalCount});
 
-  final List<LibraryAlbum> albums;
+  final List<PlaybackQueueItem> upcoming;
+  final int totalCount;
 
   @override
   Widget build(BuildContext context) {
@@ -49,237 +64,374 @@ class _UpNextContent extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(
               Spacing.lg,
               Spacing.lg,
-              Spacing.lg,
+              Spacing.sm,
               Spacing.md,
             ),
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
-                  'Up Next',
+                  'Up next',
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
-                Text(
-                  '${albums.length} suggestions',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: SaturdayColors.secondary,
-                      ),
+                TextButton(
+                  onPressed: () => context.push('/now-playing/queue'),
+                  child: Text(
+                    totalCount > upcoming.length
+                        ? 'View all ($totalCount)'
+                        : 'View queue',
+                  ),
                 ),
               ],
             ),
           ),
-          SizedBox(
-            height: 140,
-            child: ListView.builder(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: Spacing.lg),
-              itemCount: albums.length,
-              itemBuilder: (context, index) {
-                return _UpNextTile(
-                  libraryAlbum: albums[index],
-                  isFirst: index == 0,
-                  isLast: index == albums.length - 1,
-                );
-              },
+          for (final item in upcoming)
+            _QueueRow(
+              key: ValueKey('queue-row-${item.id}'),
+              item: item,
             ),
-          ),
-          const SizedBox(height: Spacing.md),
+          const SizedBox(height: Spacing.sm),
         ],
       ),
     );
   }
 }
 
-class _UpNextLoading extends StatelessWidget {
-  const _UpNextLoading();
+class _QueueRow extends ConsumerWidget {
+  const _QueueRow({super.key, required this.item});
+
+  final PlaybackQueueItem item;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final album = item.libraryAlbum?.album;
+    final coverUrl = album?.coverImageUrl;
+    final title = album?.title ?? 'Unknown Album';
+    final artist = album?.artist ?? 'Unknown Artist';
+    final runtime = album?.formattedTotalDuration;
+
+    return InkWell(
+      onTap: () => context.push('/now-playing/queue'),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: Spacing.lg,
+          vertical: Spacing.sm,
+        ),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 48,
+              height: 48,
+              child: ClipRRect(
+                borderRadius: AppRadius.smallRadius,
+                child: coverUrl != null && coverUrl.isNotEmpty
+                    ? CachedNetworkImage(
+                        imageUrl: coverUrl,
+                        fit: BoxFit.cover,
+                        errorWidget: (_, __, ___) => _placeholder(),
+                      )
+                    : _placeholder(),
+              ),
+            ),
+            const SizedBox(width: Spacing.md),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    title,
+                    style: Theme.of(context).textTheme.titleSmall,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  Text(
+                    [
+                      artist,
+                      if (runtime != null && runtime.isNotEmpty) runtime,
+                    ].join(' · '),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: SaturdayColors.secondary,
+                        ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: Spacing.sm),
+            QueueLocationPill(libraryAlbumId: item.libraryAlbumId),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _placeholder() {
     return Container(
-      width: double.infinity,
-      height: 180,
-      decoration: AppDecorations.card,
-      child: const Center(
-        child: CircularProgressIndicator(),
+      color: SaturdayColors.secondary.withValues(alpha: 0.2),
+      child: Icon(
+        Icons.album_outlined,
+        size: AppIconSizes.md,
+        color: SaturdayColors.secondary,
       ),
     );
   }
 }
 
-/// A single album tile in the Up Next carousel.
-class _UpNextTile extends ConsumerWidget {
-  const _UpNextTile({
-    required this.libraryAlbum,
-    this.isFirst = false,
-    this.isLast = false,
-  });
-
-  final LibraryAlbum libraryAlbum;
-  final bool isFirst;
-  final bool isLast;
+class _EmptyQueueRecommendations extends ConsumerWidget {
+  const _EmptyQueueRecommendations();
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final album = libraryAlbum.album;
-    final title = album?.title ?? 'Unknown';
-    final artist = album?.artist ?? 'Unknown';
-    final coverUrl = album?.coverImageUrl;
+    final recsAsync = ref.watch(serverRecommendationsProvider(5));
 
+    return recsAsync.when(
+      loading: () => const _LoadingShell(),
+      error: (_, __) => const SizedBox.shrink(),
+      data: (recs) {
+        if (recs.isEmpty) return const SizedBox.shrink();
+        return Container(
+          width: double.infinity,
+          decoration: AppDecorations.card,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  Spacing.lg,
+                  Spacing.lg,
+                  Spacing.lg,
+                  Spacing.md,
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Suggestions',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    Text(
+                      'Tap to add',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: SaturdayColors.secondary,
+                          ),
+                    ),
+                  ],
+                ),
+              ),
+              SizedBox(
+                height: 180,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: Spacing.lg),
+                  itemCount: recs.length,
+                  separatorBuilder: (_, __) =>
+                      const SizedBox(width: Spacing.md),
+                  itemBuilder: (context, index) =>
+                      _RecommendationCard(rec: recs[index]),
+                ),
+              ),
+              const SizedBox(height: Spacing.md),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _RecommendationCard extends ConsumerWidget {
+  const _RecommendationCard({required this.rec});
+
+  final AlbumRecommendation rec;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
     return GestureDetector(
-      onTap: () {
-        // Navigate to album detail
-        context.push('/library/album/${libraryAlbum.id}');
-      },
-      onLongPress: () {
-        // Quick action to set as now playing
-        _showQuickActions(context, ref);
-      },
-      child: Container(
-        width: 100,
-        margin: EdgeInsets.only(
-          right: isLast ? 0 : Spacing.md,
-        ),
+      onTap: () => _add(context, ref),
+      child: SizedBox(
+        width: 120,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Album art with play overlay
-            Stack(
-              children: [
-                Container(
-                  width: 100,
-                  height: 100,
-                  decoration: BoxDecoration(
-                    borderRadius: AppRadius.mediumRadius,
-                    boxShadow: AppShadows.card,
-                  ),
-                  child: ClipRRect(
-                    borderRadius: AppRadius.mediumRadius,
-                    child: _buildAlbumArt(coverUrl),
-                  ),
+            AspectRatio(
+              aspectRatio: 1,
+              child: Container(
+                decoration: BoxDecoration(
+                  borderRadius: AppRadius.mediumRadius,
+                  boxShadow: AppShadows.card,
                 ),
-                // Play button overlay
-                Positioned.fill(
-                  child: Material(
-                    color: Colors.transparent,
-                    child: InkWell(
-                      borderRadius: AppRadius.mediumRadius,
-                      onTap: () {
-                        ref
-                            .read(nowPlayingProvider.notifier)
-                            .setNowPlaying(libraryAlbum);
-                      },
-                      child: Center(
-                        child: Container(
-                          width: 32,
-                          height: 32,
-                          decoration: BoxDecoration(
-                            color: SaturdayColors.primaryDark.withValues(alpha: 0.8),
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(
-                            Icons.play_arrow,
-                            color: SaturdayColors.white,
-                            size: 20,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
+                child: ClipRRect(
+                  borderRadius: AppRadius.mediumRadius,
+                  child: rec.coverImageUrl != null
+                      ? CachedNetworkImage(
+                          imageUrl: rec.coverImageUrl!,
+                          fit: BoxFit.cover,
+                          errorWidget: (_, __, ___) => _placeholder(),
+                        )
+                      : _placeholder(),
                 ),
-              ],
+              ),
             ),
             const SizedBox(height: Spacing.xs),
-            // Title
             Text(
-              title,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    fontWeight: FontWeight.w500,
-                  ),
+              rec.title,
+              style: Theme.of(context).textTheme.titleSmall,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
-            // Artist
             Text(
-              artist,
+              rec.artist,
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: SaturdayColors.secondary,
-                    fontSize: 11,
                   ),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
+            if (rec.reason.isNotEmpty)
+              Text(
+                rec.reason,
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: SaturdayColors.secondary,
+                      fontStyle: FontStyle.italic,
+                    ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildAlbumArt(String? coverUrl) {
-    if (coverUrl == null || coverUrl.isEmpty) {
-      return _buildPlaceholder();
+  Future<void> _add(BuildContext context, WidgetRef ref) async {
+    try {
+      await ref
+          .read(playbackQueueProvider.notifier)
+          .addAlbum(rec.libraryAlbumId);
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+          SnackBar(
+            content: Text('Added "${rec.title}" to queue'),
+          ),
+        );
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not add: $e')),
+      );
     }
-
-    return CachedNetworkImage(
-      imageUrl: coverUrl,
-      fit: BoxFit.cover,
-      placeholder: (context, url) => _buildShimmer(),
-      errorWidget: (context, url, error) => _buildPlaceholder(),
-    );
   }
 
-  Widget _buildPlaceholder() {
+  Widget _placeholder() {
     return Container(
       color: SaturdayColors.secondary.withValues(alpha: 0.2),
-      child: Center(
-        child: Icon(
-          Icons.album_outlined,
-          size: 40,
-          color: SaturdayColors.secondary,
-        ),
+      child: Icon(
+        Icons.album_outlined,
+        size: AppIconSizes.lg,
+        color: SaturdayColors.secondary,
       ),
     );
   }
+}
 
-  Widget _buildShimmer() {
+class _LoadingShell extends StatelessWidget {
+  const _LoadingShell();
+
+  @override
+  Widget build(BuildContext context) {
     return Container(
-      color: SaturdayColors.secondary.withValues(alpha: 0.1),
-      child: const Center(
+      width: double.infinity,
+      height: 80,
+      decoration: AppDecorations.card,
+      alignment: Alignment.center,
+      child: const SizedBox(
+        width: 20,
+        height: 20,
         child: CircularProgressIndicator(strokeWidth: 2),
       ),
     );
   }
+}
 
-  void _showQuickActions(BuildContext context, WidgetRef ref) {
-    final album = libraryAlbum.album;
+/// Pill that shows the album's last-known crate location and, on tap, sends
+/// the LED "pulse" pattern command to that crate so the user can find it.
+///
+/// Returns SizedBox.shrink() when location/crate metadata is unavailable.
+class QueueLocationPill extends ConsumerStatefulWidget {
+  const QueueLocationPill({super.key, required this.libraryAlbumId});
 
-    showModalBottomSheet(
-      context: context,
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.play_circle_outline),
-              title: const Text('Play Now'),
-              subtitle: Text(album?.title ?? 'Unknown'),
-              onTap: () {
-                Navigator.pop(context);
-                ref
-                    .read(nowPlayingProvider.notifier)
-                    .setNowPlaying(libraryAlbum);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.info_outline),
-              title: const Text('View Details'),
-              onTap: () {
-                Navigator.pop(context);
-                context.push('/library/album/${libraryAlbum.id}');
-              },
-            ),
-          ],
+  final String libraryAlbumId;
+
+  @override
+  ConsumerState<QueueLocationPill> createState() =>
+      _QueueLocationPillState();
+}
+
+class _QueueLocationPillState extends ConsumerState<QueueLocationPill> {
+  bool _sending = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final location = ref.watch(albumLocationProvider(widget.libraryAlbumId));
+    if (location == null) return const SizedBox.shrink();
+
+    final deviceAsync = ref.watch(deviceByIdProvider(location.deviceId));
+    final device = deviceAsync.valueOrNull;
+    if (device == null) return const SizedBox.shrink();
+
+    final crateName = device.name;
+    final macAddress = device.macAddress;
+    final canIdentify = !_sending && macAddress != null;
+
+    return TextButton.icon(
+      onPressed: canIdentify ? () => _identify(macAddress) : null,
+      icon: _sending
+          ? const SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Icon(Icons.lightbulb_outline, size: 16),
+      label: Text(
+        crateName,
+        style: Theme.of(context).textTheme.labelMedium,
+      ),
+      style: TextButton.styleFrom(
+        padding: const EdgeInsets.symmetric(
+          horizontal: Spacing.sm,
+          vertical: Spacing.xs,
         ),
+        minimumSize: Size.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
       ),
     );
+  }
+
+  Future<void> _identify(String macAddress) async {
+    setState(() => _sending = true);
+    try {
+      await ref.read(unitRepositoryProvider).sendDeviceCommand(
+            macAddress: macAddress,
+            command: 'pattern',
+            parameters: const {'pattern': 'pulse', 'loop': 5},
+          );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+        ..clearSnackBars()
+        ..showSnackBar(
+          const SnackBar(content: Text('Lighting up the crate…')),
+        );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not flash crate: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
   }
 }

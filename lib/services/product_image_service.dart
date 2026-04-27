@@ -33,8 +33,7 @@ class ProductImageAsset {
     );
   }
 
-  String get frameUrl =>
-      '${EnvConfig.supabaseUrl}/storage/v1/object/public/$framePath';
+  String get frameUrl => ProductImageService.publicUrl(framePath);
 }
 
 /// Defines how an album cover is composited into a product image slot.
@@ -104,14 +103,19 @@ class ProductImageService {
   static const _slotsTable = 'product_image_slots';
   static const _bucketName = 'product-images';
 
-  /// Builds the deterministic storage path for a product frame image.
+  /// Builds the deterministic storage path within the [_bucketName] bucket.
   static String framePath(String productHandle, String sku, String angle) {
-    return '$_bucketName/$productHandle/$sku/$angle.png';
+    return '$productHandle/$sku/$angle.png';
+  }
+
+  /// Builds the full public URL for a path within the product-images bucket.
+  static String publicUrl(String pathWithinBucket) {
+    return '${EnvConfig.supabaseUrl}/storage/v1/object/public/$_bucketName/$pathWithinBucket';
   }
 
   /// Builds the full public URL for a product frame image.
   static String frameUrl(String productHandle, String sku, String angle) {
-    return '${EnvConfig.supabaseUrl}/storage/v1/object/public/${framePath(productHandle, sku, angle)}';
+    return publicUrl(framePath(productHandle, sku, angle));
   }
 
   /// Builds the full public URL for a product frame image from a device.

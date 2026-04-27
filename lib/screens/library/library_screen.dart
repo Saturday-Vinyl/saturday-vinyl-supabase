@@ -3,31 +3,34 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:saturday_consumer_app/config/styles.dart';
 import 'package:saturday_consumer_app/config/theme.dart';
+import 'package:saturday_consumer_app/models/collection_item.dart';
 import 'package:saturday_consumer_app/models/library_album.dart';
 import 'package:saturday_consumer_app/providers/album_provider.dart';
+import 'package:saturday_consumer_app/providers/collection_provider.dart';
+import 'package:saturday_consumer_app/providers/cratelist_provider.dart';
 import 'package:saturday_consumer_app/providers/library_filter_provider.dart';
 import 'package:saturday_consumer_app/providers/library_provider.dart';
 import 'package:saturday_consumer_app/providers/library_view_provider.dart';
+import 'package:saturday_consumer_app/repositories/cratelist_repository.dart';
+import 'package:saturday_consumer_app/screens/library/create_cratelist_sheet.dart';
 import 'package:saturday_consumer_app/screens/onboarding/quick_start_screen.dart';
 import 'package:saturday_consumer_app/screens/tablet/tablet_home_screen.dart';
 import 'package:saturday_consumer_app/widgets/common/empty_state.dart';
 import 'package:saturday_consumer_app/widgets/common/error_display.dart';
 import 'package:saturday_consumer_app/widgets/common/loading_indicator.dart';
 import 'package:saturday_consumer_app/widgets/common/saturday_app_bar.dart';
-import 'package:saturday_consumer_app/widgets/library/album_grid.dart';
-import 'package:saturday_consumer_app/widgets/library/album_list.dart';
 import 'package:saturday_consumer_app/widgets/library/album_quick_actions.dart';
+import 'package:saturday_consumer_app/widgets/library/collection_grid.dart';
+import 'package:saturday_consumer_app/widgets/library/collection_list.dart';
+import 'package:saturday_consumer_app/widgets/library/collection_type_chips.dart';
 import 'package:saturday_consumer_app/widgets/library/filter_bar.dart';
 import 'package:saturday_consumer_app/widgets/library/filter_bottom_sheet.dart';
 import 'package:saturday_consumer_app/widgets/library/view_toggle.dart';
 
-/// Library screen - shows the user's vinyl collection.
+/// Library screen — unified browse view for the user's vinyl collection.
 ///
-/// Features:
-/// - Grid/list view toggle for albums
-/// - Sort and filter options
-/// - Quick search within library
-/// - Add album via scanning or search
+/// Albums and cratelists share a single grid/list. Type chips narrow to
+/// one or the other; cratelists are pinned to the top when shown.
 class LibraryScreen extends ConsumerStatefulWidget {
   const LibraryScreen({super.key});
 
@@ -38,16 +41,12 @@ class LibraryScreen extends ConsumerStatefulWidget {
 class _LibraryScreenState extends ConsumerState<LibraryScreen> {
   @override
   Widget build(BuildContext context) {
-    // Check if user has any libraries
     final librariesAsync = ref.watch(userLibrariesProvider);
 
     return librariesAsync.when(
       data: (libraries) {
-        if (libraries.isEmpty) {
-          // Show empty state prompting user to create a library
-          return _buildNoLibrariesState(context);
-        }
-        return _buildLibraryContent(context, ref);
+        if (libraries.isEmpty) return _buildNoLibrariesState();
+        return _buildLibraryContent(context);
       },
       loading: () => Scaffold(
         appBar: const SaturdayAppBar(
@@ -58,7 +57,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
           message: 'Loading your libraries...',
         ),
       ),
-      error: (error, stack) => Scaffold(
+      error: (error, _) => Scaffold(
         appBar: const SaturdayAppBar(
           showLibrarySwitcher: true,
           showSearch: true,
@@ -71,15 +70,14 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     );
   }
 
-  /// Build the main library content when user has libraries.
-  Widget _buildLibraryContent(BuildContext context, WidgetRef ref) {
-    // Watch the sync provider to keep album provider in sync with filter state
+  Widget _buildLibraryContent(BuildContext context) {
     ref.watch(filterSyncProvider);
 
-    final albumsAsync = ref.watch(libraryAlbumsProvider);
+    final itemsAsync = ref.watch(collectionItemsProvider);
     final viewMode = ref.watch(libraryViewModeProvider);
     final filterState = ref.watch(libraryFilterProvider);
     final hasFilters = ref.watch(hasActiveFiltersProvider);
+    final type = ref.watch(collectionTypeFilterProvider);
 
     return Scaffold(
       appBar: const SaturdayAppBar(
@@ -87,44 +85,190 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
         showSearch: true,
       ),
       body: SafeArea(
-        child: Column(
-          children: [
-            // Unified filter bar with sort, filters, and view toggle
-            _buildFilterBar(context, ref, filterState, viewMode),
-
-            const Divider(height: 1),
-
-            // Album content
-            Expanded(
-              child: albumsAsync.when(
-                data: (albums) => _buildAlbumContent(
-                  context,
-                  ref,
-                  albums,
-                  viewMode,
-                  hasFilters,
-                ),
-                loading: () => _buildLoadingState(),
-                error: (error, stack) => _buildErrorState(
-                  context,
-                  ref,
-                  error.toString(),
-                ),
-              ),
-            ),
-          ],
+        child: itemsAsync.when(
+          data: (items) => _buildScrollView(
+            context,
+            ref,
+            items,
+            viewMode,
+            filterState,
+            hasFilters,
+            type,
+          ),
+          loading: () => const LoadingIndicator.medium(
+            message: 'Loading your library...',
+          ),
+          error: (error, _) => ErrorDisplay.fullScreen(
+            message: error.toString(),
+            onRetry: () => ref.invalidate(collectionItemsProvider),
+          ),
         ),
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: () => _showAddAlbumMenu(context),
-        tooltip: 'Add Album',
+        onPressed: () => _showAddMenu(context),
+        tooltip: 'Add',
         child: const Icon(Icons.add),
       ),
     );
   }
 
-  /// Show the add album menu with camera and manual entry options.
-  void _showAddAlbumMenu(BuildContext context) {
+  Widget _buildScrollView(
+    BuildContext context,
+    WidgetRef ref,
+    List<CollectionItem> items,
+    LibraryViewMode viewMode,
+    LibraryFilterState filterState,
+    bool hasFilters,
+    CollectionTypeFilter type,
+  ) {
+    return RefreshIndicator(
+      onRefresh: () async {
+        ref.invalidate(libraryAlbumsProvider);
+        ref.invalidate(cratelistPreviewsProvider);
+        ref.invalidate(collectionItemsProvider);
+        await ref.read(collectionItemsProvider.future);
+      },
+      child: CustomScrollView(
+        slivers: [
+          // Type chips — floating header that collapses on scroll down and
+          // reappears on scroll up.
+          SliverAppBar(
+            primary: false,
+            automaticallyImplyLeading: false,
+            floating: true,
+            snap: true,
+            pinned: false,
+            elevation: 0,
+            scrolledUnderElevation: 0,
+            backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+            surfaceTintColor: Colors.transparent,
+            toolbarHeight: _chipsHeight,
+            titleSpacing: 0,
+            title: const CollectionTypeChips(),
+          ),
+          // Filter bar — stays pinned so users can adjust filters mid-scroll.
+          SliverPersistentHeader(
+            pinned: true,
+            delegate: _FilterBarHeaderDelegate(
+              child: _buildFilterBar(context, ref, filterState, viewMode),
+              height: _filterBarHeight,
+            ),
+          ),
+          if (items.isEmpty)
+            SliverFillRemaining(
+              hasScrollBody: false,
+              child: _buildEmptyForState(context, type, hasFilters),
+            )
+          else if (viewMode == LibraryViewMode.grid)
+            SliverCollectionGrid(
+              items: items,
+              onAlbumTap: (album) => _onAlbumTap(context, album),
+              onAlbumLongPress: (album) =>
+                  _onAlbumLongPress(context, ref, album),
+              onCratelistTap: (preview) =>
+                  _onCratelistTap(context, preview),
+            )
+          else
+            SliverCollectionList(
+              items: items,
+              onAlbumTap: (album) => _onAlbumTap(context, album),
+              onAlbumLongPress: (album) =>
+                  _onAlbumLongPress(context, ref, album),
+              onCratelistTap: (preview) =>
+                  _onCratelistTap(context, preview),
+            ),
+        ],
+      ),
+    );
+  }
+
+  static const double _chipsHeight = 56;
+  static const double _filterBarHeight = 56;
+
+  Widget _buildEmptyForState(
+    BuildContext context,
+    CollectionTypeFilter type,
+    bool hasFilters,
+  ) {
+    if (hasFilters && type != CollectionTypeFilter.cratelists) {
+      return EmptyState.noFilterResults(
+        onClearFilters: () =>
+            ref.read(libraryFilterProvider.notifier).clearFilters(),
+      );
+    }
+
+    if (type == CollectionTypeFilter.cratelists) {
+      return EmptyState(
+        icon: Icons.queue_music,
+        title: 'No cratelists yet',
+        message: 'Group records from your library into ordered crates you '
+            'can queue up to play.',
+        actionLabel: 'New cratelist',
+        onAction: () => _onCreateCratelist(context),
+      );
+    }
+
+    // type == albums or all, no filters
+    return EmptyState.library(
+      onAddAlbum: () => _showAddAlbumSubMenu(context),
+    );
+  }
+
+  void _showAddMenu(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(Spacing.lg),
+              child: Text(
+                'Add to library',
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+            ),
+            ListTile(
+              leading: _menuIcon(Icons.camera_alt),
+              title: const Text('Scan album'),
+              subtitle: const Text(
+                'Scan barcode or photograph album cover',
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                context.push('/library/add/scan');
+              },
+            ),
+            ListTile(
+              leading: _menuIcon(Icons.search),
+              title: const Text('Search album'),
+              subtitle: const Text(
+                'Search by artist, album, or catalog number',
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                context.push('/library/add/search');
+              },
+            ),
+            ListTile(
+              leading: _menuIcon(Icons.queue_music),
+              title: const Text('New cratelist'),
+              subtitle: const Text(
+                'Group records to play in order',
+              ),
+              onTap: () {
+                Navigator.pop(context);
+                _onCreateCratelist(context);
+              },
+            ),
+            const SizedBox(height: Spacing.lg),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showAddAlbumSubMenu(BuildContext context) {
     showModalBottomSheet(
       context: context,
       builder: (context) => SafeArea(
@@ -139,18 +283,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
               ),
             ),
             ListTile(
-              leading: Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  color: SaturdayColors.primaryDark.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(
-                  Icons.camera_alt,
-                  color: SaturdayColors.primaryDark,
-                ),
-              ),
+              leading: _menuIcon(Icons.camera_alt),
               title: const Text('Use Camera'),
               subtitle: const Text(
                 'Scan barcode or photograph album cover',
@@ -161,18 +294,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
               },
             ),
             ListTile(
-              leading: Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  color: SaturdayColors.primaryDark.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(
-                  Icons.search,
-                  color: SaturdayColors.primaryDark,
-                ),
-              ),
+              leading: _menuIcon(Icons.search),
               title: const Text('Manual Entry'),
               subtitle: const Text(
                 'Search by artist, album, or catalog number',
@@ -189,7 +311,24 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     );
   }
 
-  /// Build the unified filter bar with sort, filters, and view toggle.
+  Widget _menuIcon(IconData icon) {
+    return Container(
+      width: 48,
+      height: 48,
+      decoration: BoxDecoration(
+        color: SaturdayColors.primaryDark.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Icon(icon, color: SaturdayColors.primaryDark),
+    );
+  }
+
+  Future<void> _onCreateCratelist(BuildContext context) async {
+    final created = await CreateCratelistSheet.show(context);
+    if (created == null || !context.mounted) return;
+    context.push('/library/cratelists/${created.id}');
+  }
+
   Widget _buildFilterBar(
     BuildContext context,
     WidgetRef ref,
@@ -198,7 +337,6 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
   ) {
     return Row(
       children: [
-        // Filter bar (takes remaining space)
         Expanded(
           child: FilterBar(
             selectedGenres: filterState.selectedGenres,
@@ -225,7 +363,6 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
             onFilterTap: () => _showFilterSheet(context, ref),
           ),
         ),
-        // View toggle on the right
         Padding(
           padding: const EdgeInsets.only(right: Spacing.sm),
           child: ViewToggleIconButton(
@@ -239,7 +376,6 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     );
   }
 
-  /// Show the full filter bottom sheet.
   void _showFilterSheet(BuildContext context, WidgetRef ref) {
     final filterState = ref.read(libraryFilterProvider);
     final availableGenres = ref.read(availableGenresProvider);
@@ -268,53 +404,10 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     );
   }
 
-  /// Build the album content based on view mode.
-  Widget _buildAlbumContent(
-    BuildContext context,
-    WidgetRef ref,
-    List<LibraryAlbum> albums,
-    LibraryViewMode viewMode,
-    bool hasFilters,
-  ) {
-    if (albums.isEmpty) {
-      if (hasFilters) {
-        return _buildNoResultsState(context, ref);
-      }
-      return _buildEmptyState(context);
-    }
-
-    return RefreshIndicator(
-      onRefresh: () async {
-        // Invalidate the provider to trigger a refresh
-        ref.invalidate(libraryAlbumsProvider);
-        // Wait for the refresh to complete
-        await ref.read(libraryAlbumsProvider.future);
-      },
-      child: viewMode == LibraryViewMode.grid
-          ? AlbumGrid(
-              albums: albums,
-              onAlbumTap: (album) => _onAlbumTap(context, album),
-              onAlbumLongPress: (album) =>
-                  _onAlbumLongPress(context, ref, album),
-            )
-          : AlbumList(
-              albums: albums,
-              onAlbumTap: (album) => _onAlbumTap(context, album),
-              onAlbumLongPress: (album) =>
-                  _onAlbumLongPress(context, ref, album),
-            ),
-    );
-  }
-
-  /// Handle album tap - navigate to album detail.
-  ///
-  /// On tablets in landscape, this opens the album in the detail panel.
-  /// On phones or tablets in portrait, navigates to the full detail screen.
   void _onAlbumTap(BuildContext context, LibraryAlbum album) {
     handleAlbumTap(context, ref, album.id);
   }
 
-  /// Handle album long-press - show quick actions menu.
   void _onAlbumLongPress(
     BuildContext context,
     WidgetRef ref,
@@ -323,41 +416,51 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
     showAlbumQuickActions(context, ref, album);
   }
 
-  /// Build the loading state.
-  Widget _buildLoadingState() {
-    return const LoadingIndicator.medium(
-      message: 'Loading your library...',
-    );
+  void _onCratelistTap(BuildContext context, CratelistPreview preview) {
+    context.push('/library/cratelists/${preview.cratelist.id}');
   }
 
-  /// Build the error state.
-  Widget _buildErrorState(BuildContext context, WidgetRef ref, String error) {
-    return ErrorDisplay.fullScreen(
-      message: error,
-      onRetry: () => ref.invalidate(libraryAlbumsProvider),
-    );
-  }
-
-  /// Build the state when user has no libraries.
-  ///
-  /// Shows the QuickStartScreen inline instead of navigating to it.
-  Widget _buildNoLibrariesState(BuildContext context) {
+  Widget _buildNoLibrariesState() {
     return const QuickStartScreen();
   }
+}
 
-  /// Build the empty state when no albums in library.
-  Widget _buildEmptyState(BuildContext context) {
-    return EmptyState.library(
-      onAddAlbum: () => _showAddAlbumMenu(context),
+/// Pins the filter bar at the top of the scroll view so the user can adjust
+/// filters mid-scroll. The chips above can collapse, but the filter bar
+/// stays visible.
+class _FilterBarHeaderDelegate extends SliverPersistentHeaderDelegate {
+  _FilterBarHeaderDelegate({required this.child, required this.height});
+
+  final Widget child;
+  final double height;
+
+  @override
+  double get minExtent => height;
+
+  @override
+  double get maxExtent => height;
+
+  @override
+  Widget build(
+    BuildContext context,
+    double shrinkOffset,
+    bool overlapsContent,
+  ) {
+    return Material(
+      color: Theme.of(context).scaffoldBackgroundColor,
+      elevation: 0,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Expanded(child: child),
+          const Divider(height: 1),
+        ],
+      ),
     );
   }
 
-  /// Build the state when filters return no results.
-  Widget _buildNoResultsState(BuildContext context, WidgetRef ref) {
-    return EmptyState.noFilterResults(
-      onClearFilters: () {
-        ref.read(libraryFilterProvider.notifier).clearFilters();
-      },
-    );
+  @override
+  bool shouldRebuild(_FilterBarHeaderDelegate oldDelegate) {
+    return child != oldDelegate.child || height != oldDelegate.height;
   }
 }

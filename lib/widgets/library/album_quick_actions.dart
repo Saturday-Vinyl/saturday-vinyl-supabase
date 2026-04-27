@@ -6,6 +6,7 @@ import 'package:saturday_consumer_app/config/styles.dart';
 import 'package:saturday_consumer_app/config/theme.dart';
 import 'package:saturday_consumer_app/models/library_album.dart';
 import 'package:saturday_consumer_app/providers/now_playing_provider.dart';
+import 'package:saturday_consumer_app/providers/playback_queue_provider.dart';
 import 'package:saturday_consumer_app/widgets/library/tag_method_picker.dart';
 
 /// Shows a bottom sheet with quick actions for an album.
@@ -97,6 +98,38 @@ void showAlbumQuickActions(
                     ),
                   ),
                 );
+            },
+          ),
+
+          // Action: Add to queue
+          ListTile(
+            leading: const Icon(Icons.playlist_add),
+            title: const Text('Add to queue'),
+            onTap: () async {
+              Navigator.pop(context);
+              try {
+                await ref
+                    .read(playbackQueueProvider.notifier)
+                    .addAlbum(libraryAlbum.id);
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(context)
+                  ..clearSnackBars()
+                  ..showSnackBar(
+                    SnackBar(
+                      content: Text('Added "${album?.title}" to queue'),
+                      action: SnackBarAction(
+                        label: 'View',
+                        onPressed: () =>
+                            context.push('/now-playing/queue'),
+                      ),
+                    ),
+                  );
+              } catch (e) {
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Could not add to queue: $e')),
+                );
+              }
             },
           ),
 

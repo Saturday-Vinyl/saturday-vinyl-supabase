@@ -11,6 +11,36 @@ import 'package:saturday_consumer_app/repositories/base_repository.dart';
 class UnitRepository extends BaseRepository {
   static const _unitsTable = 'units';
   static const _devicesTable = 'devices';
+  static const _latestCrateInventoryView = 'latest_crate_inventory';
+
+  /// Looks up the latest RFID inventory snapshot for the given crate MAC
+  /// addresses and returns a map of MAC → epc_count. Empty input returns {}.
+  Future<Map<String, int>> _getLatestInventoryByMac(
+      Iterable<String> macAddresses) async {
+    final macs = macAddresses.toList();
+    if (macs.isEmpty) return const {};
+
+    final response = await client
+        .from(_latestCrateInventoryView)
+        .select('mac_address, epc_count')
+        .inFilter('mac_address', macs);
+
+    return {
+      for (final row in response as List)
+        (row as Map<String, dynamic>)['mac_address'] as String:
+            (row['epc_count'] as int? ?? 0),
+    };
+  }
+
+  /// Returns a copy of [device] with [Device.currentRecordCount] populated
+  /// from [inventory] (keyed by MAC). No-op for non-crate devices or when
+  /// no snapshot is available.
+  Device _withInventory(Device device, Map<String, int> inventory) {
+    if (!device.isCrate || device.macAddress == null) return device;
+    final count = inventory[device.macAddress];
+    if (count == null) return device;
+    return device.copyWith(currentRecordCount: count);
+  }
 
   /// Gets all units owned by a user with their linked device data.
   ///
@@ -28,6 +58,7 @@ class UnitRepository extends BaseRepository {
           product_variants!left(
             sku,
             product_id,
+            max_slots,
             products!inner(
               shopify_product_handle
             )
@@ -36,9 +67,16 @@ class UnitRepository extends BaseRepository {
         .eq('consumer_user_id', userId)
         .order('created_at', ascending: false);
 
-    return (response as List)
+    final devices = (response as List)
         .map((row) => Device.fromJoinedJson(row as Map<String, dynamic>))
         .toList();
+
+    final crateMacs = devices
+        .where((d) => d.isCrate && d.macAddress != null)
+        .map((d) => d.macAddress!);
+    final inventory = await _getLatestInventoryByMac(crateMacs);
+    if (inventory.isEmpty) return devices;
+    return devices.map((d) => _withInventory(d, inventory)).toList();
   }
 
   /// Gets a single unit by ID with its linked device data.
@@ -54,6 +92,7 @@ class UnitRepository extends BaseRepository {
           product_variants!left(
             sku,
             product_id,
+            max_slots,
             products!inner(
               shopify_product_handle
             )
@@ -63,7 +102,10 @@ class UnitRepository extends BaseRepository {
         .maybeSingle();
 
     if (response == null) return null;
-    return Device.fromJoinedJson(response);
+    final device = Device.fromJoinedJson(response);
+    if (!device.isCrate || device.macAddress == null) return device;
+    final inventory = await _getLatestInventoryByMac([device.macAddress!]);
+    return _withInventory(device, inventory);
   }
 
   /// Gets a unit by serial number with its linked device data.
@@ -79,6 +121,7 @@ class UnitRepository extends BaseRepository {
           product_variants!left(
             sku,
             product_id,
+            max_slots,
             products!inner(
               shopify_product_handle
             )
@@ -88,7 +131,10 @@ class UnitRepository extends BaseRepository {
         .maybeSingle();
 
     if (response == null) return null;
-    return Device.fromJoinedJson(response);
+    final device = Device.fromJoinedJson(response);
+    if (!device.isCrate || device.macAddress == null) return device;
+    final inventory = await _getLatestInventoryByMac([device.macAddress!]);
+    return _withInventory(device, inventory);
   }
 
   /// Claims a unit by serial number for the current user.
@@ -149,6 +195,7 @@ class UnitRepository extends BaseRepository {
           product_variants!left(
             sku,
             product_id,
+            max_slots,
             products!inner(
               shopify_product_handle
             )
@@ -193,6 +240,7 @@ class UnitRepository extends BaseRepository {
           product_variants!left(
             sku,
             product_id,
+            max_slots,
             products!inner(
               shopify_product_handle
             )
@@ -201,7 +249,10 @@ class UnitRepository extends BaseRepository {
         .eq('id', unitId)
         .single();
 
-    return Device.fromJoinedJson(response);
+    final device = Device.fromJoinedJson(response);
+    if (!device.isCrate || device.macAddress == null) return device;
+    final inventory = await _getLatestInventoryByMac([device.macAddress!]);
+    return _withInventory(device, inventory);
   }
 
   /// Updates the consumer name for a unit.

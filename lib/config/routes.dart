@@ -8,9 +8,14 @@ import 'package:saturday_consumer_app/screens/auth/login_screen.dart';
 import 'package:saturday_consumer_app/screens/auth/signup_screen.dart';
 import 'package:saturday_consumer_app/screens/intro/intro_splash_screen.dart';
 import 'package:saturday_consumer_app/screens/now_playing/now_playing_screen.dart';
+import 'package:saturday_consumer_app/screens/now_playing/queue_album_picker_screen.dart';
+import 'package:saturday_consumer_app/screens/now_playing/queue_screen.dart';
 import 'package:saturday_consumer_app/screens/now_playing/set_now_playing_screen.dart';
 import 'package:saturday_consumer_app/screens/library/library_screen.dart';
 import 'package:saturday_consumer_app/screens/library/album_detail_screen.dart';
+import 'package:saturday_consumer_app/screens/library/cratelist_album_picker_screen.dart';
+import 'package:saturday_consumer_app/screens/library/cratelist_detail_screen.dart';
+import 'package:saturday_consumer_app/screens/library/cratelists_screen.dart';
 import 'package:saturday_consumer_app/screens/library/discogs_search_screen.dart';
 import 'package:saturday_consumer_app/screens/library/barcode_scanner_screen.dart';
 import 'package:saturday_consumer_app/screens/library/confirm_album_screen.dart';
@@ -59,6 +64,9 @@ class RoutePaths {
   static const String hubTagAssociation = 'album/:id/tag/hub';
   static const String createLibrary = 'create';
   static const String libraryDetails = 'details';
+  static const String cratelistsList = 'cratelists';
+  static const String cratelistDetail = 'cratelists/:id';
+  static const String cratelistAddAlbums = 'add';
   static const String deviceList = 'devices';
   static const String deviceDetail = 'devices/:id';
   static const String deviceSetup = 'devices/setup';
@@ -76,6 +84,8 @@ class RoutePaths {
 
   // Now Playing nested routes
   static const String setNowPlaying = 'set';
+  static const String queue = 'queue';
+  static const String queueAdd = 'queue/add';
 
   // Onboarding routes
   static const String onboardingQuickStart = '/onboarding/quick-start';
@@ -102,6 +112,9 @@ class RouteNames {
   static const String hubTagAssociation = 'hub-tag-association';
   static const String createLibrary = 'create-library';
   static const String libraryDetails = 'library-details';
+  static const String cratelistsList = 'cratelists-list';
+  static const String cratelistDetail = 'cratelist-detail';
+  static const String cratelistAddAlbums = 'cratelist-add-albums';
   static const String inviteAccept = 'invite-accept';
   static const String deviceList = 'device-list';
   static const String deviceDetail = 'device-detail';
@@ -112,6 +125,8 @@ class RouteNames {
   static const String settings = 'settings';
   static const String search = 'search';
   static const String setNowPlaying = 'set-now-playing';
+  static const String queue = 'queue';
+  static const String queueAdd = 'queue-add';
   static const String tagResolution = 'tag-resolution';
   static const String onboardingQuickStart = 'onboarding-quick-start';
   static const String onboardingAddAlbumIntro = 'onboarding-add-album-intro';
@@ -208,6 +223,22 @@ GoRouter createAppRouter(Ref ref) {
                 name: RouteNames.setNowPlaying,
                 builder: (context, state) => const SetNowPlayingScreen(),
               ),
+              // Playback queue (full edit view)
+              GoRoute(
+                path: RoutePaths.queue,
+                name: RouteNames.queue,
+                parentNavigatorKey: rootNavigatorKey,
+                builder: (context, state) => const QueueScreen(),
+                routes: [
+                  GoRoute(
+                    path: 'add',
+                    name: RouteNames.queueAdd,
+                    parentNavigatorKey: rootNavigatorKey,
+                    builder: (context, state) =>
+                        const QueueAlbumPickerScreen(),
+                  ),
+                ],
+              ),
             ],
           ),
 
@@ -279,6 +310,37 @@ GoRouter createAppRouter(Ref ref) {
                 name: RouteNames.libraryDetails,
                 parentNavigatorKey: rootNavigatorKey,
                 builder: (context, state) => const LibraryDetailsScreen(),
+              ),
+              // Cratelists list (full grid)
+              GoRoute(
+                path: RoutePaths.cratelistsList,
+                name: RouteNames.cratelistsList,
+                parentNavigatorKey: rootNavigatorKey,
+                builder: (context, state) => const CratelistsScreen(),
+                routes: [
+                  // Cratelist detail
+                  GoRoute(
+                    path: ':id',
+                    name: RouteNames.cratelistDetail,
+                    parentNavigatorKey: rootNavigatorKey,
+                    builder: (context, state) {
+                      final id = state.pathParameters['id']!;
+                      return CratelistDetailScreen(cratelistId: id);
+                    },
+                    routes: [
+                      // Multi-select album picker
+                      GoRoute(
+                        path: RoutePaths.cratelistAddAlbums,
+                        name: RouteNames.cratelistAddAlbums,
+                        parentNavigatorKey: rootNavigatorKey,
+                        builder: (context, state) {
+                          final id = state.pathParameters['id']!;
+                          return CratelistAlbumPickerScreen(cratelistId: id);
+                        },
+                      ),
+                    ],
+                  ),
+                ],
               ),
             ],
           ),
