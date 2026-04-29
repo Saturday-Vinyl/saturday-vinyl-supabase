@@ -13,6 +13,7 @@ This repository is the **single source of truth** for the Saturday Vinyl databas
 | `saturday-admin-app` | `admin` | Factory/technician desktop app (Flutter) |
 | `saturday-mobile-app` | `mobile` | Consumer mobile app (Flutter) |
 | `sv-hub-firmware` | `firmware` | ESP32 device firmware |
+| `saturday-apple-tv` | `tv` | Apple TV dashboard app (SwiftUI/tvOS) |
 
 ## Quick Start
 

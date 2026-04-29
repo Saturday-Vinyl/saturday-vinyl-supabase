@@ -33,9 +33,13 @@ final variantImageAssetsProvider =
 
 /// Public URL for a frame image path (product-images bucket is public)
 final frameImageUrlProvider = Provider.family<String, String>((ref, framePath) {
+  // Strip bucket prefix if present to avoid duplication (e.g. product-images/product-images/...)
+  final cleanPath = framePath.startsWith('product-images/')
+      ? framePath.substring('product-images/'.length)
+      : framePath;
   return SupabaseService.instance.client.storage
       .from('product-images')
-      .getPublicUrl(framePath);
+      .getPublicUrl(cleanPath);
 });
 
 /// Management class for image slot and asset CRUD operations

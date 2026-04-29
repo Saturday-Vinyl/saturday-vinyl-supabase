@@ -335,12 +335,21 @@ class RemoteMonitorNotifier extends StateNotifier<RemoteMonitorState> {
   }
 
   /// Send a command to a device
+  ///
+  /// Automatically starts monitoring if not already subscribed, so the user
+  /// receives status updates and command results without manually starting
+  /// the remote monitor.
   Future<DeviceCommand?> sendCommand({
     required String macAddress,
     required String command,
     Map<String, dynamic>? parameters,
   }) async {
     try {
+      // Ensure monitoring is active so we receive status updates back
+      if (!state.isSubscribed) {
+        await startMonitoring();
+      }
+
       final repository = ref.read(deviceCommandRepositoryProvider);
 
       final deviceCommand = await repository.sendCommand(
@@ -383,6 +392,24 @@ class RemoteMonitorNotifier extends StateNotifier<RemoteMonitorState> {
   /// Send factory_reset command
   Future<DeviceCommand?> sendFactoryReset(String macAddress) async {
     return sendCommand(macAddress: macAddress, command: 'factory_reset');
+  }
+
+  /// Send ota_update command to a device
+  Future<DeviceCommand?> sendOtaUpdate({
+    required String macAddress,
+    required String firmwareId,
+    required String targetVersion,
+    required String firmwareUrl,
+  }) async {
+    return sendCommand(
+      macAddress: macAddress,
+      command: 'ota_update',
+      parameters: {
+        'firmware_id': firmwareId,
+        'target_version': targetVersion,
+        'firmware_url': firmwareUrl,
+      },
+    );
   }
 
   /// Send a capability command to a device

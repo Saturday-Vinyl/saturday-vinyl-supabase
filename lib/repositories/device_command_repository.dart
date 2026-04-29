@@ -99,6 +99,27 @@ class DeviceCommandRepository {
     );
   }
 
+  /// Send ota_update command with firmware details
+  Future<DeviceCommand> sendOtaUpdate(
+    String macAddress, {
+    required String firmwareId,
+    required String targetVersion,
+    required String firmwareUrl,
+    String? createdBy,
+  }) {
+    return sendCommand(
+      macAddress: macAddress,
+      command: 'ota_update',
+      parameters: {
+        'firmware_id': firmwareId,
+        'target_version': targetVersion,
+        'firmware_url': firmwareUrl,
+      },
+      expiresIn: const Duration(minutes: 10),
+      createdBy: createdBy,
+    );
+  }
+
   /// Send a capability command (flat dispatch)
   ///
   /// Capability commands are dispatched as flat top-level commands.

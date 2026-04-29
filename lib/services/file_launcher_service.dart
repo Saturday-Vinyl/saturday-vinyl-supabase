@@ -303,7 +303,10 @@ class FileLauncherService {
       final supabase = Supabase.instance.client;
 
       // Extract storage path from URL
-      String storagePath = firmware.binaryUrl;
+      if (firmware.binaryUrl == null) {
+        throw Exception('Firmware has no binary URL');
+      }
+      String storagePath = firmware.binaryUrl!;
       if (storagePath.contains('storage/v1/object/public/firmware-binaries/')) {
         storagePath = storagePath.split('storage/v1/object/public/firmware-binaries/').last;
       }

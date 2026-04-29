@@ -16,7 +16,7 @@ class BomRepository {
           .from('bom_lines')
           .select()
           .eq('product_id', productId)
-          .order('created_at');
+          .order('id');
 
       return (response as List)
           .map((json) => BomLine.fromJson(json as Map<String, dynamic>))

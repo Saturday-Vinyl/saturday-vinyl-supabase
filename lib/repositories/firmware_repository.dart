@@ -180,9 +180,11 @@ class FirmwareRepository {
       final supabase = SupabaseService.instance.client;
       await supabase.from(_tableName).delete().eq('id', id);
 
-      // Then delete the binary file
-      final storageService = StorageService();
-      await storageService.deleteFirmwareBinary(firmware.binaryUrl);
+      // Then delete the binary file (if it exists)
+      if (firmware.binaryUrl != null) {
+        final storageService = StorageService();
+        await storageService.deleteFirmwareBinary(firmware.binaryUrl!);
+      }
 
       AppLogger.info('Firmware version deleted successfully');
     } catch (error, stackTrace) {
@@ -254,16 +256,19 @@ class FirmwareRepository {
       if (firmware == null) {
         throw Exception('Firmware version not found: $firmwareId');
       }
+      if (firmware.binaryUrl == null) {
+        throw Exception('Firmware has no binary URL: $firmwareId');
+      }
 
       // Download the file
-      final response = await http.get(Uri.parse(firmware.binaryUrl));
+      final response = await http.get(Uri.parse(firmware.binaryUrl!));
       if (response.statusCode != 200) {
         throw Exception('Failed to download firmware: HTTP ${response.statusCode}');
       }
 
       // Save to temp directory
       final tempDir = await getTemporaryDirectory();
-      final localPath = '${tempDir.path}/firmware_${firmwareId}_${firmware.binaryFilename}';
+      final localPath = '${tempDir.path}/firmware_${firmwareId}_${firmware.binaryFilename ?? "firmware.bin"}';
       final file = File(localPath);
       await file.writeAsBytes(response.bodyBytes);
 
@@ -458,7 +463,7 @@ class FirmwareRepository {
         final fileUrl = await storageService.uploadFirmwareBinary(
           upload.file,
           firmware.deviceTypeId,
-          '${firmware.version}_${upload.socType}',
+          '${firmware.version}_${upload.socType}_${upload.purpose}',
         );
 
         final fileSize = await upload.file.length();
@@ -466,6 +471,7 @@ class FirmwareRepository {
           'firmware_id': createdFirmware.id,
           'soc_type': upload.socType,
           'is_master': upload.isMaster,
+          'purpose': upload.purpose,
           'file_url': fileUrl,
           'file_sha256': upload.sha256,
           'file_size': fileSize,
@@ -490,17 +496,21 @@ class FirmwareRepository {
     }
   }
 
-  /// Add a file to existing firmware
+  /// Add or replace a file for an existing firmware
+  ///
+  /// If a file already exists for the same firmware/soc/purpose, the old
+  /// storage object is deleted and the row is updated in place.
   Future<FirmwareFile> addFirmwareFile({
     required String firmwareId,
     required String socType,
     required bool isMaster,
     required File file,
+    String purpose = FirmwareFilePurpose.factory,
     String? sha256,
     int flashOffset = 0,
   }) async {
     try {
-      AppLogger.info('Adding firmware file for $socType to firmware $firmwareId');
+      AppLogger.info('Adding firmware file for $socType ($purpose) to firmware $firmwareId');
 
       final firmware = await getFirmwareById(firmwareId);
       if (firmware == null) {
@@ -511,28 +521,59 @@ class FirmwareRepository {
       final fileUrl = await storageService.uploadFirmwareBinary(
         file,
         firmware.deviceTypeId,
-        '${firmware.version}_$socType',
+        '${firmware.version}_${socType}_$purpose',
       );
 
       final fileSize = await file.length();
       final supabase = SupabaseService.instance.client;
 
-      final response = await supabase
-          .from(_filesTableName)
-          .insert({
-            'firmware_id': firmwareId,
-            'soc_type': socType,
-            'is_master': isMaster,
-            'file_url': fileUrl,
-            'file_sha256': sha256,
-            'file_size': fileSize,
-            'flash_offset': flashOffset,
-          })
-          .select()
-          .single();
+      // Check for existing row to replace
+      final existing = await getFirmwareFileForSoc(
+        firmwareId,
+        socType,
+        purpose: purpose,
+      );
+
+      final fileData = {
+        'firmware_id': firmwareId,
+        'soc_type': socType,
+        'is_master': isMaster,
+        'purpose': purpose,
+        'file_url': fileUrl,
+        'file_sha256': sha256,
+        'file_size': fileSize,
+        'flash_offset': flashOffset,
+      };
+
+      Map<String, dynamic> response;
+      if (existing != null) {
+        AppLogger.info(
+            'Replacing existing firmware file ${existing.id} ($socType/$purpose)');
+        response = await supabase
+            .from(_filesTableName)
+            .update(fileData)
+            .eq('id', existing.id)
+            .select()
+            .single();
+
+        // Best-effort: clean up the orphaned storage object
+        try {
+          await storageService.deleteFirmwareBinary(existing.fileUrl);
+        } catch (deleteError) {
+          AppLogger.error(
+              'Failed to delete orphaned binary ${existing.fileUrl}',
+              deleteError);
+        }
+      } else {
+        response = await supabase
+            .from(_filesTableName)
+            .insert(fileData)
+            .select()
+            .single();
+      }
 
       final firmwareFile = FirmwareFile.fromJson(response);
-      AppLogger.info('Firmware file added: ${firmwareFile.id}');
+      AppLogger.info('Firmware file saved: ${firmwareFile.id}');
       return firmwareFile;
     } catch (error, stackTrace) {
       AppLogger.error('Failed to add firmware file', error, stackTrace);
@@ -540,13 +581,15 @@ class FirmwareRepository {
     }
   }
 
-  /// Get firmware file for a specific SoC type
+  /// Get firmware file for a specific SoC type and purpose
   Future<FirmwareFile?> getFirmwareFileForSoc(
     String firmwareId,
-    String socType,
-  ) async {
+    String socType, {
+    String purpose = FirmwareFilePurpose.factory,
+  }) async {
     try {
-      AppLogger.info('Fetching firmware file for $socType in firmware $firmwareId');
+      AppLogger.info(
+          'Fetching firmware file for $socType ($purpose) in firmware $firmwareId');
 
       final supabase = SupabaseService.instance.client;
       final response = await supabase
@@ -554,10 +597,11 @@ class FirmwareRepository {
           .select()
           .eq('firmware_id', firmwareId)
           .eq('soc_type', socType)
+          .eq('purpose', purpose)
           .maybeSingle();
 
       if (response == null) {
-        AppLogger.info('No firmware file found for $socType');
+        AppLogger.info('No firmware file found for $socType ($purpose)');
         return null;
       }
 
@@ -693,6 +737,7 @@ class FirmwareFileUpload {
   final File file;
   final String socType;
   final bool isMaster;
+  final String purpose;
   final String? sha256;
   final int flashOffset;
 
@@ -700,6 +745,7 @@ class FirmwareFileUpload {
     required this.file,
     required this.socType,
     this.isMaster = false,
+    this.purpose = FirmwareFilePurpose.factory,
     this.sha256,
     this.flashOffset = 0,
   });

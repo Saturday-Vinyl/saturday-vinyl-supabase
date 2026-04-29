@@ -8,8 +8,8 @@ class FirmwareVersion extends Equatable {
   final String deviceTypeId; // Foreign key
   final String version; // Semantic versioning: "1.2.3"
   final String? releaseNotes;
-  final String binaryUrl; // Supabase storage URL
-  final String binaryFilename;
+  final String? binaryUrl; // Supabase storage URL
+  final String? binaryFilename;
   final int? binarySize; // Size in bytes
   final bool isProductionReady;
   final DateTime createdAt;
@@ -20,8 +20,8 @@ class FirmwareVersion extends Equatable {
     required this.deviceTypeId,
     required this.version,
     this.releaseNotes,
-    required this.binaryUrl,
-    required this.binaryFilename,
+    this.binaryUrl,
+    this.binaryFilename,
     this.binarySize,
     required this.isProductionReady,
     required this.createdAt,
@@ -35,8 +35,8 @@ class FirmwareVersion extends Equatable {
       deviceTypeId: json['device_type_id'] as String,
       version: json['version'] as String,
       releaseNotes: json['release_notes'] as String?,
-      binaryUrl: json['binary_url'] as String,
-      binaryFilename: json['binary_filename'] as String,
+      binaryUrl: json['binary_url'] as String?,
+      binaryFilename: json['binary_filename'] as String?,
       binarySize: json['binary_size'] as int?,
       isProductionReady: json['is_production_ready'] as bool? ?? false,
       createdAt: DateTime.parse(json['created_at'] as String),

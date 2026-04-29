@@ -68,7 +68,10 @@ class ProductImageAsset extends Equatable {
 
   /// Get the public URL for this frame image from Supabase Storage.
   String getPublicUrl(String supabaseUrl) {
-    return '$supabaseUrl/storage/v1/object/public/product-images/$framePath';
+    final cleanPath = framePath.startsWith('product-images/')
+        ? framePath.substring('product-images/'.length)
+        : framePath;
+    return '$supabaseUrl/storage/v1/object/public/product-images/$cleanPath';
   }
 
   @override

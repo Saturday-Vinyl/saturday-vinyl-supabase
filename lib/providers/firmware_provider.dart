@@ -195,11 +195,15 @@ final criticalFirmwareProvider =
   return repository.getCriticalFirmware(deviceTypeId);
 });
 
-/// Provider for firmware file by SoC type
+/// Provider for firmware file by SoC type and purpose
 final firmwareFileForSocProvider = FutureProvider.family<FirmwareFile?,
-    ({String firmwareId, String socType})>((ref, params) async {
+    ({String firmwareId, String socType, String purpose})>((ref, params) async {
   final repository = ref.watch(firmwareRepositoryProvider);
-  return repository.getFirmwareFileForSoc(params.firmwareId, params.socType);
+  return repository.getFirmwareFileForSoc(
+    params.firmwareId,
+    params.socType,
+    purpose: params.purpose,
+  );
 });
 
 /// Extended firmware management with multi-SoC support
@@ -234,11 +238,12 @@ extension FirmwareManagementExtensions on FirmwareManagement {
     required String socType,
     required bool isMaster,
     required File file,
+    String purpose = FirmwareFilePurpose.factory,
     String? sha256,
     int flashOffset = 0,
   }) async {
     try {
-      AppLogger.info('Adding firmware file for $socType');
+      AppLogger.info('Adding firmware file for $socType ($purpose)');
 
       final repository = ref.read(firmwareRepositoryProvider);
       final firmwareFile = await repository.addFirmwareFile(
@@ -246,6 +251,7 @@ extension FirmwareManagementExtensions on FirmwareManagement {
         socType: socType,
         isMaster: isMaster,
         file: file,
+        purpose: purpose,
         sha256: sha256,
         flashOffset: flashOffset,
       );
@@ -253,7 +259,9 @@ extension FirmwareManagementExtensions on FirmwareManagement {
       // Invalidate providers
       ref.invalidate(firmwareByIdProvider(firmwareId));
       ref.invalidate(
-        firmwareFileForSocProvider((firmwareId: firmwareId, socType: socType)),
+        firmwareFileForSocProvider(
+          (firmwareId: firmwareId, socType: socType, purpose: purpose),
+        ),
       );
 
       AppLogger.info('Firmware file added successfully');

@@ -1,5 +1,16 @@
 import 'package:equatable/equatable.dart';
 
+/// Purpose of a firmware binary file
+///
+/// Master SoCs need both: factory (merged) for esptool flashing and ota
+/// (app-only) for esp_https_ota. Secondary SoCs only need factory.
+class FirmwareFilePurpose {
+  static const String factory = 'factory';
+  static const String ota = 'ota';
+
+  static const List<String> all = [factory, ota];
+}
+
 /// Represents a firmware binary file for a specific SoC
 ///
 /// A firmware version can have multiple files for multi-SoC boards.
@@ -13,6 +24,9 @@ class FirmwareFile extends Equatable {
 
   /// Master file is pushed via OTA, secondary files are pulled by device
   final bool isMaster;
+
+  /// Binary purpose: 'factory' (merged) for esptool, 'ota' (app-only) for OTA
+  final String purpose;
 
   /// Storage URL
   final String fileUrl;
@@ -35,6 +49,7 @@ class FirmwareFile extends Equatable {
     required this.firmwareId,
     required this.socType,
     this.isMaster = false,
+    this.purpose = FirmwareFilePurpose.factory,
     required this.fileUrl,
     this.fileSha256,
     this.fileSize,
@@ -62,6 +77,7 @@ class FirmwareFile extends Equatable {
       firmwareId: json['firmware_id'] as String,
       socType: json['soc_type'] as String,
       isMaster: json['is_master'] as bool? ?? false,
+      purpose: json['purpose'] as String? ?? FirmwareFilePurpose.factory,
       fileUrl: json['file_url'] as String,
       fileSha256: json['file_sha256'] as String?,
       fileSize: json['file_size'] as int?,
@@ -76,6 +92,7 @@ class FirmwareFile extends Equatable {
       'firmware_id': firmwareId,
       'soc_type': socType,
       'is_master': isMaster,
+      'purpose': purpose,
       'file_url': fileUrl,
       'file_sha256': fileSha256,
       'file_size': fileSize,
@@ -89,6 +106,7 @@ class FirmwareFile extends Equatable {
       'firmware_id': firmwareId,
       'soc_type': socType,
       'is_master': isMaster,
+      'purpose': purpose,
       'file_url': fileUrl,
       'file_sha256': fileSha256,
       'file_size': fileSize,
@@ -102,6 +120,7 @@ class FirmwareFile extends Equatable {
         firmwareId,
         socType,
         isMaster,
+        purpose,
         fileUrl,
         fileSha256,
         fileSize,
@@ -111,7 +130,7 @@ class FirmwareFile extends Equatable {
 
   @override
   String toString() =>
-      'FirmwareFile(id: $id, socType: $socType, isMaster: $isMaster)';
+      'FirmwareFile(id: $id, socType: $socType, isMaster: $isMaster, purpose: $purpose)';
 }
 
 /// Firmware version for a device type with multi-SoC support
@@ -168,10 +187,38 @@ class Firmware extends Equatable {
   /// Check if firmware is released (has a release date)
   bool get isReleased => releasedAt != null;
 
-  /// Get the master firmware file (for OTA push)
+  /// Get any master firmware file (prefers factory binary for display)
   FirmwareFile? get masterFile {
     try {
-      return files.firstWhere((f) => f.isMaster);
+      return files.firstWhere(
+        (f) => f.isMaster && f.purpose == FirmwareFilePurpose.factory,
+      );
+    } catch (_) {
+      try {
+        return files.firstWhere((f) => f.isMaster);
+      } catch (_) {
+        return null;
+      }
+    }
+  }
+
+  /// Get the master OTA binary (app-only, for esp_https_ota push)
+  FirmwareFile? get masterOtaFile {
+    try {
+      return files.firstWhere(
+        (f) => f.isMaster && f.purpose == FirmwareFilePurpose.ota,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Get the master factory binary (merged, for esptool flashing)
+  FirmwareFile? get masterFactoryFile {
+    try {
+      return files.firstWhere(
+        (f) => f.isMaster && f.purpose == FirmwareFilePurpose.factory,
+      );
     } catch (_) {
       return null;
     }
@@ -182,17 +229,27 @@ class Firmware extends Equatable {
     return files.where((f) => !f.isMaster).toList();
   }
 
-  /// Get file for specific SoC type
-  FirmwareFile? getFileForSoc(String socType) {
+  /// Get file for specific SoC type and purpose
+  FirmwareFile? getFileForSoc(
+    String socType, {
+    String purpose = FirmwareFilePurpose.factory,
+  }) {
     try {
-      return files.firstWhere((f) => f.socType == socType);
+      return files.firstWhere(
+        (f) => f.socType == socType && f.purpose == purpose,
+      );
     } catch (_) {
-      return null;
+      // Fallback: any file matching the SoC type (legacy data without purpose)
+      try {
+        return files.firstWhere((f) => f.socType == socType);
+      } catch (_) {
+        return null;
+      }
     }
   }
 
-  /// Check if this is a multi-SoC firmware
-  bool get isMultiSoc => files.length > 1;
+  /// Check if this is a multi-SoC firmware (distinct SoC types)
+  bool get isMultiSoc => files.map((f) => f.socType).toSet().length > 1;
 
   factory Firmware.fromJson(Map<String, dynamic> json) {
     final filesJson = json['firmware_files'];

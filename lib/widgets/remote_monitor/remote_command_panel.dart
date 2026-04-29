@@ -6,6 +6,7 @@ import 'package:saturday_app/widgets/common/command_parameter_dialog.dart';
 import 'package:saturday_app/models/device.dart';
 import 'package:saturday_app/providers/capability_provider.dart';
 import 'package:saturday_app/providers/remote_monitor_provider.dart';
+import 'package:saturday_app/widgets/remote_monitor/ota_update_dialog.dart';
 
 /// Panel for sending commands to remote devices
 ///
@@ -146,6 +147,17 @@ class RemoteCommandPanel extends ConsumerWidget {
                             'WARNING: This will erase ALL data including serial number. The device will need to be re-provisioned.',
                         isDestructive: true,
                         onConfirm: () => _sendFactoryReset(ref, primaryDevice),
+                      )
+                  : null,
+            ),
+            _CommandButton(
+              label: 'OTA Update',
+              icon: Icons.system_update,
+              onPressed: primaryDevice != null
+                  ? () => OtaUpdateDialog.show(
+                        context: context,
+                        device: primaryDevice,
+                        unitId: unitId,
                       )
                   : null,
             ),

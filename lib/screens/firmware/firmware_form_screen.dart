@@ -40,14 +40,16 @@ class _FirmwareFormScreenState extends ConsumerState<FirmwareFormScreen> {
   bool _isSaving = false;
   String? _masterSoc;
 
-  // Map of SoC type -> selected file
+  /// Map of "${socType}:${purpose}" -> selected file
   final Map<String, File> _selectedFiles = {};
 
-  // Map of SoC type -> flash offset controller
+  /// Map of SoC type -> flash offset controller (only used for non-master SoCs)
   final Map<String, TextEditingController> _flashOffsetControllers = {};
 
   // Existing files from firmware (for edit mode)
   List<FirmwareFile> _existingFiles = [];
+
+  static String _slotKey(String socType, String purpose) => '$socType:$purpose';
 
   bool get isEditing => widget.firmware != null;
 
@@ -258,10 +260,6 @@ class _FirmwareFormScreenState extends ConsumerState<FirmwareFormScreen> {
   }
 
   Widget _buildSocFileCard(String socType) {
-    final existingFile = _existingFiles
-        .where((f) => f.socType == socType)
-        .firstOrNull;
-    final selectedFile = _selectedFiles[socType];
     final isMaster = _masterSoc == socType;
 
     return Card(
@@ -287,7 +285,7 @@ class _FirmwareFormScreenState extends ConsumerState<FirmwareFormScreen> {
                         style: Theme.of(context).textTheme.titleSmall,
                       ),
                       if (isMaster)
-                        Text(
+                        const Text(
                           'Master (pushed via OTA)',
                           style: TextStyle(
                             color: Colors.orange,
@@ -312,90 +310,30 @@ class _FirmwareFormScreenState extends ConsumerState<FirmwareFormScreen> {
             ),
             const SizedBox(height: 12),
 
-            // File status
-            if (selectedFile != null) ...[
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: SaturdayColors.success.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.check_circle, color: SaturdayColors.success),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            selectedFile.path.split('/').last,
-                            style: const TextStyle(fontWeight: FontWeight.w500),
-                          ),
-                          Text(
-                            '${(selectedFile.lengthSync() / 1024).toStringAsFixed(1)} KB',
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
-                        ],
-                      ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.close),
-                      onPressed: () {
-                        setState(() {
-                          _selectedFiles.remove(socType);
-                        });
-                      },
-                    ),
-                  ],
-                ),
+            // Master SoC: two binary slots (factory + ota)
+            // Secondary SoC: single factory slot
+            if (isMaster) ...[
+              _buildBinarySlot(
+                socType: socType,
+                purpose: FirmwareFilePurpose.factory,
+                label: 'Factory binary (merged)',
+                helper:
+                    'Bootloader + partition table + ota_data + app, used for factory flashing via esptool',
               ),
-            ] else if (existingFile != null) ...[
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: SaturdayColors.secondaryGrey.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.cloud_done, color: SaturdayColors.secondaryGrey),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            existingFile.filename,
-                            style: const TextStyle(fontWeight: FontWeight.w500),
-                          ),
-                          Text(
-                            existingFile.formattedSize,
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
-                        ],
-                      ),
-                    ),
-                    TextButton(
-                      onPressed: _isSaving ? null : () => _pickFile(socType),
-                      child: const Text('Replace'),
-                    ),
-                  ],
-                ),
+              const SizedBox(height: 12),
+              _buildBinarySlot(
+                socType: socType,
+                purpose: FirmwareFilePurpose.ota,
+                label: 'OTA binary (app-only)',
+                helper:
+                    'App-only binary for esp_https_ota — required for OTA pushes',
               ),
             ] else ...[
-              OutlinedButton.icon(
-                onPressed: _isSaving ? null : () => _pickFile(socType),
-                icon: const Icon(Icons.upload_file),
-                label: const Text('Select Binary File'),
-                style: OutlinedButton.styleFrom(
-                  minimumSize: const Size(double.infinity, 48),
-                ),
+              _buildBinarySlot(
+                socType: socType,
+                purpose: FirmwareFilePurpose.factory,
+                label: 'Binary',
               ),
-            ],
-
-            // Flash offset field (shown for non-master SoCs)
-            if (!isMaster) ...[
               const SizedBox(height: 12),
               TextFormField(
                 controller: _getFlashOffsetController(socType),
@@ -421,15 +359,134 @@ class _FirmwareFormScreenState extends ConsumerState<FirmwareFormScreen> {
     );
   }
 
-  Future<void> _pickFile(String socType) async {
+  Widget _buildBinarySlot({
+    required String socType,
+    required String purpose,
+    required String label,
+    String? helper,
+  }) {
+    final key = _slotKey(socType, purpose);
+    final selectedFile = _selectedFiles[key];
+    final existingFile = _existingFiles
+        .where((f) => f.socType == socType && f.purpose == purpose)
+        .firstOrNull;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(
+              label,
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+            ),
+          ],
+        ),
+        if (helper != null) ...[
+          const SizedBox(height: 2),
+          Text(
+            helper,
+            style: TextStyle(
+              fontSize: 11,
+              color: SaturdayColors.secondaryGrey,
+            ),
+          ),
+        ],
+        const SizedBox(height: 6),
+        if (selectedFile != null)
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: SaturdayColors.success.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.check_circle, color: SaturdayColors.success),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        selectedFile.path.split('/').last,
+                        style: const TextStyle(fontWeight: FontWeight.w500),
+                      ),
+                      Text(
+                        '${(selectedFile.lengthSync() / 1024).toStringAsFixed(1)} KB',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () {
+                    setState(() {
+                      _selectedFiles.remove(key);
+                    });
+                  },
+                ),
+              ],
+            ),
+          )
+        else if (existingFile != null)
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: SaturdayColors.secondaryGrey.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.cloud_done,
+                    color: SaturdayColors.secondaryGrey),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        existingFile.filename,
+                        style: const TextStyle(fontWeight: FontWeight.w500),
+                      ),
+                      Text(
+                        existingFile.formattedSize,
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                  ),
+                ),
+                TextButton(
+                  onPressed: _isSaving ? null : () => _pickFile(socType, purpose),
+                  child: const Text('Replace'),
+                ),
+              ],
+            ),
+          )
+        else
+          OutlinedButton.icon(
+            onPressed: _isSaving ? null : () => _pickFile(socType, purpose),
+            icon: const Icon(Icons.upload_file),
+            label: const Text('Select Binary File'),
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(double.infinity, 44),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Future<void> _pickFile(String socType, String purpose) async {
     final result = await FilePicker.platform.pickFiles(
-      type: FileType.any,
+      type: FileType.custom,
+      allowedExtensions: const ['bin'],
       allowMultiple: false,
     );
 
     if (result != null && result.files.single.path != null) {
       setState(() {
-        _selectedFiles[socType] = File(result.files.single.path!);
+        _selectedFiles[_slotKey(socType, purpose)] = File(result.files.single.path!);
       });
     }
   }
@@ -467,16 +524,20 @@ class _FirmwareFormScreenState extends ConsumerState<FirmwareFormScreen> {
 
         // Upload any new files
         for (final entry in _selectedFiles.entries) {
-          final isMaster = _masterSoc == entry.key;
+          final parts = entry.key.split(':');
+          final socType = parts[0];
+          final purpose = parts[1];
+          final isMaster = _masterSoc == socType;
           final flashOffset = isMaster
               ? 0
               : _parseFlashOffset(
-                  _getFlashOffsetController(entry.key).text);
+                  _getFlashOffsetController(socType).text);
           await management.addFirmwareFile(
             firmwareId: widget.firmware!.id,
-            socType: entry.key,
+            socType: socType,
             isMaster: isMaster,
             file: entry.value,
+            purpose: purpose,
             flashOffset: flashOffset,
           );
         }
@@ -495,14 +556,18 @@ class _FirmwareFormScreenState extends ConsumerState<FirmwareFormScreen> {
 
         // Prepare file uploads
         final fileUploads = _selectedFiles.entries.map((entry) {
-          final isMaster = _masterSoc == entry.key;
+          final parts = entry.key.split(':');
+          final socType = parts[0];
+          final purpose = parts[1];
+          final isMaster = _masterSoc == socType;
           final flashOffset = isMaster
               ? 0
               : _parseFlashOffset(
-                  _getFlashOffsetController(entry.key).text);
+                  _getFlashOffsetController(socType).text);
           return FirmwareFileUpload(
-            socType: entry.key,
+            socType: socType,
             isMaster: isMaster,
+            purpose: purpose,
             file: entry.value,
             flashOffset: flashOffset,
           );
