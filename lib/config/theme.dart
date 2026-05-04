@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 /// Saturday brand colors.
 class SaturdayColors {
@@ -43,7 +42,8 @@ class SaturdayTheme {
     FontWeight fontWeight = FontWeight.w400,
     Color color = SaturdayColors.primaryDark,
   }) {
-    return GoogleFonts.bevan(
+    return TextStyle(
+      fontFamily: 'Bevan',
       fontSize: fontSize,
       fontWeight: fontWeight,
       color: color,

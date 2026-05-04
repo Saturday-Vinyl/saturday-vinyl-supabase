@@ -7,7 +7,7 @@ import 'package:saturday_consumer_app/screens/auth/forgot_password_screen.dart';
 import 'package:saturday_consumer_app/screens/auth/login_screen.dart';
 import 'package:saturday_consumer_app/screens/auth/signup_screen.dart';
 import 'package:saturday_consumer_app/screens/intro/intro_splash_screen.dart';
-import 'package:saturday_consumer_app/screens/now_playing/now_playing_screen.dart';
+import 'package:saturday_consumer_app/screens/home/home_screen.dart';
 import 'package:saturday_consumer_app/screens/now_playing/queue_album_picker_screen.dart';
 import 'package:saturday_consumer_app/screens/now_playing/queue_screen.dart';
 import 'package:saturday_consumer_app/screens/now_playing/set_now_playing_screen.dart';
@@ -209,12 +209,12 @@ GoRouter createAppRouter(Ref ref) {
         navigatorKey: shellNavigatorKey,
         builder: (context, state, child) => ScaffoldWithNav(child: child),
         routes: [
-          // Now Playing tab
+          // Home tab (path kept as /now-playing for backward compatibility)
           GoRoute(
             path: RoutePaths.nowPlaying,
             name: RouteNames.nowPlaying,
             pageBuilder: (context, state) => const NoTransitionPage(
-              child: NowPlayingScreen(),
+              child: HomeScreen(),
             ),
             routes: [
               // Set now playing screen

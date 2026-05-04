@@ -2,7 +2,7 @@ name: saturday_consumer_app
 description: "Saturday Consumer App - Your vinyl companion for managing record collections and Saturday devices."
 publish_to: 'none'
 
-version: 1.0.0+2
+version: 1.0.0+4
 
 environment:
   sdk: ^3.9.2
@@ -13,7 +13,6 @@ dependencies:
 
   # UI & Icons
   cupertino_icons: ^1.0.8
-  google_fonts: ^6.1.0
 
   # State Management
   flutter_riverpod: ^2.4.0
@@ -93,3 +92,8 @@ flutter:
     - assets/images/
     - assets/animations/
     - .env
+
+  fonts:
+    - family: Bevan
+      fonts:
+        - asset: assets/fonts/Bevan-Regular.ttf

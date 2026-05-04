@@ -77,9 +77,9 @@ class _TabletScaffold extends StatelessWidget {
             indicatorColor: SaturdayColors.light,
             destinations: const [
               NavigationRailDestination(
-                icon: Icon(Icons.play_circle_outline),
-                selectedIcon: Icon(Icons.play_circle_filled),
-                label: Text('Now Playing'),
+                icon: Icon(Icons.home_outlined),
+                selectedIcon: Icon(Icons.home),
+                label: Text('Home'),
               ),
               NavigationRailDestination(
                 icon: Icon(Icons.album_outlined),
@@ -148,9 +148,9 @@ class SaturdayBottomNav extends StatelessWidget {
           onDestinationSelected: (index) => _onItemTapped(context, index),
           destinations: const [
             NavigationDestination(
-              icon: Icon(Icons.play_circle_outline),
-              selectedIcon: Icon(Icons.play_circle_filled),
-              label: 'Now Playing',
+              icon: Icon(Icons.home_outlined),
+              selectedIcon: Icon(Icons.home),
+              label: 'Home',
             ),
             NavigationDestination(
               icon: Icon(Icons.album_outlined),

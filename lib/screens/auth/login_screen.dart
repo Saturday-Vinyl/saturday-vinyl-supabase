@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:go_router/go_router.dart';
 import 'package:saturday_consumer_app/config/routes.dart';
 import 'package:saturday_consumer_app/config/styles.dart';
@@ -124,29 +125,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               children: [
                 const SizedBox(height: 48),
 
-                // Logo and title
+                // Logo
                 Center(
-                  child: Column(
-                    children: [
-                      Icon(
-                        Icons.album,
-                        size: 80,
-                        color: SaturdayColors.primaryDark,
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
-                        'Saturday',
-                        style: Theme.of(context).textTheme.headlineLarge,
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Your vinyl companion',
-                        style: TextStyle(
-                          color: SaturdayColors.secondary,
-                          fontSize: 16,
-                        ),
-                      ),
-                    ],
+                  child: SvgPicture.asset(
+                    'assets/images/saturday-logo.svg',
+                    width: 220,
+                    colorFilter: const ColorFilter.mode(
+                      SaturdayColors.primaryDark,
+                      BlendMode.srcIn,
+                    ),
                   ),
                 ),
 

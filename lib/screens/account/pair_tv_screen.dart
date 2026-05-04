@@ -107,6 +107,8 @@ class _PairTvScreenState extends ConsumerState<PairTvScreen> {
                 controller: _codeController,
                 maxLength: 6,
                 textCapitalization: TextCapitalization.characters,
+                autocorrect: false,
+                enableSuggestions: false,
                 textAlign: TextAlign.center,
                 style: Theme.of(
                   context,
@@ -116,7 +118,6 @@ class _PairTvScreenState extends ConsumerState<PairTvScreen> {
                   UpperCaseTextFormatter(),
                 ],
                 decoration: const InputDecoration(
-                  hintText: 'XXXXXX',
                   counterText: '',
                   border: InputBorder.none,
                 ),

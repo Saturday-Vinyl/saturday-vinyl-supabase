@@ -4,7 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:saturday_consumer_app/config/routes.dart';
 import 'package:saturday_consumer_app/config/theme.dart';
 import 'package:saturday_consumer_app/screens/library/library_screen.dart';
-import 'package:saturday_consumer_app/screens/now_playing/now_playing_screen.dart';
+import 'package:saturday_consumer_app/screens/home/home_screen.dart';
 import 'package:saturday_consumer_app/widgets/common/adaptive_layout.dart';
 import 'package:saturday_consumer_app/widgets/library/album_detail_panel.dart';
 
@@ -39,7 +39,7 @@ class _PortraitLayout extends StatelessWidget {
   Widget build(BuildContext context) {
     // In portrait, we use the standard tab-based navigation
     // This widget would be replaced by the normal scaffold with nav
-    return const NowPlayingScreen();
+    return const HomeScreen();
   }
 }
 
@@ -65,7 +65,7 @@ class _LandscapeLayout extends ConsumerWidget {
                 ),
               ),
             ),
-            child: const NowPlayingScreen(),
+            child: const HomeScreen(),
           ),
         ),
 
