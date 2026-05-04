@@ -1,5 +1,0 @@
-description: "ESP32-H2 firmware flasher via esp-serial-flasher"
-version: "1.0.0"
-dependencies:
-  espressif/esp-serial-flasher:
-    version: "^1.4.0"

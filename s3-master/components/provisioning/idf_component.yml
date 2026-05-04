@@ -1,6 +1,0 @@
-## Component dependencies for provisioning
-dependencies:
-  idf:
-    version: ">=5.0.0"
-  espressif/cjson:
-    version: "^1.7.19"
