@@ -1,6 +1,6 @@
 # Saturday Vinyl Database Schema
 
-> Generated from live Supabase database on 2026-02-16.
+> Generated from live Supabase database on 2026-05-12.
 > Regenerate with: `./scripts/generate-schema-docs.sh`
 
 ## Table of Contents
@@ -104,6 +104,7 @@ Product variant options (synced from Shopify).
 | is_active | boolean | NOT NULL | true |  |
 | created_at | timestamp with time zone | NOT NULL | now() |  |
 | updated_at | timestamp with time zone | NOT NULL | now() |  |
+| max_slots | integer |  |  |  |
 
 ### product_device_types
 Maps products to the device types they contain.
@@ -153,7 +154,7 @@ Dynamic capability definitions with JSON schemas for provisioning and telemetry.
 | consumer_input_schema | jsonb |  | {} |  |
 | consumer_output_schema | jsonb |  | {} |  |
 | heartbeat_schema | jsonb |  | {} |  |
-| tests | jsonb |  | [] |  |
+| commands | jsonb |  | [] |  |
 | is_active | boolean |  | true |  |
 | created_at | timestamp with time zone |  | now() |  |
 | updated_at | timestamp with time zone |  | now() |  |
@@ -226,6 +227,7 @@ Hardware instances (PCBs identified by MAC address).
 | device_type_slug | character varying(100) |  |  | FK -> device_types(slug) |
 | consumer_provisioned_at | timestamp with time zone |  |  |  |
 | consumer_provisioned_by | uuid |  |  | FK -> users(id) |
+| hub_mac_address | character varying(17) |  |  |  |
 
 ### consumer_devices
 Consumer-facing device instances (registered by end users in the mobile app).
@@ -380,6 +382,8 @@ Per-SoC firmware binary files (for multi-SoC devices).
 | file_sha256 | text |  |  |  |
 | file_size | integer |  |  |  |
 | created_at | timestamp with time zone |  | now() |  |
+| flash_offset | integer |  | 0 |  |
+| purpose | text | NOT NULL | factory | UNIQUE, CHECK purpose = ANY (ARRAY['factory'::text, 'ota'::text]) |
 
 ---
 
@@ -443,19 +447,6 @@ Real-time record placement/removal events from RFID readers.
 | rssi | integer |  |  |  |
 | duration_ms | integer |  |  |  |
 | timestamp | timestamp with time zone | NOT NULL | now() |  |
-| created_at | timestamp with time zone | NOT NULL | now() |  |
-
-### crate_inventory_events
-RFID inventory snapshots from Thread-connected crates, relayed via the Hub.
-
-| Column | Type | Nullable | Default | Notes |
-|--------|------|----------|---------|-------|
-| id | uuid | NOT NULL | gen_random_uuid() | PK |
-| unit_id | text | NOT NULL |  | Hub serial number |
-| mac_address | character varying(17) | NOT NULL |  | WiFi MAC of the crate (matches devices.mac_address) |
-| epcs | text[] | NOT NULL |  | Array of 24-char hex EPCs |
-| epc_count | integer | NOT NULL |  |  |
-| timestamp | timestamp with time zone | NOT NULL |  |  |
 | created_at | timestamp with time zone | NOT NULL | now() |  |
 
 ---
@@ -570,6 +561,7 @@ Album metadata (from Discogs).
 | tracks | jsonb |  | [] |  |
 | created_at | timestamp with time zone | NOT NULL | now() |  |
 | updated_at | timestamp with time zone | NOT NULL | now() |  |
+| colors | jsonb |  |  |  |
 
 ### libraries
 User-created album collections.
@@ -633,7 +625,7 @@ Tracks which device an album is currently on.
 |--------|------|----------|---------|-------|
 | id | uuid | NOT NULL | gen_random_uuid() | PK |
 | library_album_id | uuid | NOT NULL |  | FK -> library_albums(id) |
-| device_id | uuid | NOT NULL |  | FK -> consumer_devices(id) |
+| device_id | uuid | NOT NULL |  | FK -> units(id) |
 | detected_at | timestamp with time zone | NOT NULL | now() |  |
 | removed_at | timestamp with time zone |  |  |  |
 
@@ -730,10 +722,11 @@ Pre-enriched now-playing notifications for mobile push.
 | cover_image_url | text |  |  |  |
 | library_id | uuid |  |  | FK -> libraries(id) |
 | library_name | text |  |  |  |
-| device_id | uuid |  |  | FK -> consumer_devices(id) |
+| device_id | uuid |  |  | FK -> units(id) |
 | device_name | text |  |  |  |
 | event_timestamp | timestamp with time zone | NOT NULL |  |  |
 | created_at | timestamp with time zone | NOT NULL | now() |  |
+| album_colors | jsonb |  |  |  |
 
 ---
 
@@ -793,23 +786,6 @@ Links GCode files to production steps.
 
 ## Networking
 
-### thread_credentials
-Thread Border Router network credentials (one per unit).
-
-| Column | Type | Nullable | Default | Notes |
-|--------|------|----------|---------|-------|
-| id | uuid | NOT NULL | extensions.uuid_generate_v4() | PK |
-| unit_id | uuid | NOT NULL |  | UNIQUE, FK -> units(id) |
-| network_name | character varying(16) | NOT NULL |  |  |
-| pan_id | integer | NOT NULL |  | CHECK pan_id >= 0 AND pan_id <= 65534 |
-| channel | integer | NOT NULL |  | CHECK channel >= 11 AND channel <= 26 |
-| network_key | character varying(32) | NOT NULL |  | CHECK length(network_key::text) = 32 AND network_key::text ~ '^[0-9a-fA-F]+$'::text |
-| extended_pan_id | character varying(16) | NOT NULL |  | CHECK length(extended_pan_id::text) = 16 AND extended_pan_id::text ~ '^[0-9a-fA-F]+$'::text |
-| mesh_local_prefix | character varying(16) | NOT NULL |  | CHECK length(mesh_local_prefix::text) = 16 AND mesh_local_prefix::text ~ '^[0-9a-fA-F]+$'::text |
-| pskc | character varying(32) | NOT NULL |  | CHECK length(pskc::text) = 32 AND pskc::text ~ '^[0-9a-fA-F]+$'::text |
-| created_at | timestamp with time zone |  | now() |  |
-| updated_at | timestamp with time zone |  | now() |  |
-
 ---
 
 ## Deprecated Tables
@@ -848,6 +824,327 @@ Maps old QR code UUIDs to new unit IDs during migration.
 
 ---
 
+## Other Tables
+
+### activity_push_tokens
+
+| Column | Type | Nullable | Default | Notes |
+|--------|------|----------|---------|-------|
+| id | uuid | NOT NULL | gen_random_uuid() | PK |
+| user_id | uuid | NOT NULL |  | UNIQUE, FK -> users(id) |
+| session_id | uuid |  |  | FK -> playback_sessions(id) |
+| push_token | text | NOT NULL |  | UNIQUE |
+| is_active | boolean | NOT NULL | true |  |
+| created_at | timestamp with time zone | NOT NULL | now() |  |
+| updated_at | timestamp with time zone | NOT NULL | now() |  |
+
+### album_track_duration_contributions
+
+| Column | Type | Nullable | Default | Notes |
+|--------|------|----------|---------|-------|
+| id | uuid | NOT NULL | gen_random_uuid() | PK |
+| album_id | uuid | NOT NULL |  | FK -> albums(id) |
+| contributed_by | uuid | NOT NULL |  | FK -> users(id) |
+| track_durations | jsonb | NOT NULL |  |  |
+| side | text |  |  |  |
+| created_at | timestamp with time zone | NOT NULL | now() |  |
+
+### bom_lines
+
+| Column | Type | Nullable | Default | Notes |
+|--------|------|----------|---------|-------|
+| id | uuid | NOT NULL | gen_random_uuid() | PK |
+| product_id | uuid | NOT NULL |  | FK -> products(id) |
+| part_id | uuid | NOT NULL |  | FK -> parts(id) |
+| production_step_id | uuid |  |  | FK -> production_steps(id) |
+| quantity | numeric | NOT NULL |  |  |
+| notes | text |  |  |  |
+
+### bom_variant_overrides
+
+| Column | Type | Nullable | Default | Notes |
+|--------|------|----------|---------|-------|
+| id | uuid | NOT NULL | gen_random_uuid() | PK |
+| bom_line_id | uuid | NOT NULL |  | UNIQUE, FK -> bom_lines(id) |
+| variant_id | uuid | NOT NULL |  | UNIQUE, FK -> product_variants(id) |
+| part_id | uuid | NOT NULL |  | FK -> parts(id) |
+| quantity | numeric |  |  |  |
+
+### crate_inventory_events
+RFID inventory snapshots from Thread-connected crates, relayed via the Hub
+
+| Column | Type | Nullable | Default | Notes |
+|--------|------|----------|---------|-------|
+| id | uuid | NOT NULL | gen_random_uuid() | PK |
+| unit_id | text | NOT NULL |  |  |
+| mac_address | character varying(17) | NOT NULL |  |  |
+| epcs | text[] | NOT NULL |  |  |
+| epc_count | integer | NOT NULL |  |  |
+| timestamp | timestamp with time zone | NOT NULL |  |  |
+| created_at | timestamp with time zone | NOT NULL | now() |  |
+
+### cratelist_items
+
+| Column | Type | Nullable | Default | Notes |
+|--------|------|----------|---------|-------|
+| id | uuid | NOT NULL | gen_random_uuid() | PK |
+| cratelist_id | uuid | NOT NULL |  | UNIQUE, FK -> cratelists(id) |
+| library_album_id | uuid | NOT NULL |  | UNIQUE, FK -> library_albums(id) |
+| position | integer | NOT NULL |  | UNIQUE |
+| added_at | timestamp with time zone | NOT NULL | now() |  |
+| added_by | uuid |  |  | FK -> users(id) |
+
+### cratelist_members
+
+| Column | Type | Nullable | Default | Notes |
+|--------|------|----------|---------|-------|
+| id | uuid | NOT NULL | gen_random_uuid() | PK |
+| cratelist_id | uuid | NOT NULL |  | UNIQUE, FK -> cratelists(id) |
+| user_id | uuid | NOT NULL |  | UNIQUE, FK -> users(id) |
+| role | library_role | NOT NULL | editor | Enum |
+| added_at | timestamp with time zone | NOT NULL | now() |  |
+| added_by | uuid |  |  | FK -> users(id) |
+
+### cratelists
+
+| Column | Type | Nullable | Default | Notes |
+|--------|------|----------|---------|-------|
+| id | uuid | NOT NULL | gen_random_uuid() | PK |
+| name | text | NOT NULL |  | CHECK length(TRIM(BOTH FROM name)) > 0 |
+| description | text |  |  |  |
+| created_by | uuid | NOT NULL |  | FK -> users(id) |
+| source | text | NOT NULL | manual | CHECK source = ANY (ARRAY['manual'::text, 'smart'::text, 'saturday'::text]) |
+| rules | jsonb |  |  |  |
+| created_at | timestamp with time zone | NOT NULL | now() |  |
+| updated_at | timestamp with time zone | NOT NULL | now() |  |
+
+### device_auth_codes
+
+| Column | Type | Nullable | Default | Notes |
+|--------|------|----------|---------|-------|
+| id | uuid | NOT NULL | gen_random_uuid() | PK |
+| device_code | text | NOT NULL |  | UNIQUE |
+| user_code | text | NOT NULL |  | UNIQUE |
+| auth_user_id | uuid |  |  | FK -> users(id) |
+| access_token | text |  |  |  |
+| refresh_token | text |  |  |  |
+| status | text | NOT NULL | pending | CHECK status = ANY (ARRAY['pending'::text, 'claimed'::text, 'expired'::text]) |
+| expires_at | timestamp with time zone | NOT NULL |  |  |
+| created_at | timestamp with time zone | NOT NULL | now() |  |
+
+### device_sessions
+Per-device opaque session tokens issued by the adopt_device edge function. Hub firmware uses these for authenticated cloud calls in place of the shared anonymous key.
+
+| Column | Type | Nullable | Default | Notes |
+|--------|------|----------|---------|-------|
+| id | uuid | NOT NULL | gen_random_uuid() | PK |
+| device_id | uuid | NOT NULL |  | UNIQUE, FK -> devices(id) |
+| auth_user_id | uuid | NOT NULL |  | FK -> users(id) |
+| access_token | text | NOT NULL |  |  |
+| refresh_token | text | NOT NULL |  |  |
+| expires_at | timestamp with time zone | NOT NULL |  |  |
+| status | text | NOT NULL | active | CHECK status = ANY (ARRAY['active'::text, 'revoked'::text]) |
+| created_at | timestamp with time zone | NOT NULL | now() |  |
+| updated_at | timestamp with time zone | NOT NULL | now() |  |
+
+### inventory_transactions
+
+| Column | Type | Nullable | Default | Notes |
+|--------|------|----------|---------|-------|
+| id | uuid | NOT NULL | gen_random_uuid() | PK |
+| part_id | uuid | NOT NULL |  | FK -> parts(id) |
+| transaction_type | inventory_transaction_type | NOT NULL |  | Enum |
+| quantity | numeric | NOT NULL |  |  |
+| unit_id | uuid |  |  | FK -> units(id) |
+| step_completion_id | uuid |  |  | FK -> unit_step_completions(id) |
+| supplier_id | uuid |  |  | FK -> suppliers(id) |
+| build_batch_id | uuid |  |  |  |
+| reference | text |  |  |  |
+| performed_by | uuid | NOT NULL |  | FK -> users(id) |
+| performed_at | timestamp with time zone | NOT NULL | now() |  |
+
+### parts
+
+| Column | Type | Nullable | Default | Notes |
+|--------|------|----------|---------|-------|
+| id | uuid | NOT NULL | gen_random_uuid() | PK |
+| name | text | NOT NULL |  |  |
+| part_number | text | NOT NULL |  | UNIQUE |
+| description | text |  |  |  |
+| part_type | part_type | NOT NULL |  | Enum |
+| category | part_category | NOT NULL |  | Enum |
+| unit_of_measure | unit_of_measure | NOT NULL |  | Enum |
+| reorder_threshold | numeric |  |  |  |
+| is_active | boolean | NOT NULL | true |  |
+| created_at | timestamp with time zone | NOT NULL | now() |  |
+| updated_at | timestamp with time zone | NOT NULL | now() |  |
+
+### pending_tag_associations
+
+| Column | Type | Nullable | Default | Notes |
+|--------|------|----------|---------|-------|
+| id | uuid | NOT NULL | gen_random_uuid() | PK |
+| user_id | uuid | NOT NULL |  | FK -> users(id) |
+| unit_id | text | NOT NULL |  |  |
+| library_album_id | uuid | NOT NULL |  | FK -> library_albums(id) |
+| status | text | NOT NULL | pending | CHECK status = ANY (ARRAY['pending'::text, 'fulfilled'::text, 'cancelled'::text]) |
+| detected_epc | text |  |  |  |
+| created_at | timestamp with time zone | NOT NULL | now() |  |
+| fulfilled_at | timestamp with time zone |  |  |  |
+| cancelled_at | timestamp with time zone |  |  |  |
+
+### playback_events
+
+| Column | Type | Nullable | Default | Notes |
+|--------|------|----------|---------|-------|
+| id | uuid | NOT NULL | gen_random_uuid() | PK |
+| session_id | uuid | NOT NULL |  | FK -> playback_sessions(id) |
+| user_id | uuid | NOT NULL |  | FK -> users(id) |
+| event_type | text | NOT NULL |  | CHECK event_type = ANY (ARRAY['session_queued'::text, 'side_changed'::text, 'playback_started'::text, 'playback_stopped'::text, 'session_cancelled'::text]) |
+| payload | jsonb |  | {} |  |
+| source_type | text | NOT NULL | app | CHECK source_type = ANY (ARRAY['app'::text, 'hub'::text, 'web'::text, 'api'::text]) |
+| source_device_id | uuid |  |  | FK -> units(id) |
+| created_at | timestamp with time zone | NOT NULL | now() |  |
+
+### playback_queue
+
+| Column | Type | Nullable | Default | Notes |
+|--------|------|----------|---------|-------|
+| id | uuid | NOT NULL | gen_random_uuid() | PK |
+| user_id | uuid | NOT NULL |  | UNIQUE, FK -> users(id) |
+| library_album_id | uuid | NOT NULL |  | FK -> library_albums(id) |
+| position | integer | NOT NULL |  | UNIQUE |
+| added_at | timestamp with time zone | NOT NULL | now() |  |
+| added_by | uuid |  |  | FK -> users(id) |
+
+### playback_sessions
+
+| Column | Type | Nullable | Default | Notes |
+|--------|------|----------|---------|-------|
+| id | uuid | NOT NULL | gen_random_uuid() | PK |
+| user_id | uuid | NOT NULL |  | FK -> users(id) |
+| library_album_id | uuid |  |  | FK -> library_albums(id) |
+| album_title | text |  |  |  |
+| album_artist | text |  |  |  |
+| cover_image_url | text |  |  |  |
+| status | text | NOT NULL | queued | CHECK status = ANY (ARRAY['queued'::text, 'playing'::text, 'stopped'::text, 'cancelled'::text]) |
+| current_side | text | NOT NULL | A | CHECK current_side = ANY (ARRAY['A'::text, 'B'::text, 'C'::text, 'D'::text]) |
+| side_started_at | timestamp with time zone |  |  |  |
+| current_track_index | integer |  |  |  |
+| current_track_position | text |  |  |  |
+| current_track_title | text |  |  |  |
+| tracks | jsonb |  |  |  |
+| side_a_duration_seconds | integer |  |  |  |
+| side_b_duration_seconds | integer |  |  |  |
+| queued_by_source | text | NOT NULL | app | CHECK queued_by_source = ANY (ARRAY['app'::text, 'hub'::text, 'web'::text, 'api'::text]) |
+| queued_by_device_id | uuid |  |  | FK -> units(id) |
+| started_by_source | text |  |  | CHECK started_by_source IS NULL OR (started_by_source = ANY (ARRAY['app'::text, 'hub'::text, 'web'::text, 'api'::text])) |
+| started_by_device_id | uuid |  |  | FK -> units(id) |
+| started_at | timestamp with time zone |  |  |  |
+| ended_at | timestamp with time zone |  |  |  |
+| updated_at | timestamp with time zone | NOT NULL | now() |  |
+| created_at | timestamp with time zone | NOT NULL | now() |  |
+
+### product_image_assets
+CAD-rendered product images with optional mask images for album cover compositing
+
+| Column | Type | Nullable | Default | Notes |
+|--------|------|----------|---------|-------|
+| id | uuid | NOT NULL | gen_random_uuid() | PK |
+| variant_id | uuid | NOT NULL |  | UNIQUE, FK -> product_variants(id) |
+| angle | text | NOT NULL |  | UNIQUE |
+| frame_path | text | NOT NULL |  |  |
+| image_width | integer | NOT NULL |  |  |
+| image_height | integer | NOT NULL |  |  |
+| created_at | timestamp with time zone | NOT NULL | now() |  |
+
+### product_image_slots
+Defines album cover compositing slots per product/angle/capacity. Shared across all variants of a product.
+
+| Column | Type | Nullable | Default | Notes |
+|--------|------|----------|---------|-------|
+| id | uuid | NOT NULL | gen_random_uuid() | PK |
+| product_id | uuid | NOT NULL |  | UNIQUE, FK -> products(id) |
+| angle | text | NOT NULL |  | UNIQUE |
+| capacity | text | NOT NULL | full | UNIQUE |
+| slot_data | jsonb | NOT NULL | {} |  |
+| created_at | timestamp with time zone | NOT NULL | now() |  |
+| updated_at | timestamp with time zone | NOT NULL | now() |  |
+
+### sub_assembly_lines
+
+| Column | Type | Nullable | Default | Notes |
+|--------|------|----------|---------|-------|
+| id | uuid | NOT NULL | gen_random_uuid() | PK |
+| parent_part_id | uuid | NOT NULL |  | FK -> parts(id) |
+| child_part_id | uuid | NOT NULL |  | FK -> parts(id) |
+| quantity | numeric | NOT NULL |  |  |
+| reference_designator | text |  |  |  |
+| notes | text |  |  |  |
+| is_board_assembled | boolean | NOT NULL | false |  |
+
+### supplier_api_tokens
+
+| Column | Type | Nullable | Default | Notes |
+|--------|------|----------|---------|-------|
+| id | uuid | NOT NULL | gen_random_uuid() | PK |
+| user_id | uuid | NOT NULL |  | UNIQUE, FK -> users(id) |
+| provider | text | NOT NULL |  | UNIQUE |
+| access_token | text | NOT NULL |  |  |
+| refresh_token | text |  |  |  |
+| token_expires_at | timestamp with time zone |  |  |  |
+| scopes | text |  |  |  |
+| provider_metadata | jsonb |  | {} |  |
+| created_at | timestamp with time zone | NOT NULL | now() |  |
+| updated_at | timestamp with time zone | NOT NULL | now() |  |
+
+### supplier_parts
+
+| Column | Type | Nullable | Default | Notes |
+|--------|------|----------|---------|-------|
+| id | uuid | NOT NULL | gen_random_uuid() | PK |
+| part_id | uuid | NOT NULL |  | UNIQUE, FK -> parts(id) |
+| supplier_id | uuid | NOT NULL |  | UNIQUE, FK -> suppliers(id) |
+| supplier_sku | text | NOT NULL |  | UNIQUE |
+| barcode_value | text |  |  |  |
+| barcode_format | text |  |  |  |
+| unit_cost | numeric |  |  |  |
+| cost_currency | text | NOT NULL | USD |  |
+| is_preferred | boolean | NOT NULL | false |  |
+| url | text |  |  |  |
+| notes | text |  |  |  |
+
+### suppliers
+
+| Column | Type | Nullable | Default | Notes |
+|--------|------|----------|---------|-------|
+| id | uuid | NOT NULL | gen_random_uuid() | PK |
+| name | text | NOT NULL |  |  |
+| website | text |  |  |  |
+| notes | text |  |  |  |
+| is_active | boolean | NOT NULL | true |  |
+| created_at | timestamp with time zone | NOT NULL | now() |  |
+
+### thread_networks
+Cloud-canonical Thread mesh credentials, one row per user account. Sensitive columns are AES-256-GCM ciphertext produced by edge functions; the DB never sees plaintext.
+
+| Column | Type | Nullable | Default | Notes |
+|--------|------|----------|---------|-------|
+| id | uuid | NOT NULL | gen_random_uuid() | PK |
+| user_id | uuid | NOT NULL |  | UNIQUE, FK -> users(id) |
+| network_name | text | NOT NULL |  | CHECK char_length(network_name) >= 1 AND char_length(network_name) <= 16 |
+| pan_id | integer | NOT NULL |  | CHECK pan_id >= 0 AND pan_id <= 65534 |
+| channel | integer | NOT NULL |  | CHECK channel >= 11 AND channel <= 26 |
+| network_key_encrypted | bytea | NOT NULL |  |  |
+| extended_pan_id_encrypted | bytea | NOT NULL |  |  |
+| mesh_local_prefix_encrypted | bytea | NOT NULL |  |  |
+| pskc_encrypted | bytea | NOT NULL |  |  |
+| created_at | timestamp with time zone | NOT NULL | now() |  |
+| updated_at | timestamp with time zone | NOT NULL | now() |  |
+| rotated_at | timestamp with time zone |  |  |  |
+
+---
+
 ## Views
 
 ### current_now_playing
@@ -864,6 +1161,15 @@ Maps old QR code UUIDs to new unit IDs during migration.
         END AS is_playing
    FROM now_playing_events
   ORDER BY unit_id, "timestamp" DESC;
+```
+
+### inventory_levels
+
+```sql
+ SELECT part_id,
+    sum(quantity) AS quantity_on_hand
+   FROM inventory_transactions
+  GROUP BY part_id;
 ```
 
 ### latest_crate_inventory
@@ -1001,33 +1307,104 @@ $function$
 CREATE OR REPLACE FUNCTION public.broadcast_device_command()
  RETURNS trigger
  LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
 AS $function$
 DECLARE
+  v_hub_mac VARCHAR(17);
   channel_name TEXT;
+  payload JSONB;
 BEGIN
-  -- Replace colons with dashes for channel name
-  channel_name := 'device:' || REPLACE(NEW.mac_address, ':', '-');
+  -- Check if target device connects through a hub
+  SELECT hub_mac_address INTO v_hub_mac
+  FROM devices
+  WHERE mac_address = NEW.mac_address;
 
-  -- Use Supabase Realtime broadcast
-  PERFORM pg_notify(
-    'realtime:broadcast',
-    json_build_object(
-      'topic', channel_name,
-      'event', 'broadcast',
-      'payload', json_build_object(
-        'event', 'command',
-        'payload', json_build_object(
-          'id', NEW.id,
-          'command', NEW.command,
-          'capability', NEW.capability,
-          'test_name', NEW.test_name,
-          'parameters', NEW.parameters
-        )
-      )
-    )::text
+  -- Build base command payload
+  payload := jsonb_build_object(
+    'id', NEW.id,
+    'command', NEW.command,
+    'capability', NEW.capability,
+    'test_name', NEW.test_name,
+    'parameters', NEW.parameters
   );
 
+  IF v_hub_mac IS NOT NULL THEN
+    -- Route through hub: broadcast to hub's channel with target_mac
+    channel_name := 'device:' || REPLACE(v_hub_mac, ':', '-');
+    payload := payload || jsonb_build_object('target_mac', NEW.mac_address);
+  ELSE
+    -- Direct route: broadcast to device's own channel
+    channel_name := 'device:' || REPLACE(NEW.mac_address, ':', '-');
+  END IF;
+
+  PERFORM realtime.send(payload, 'command', channel_name, false);
+
   RETURN NEW;
+END;
+$function$
+```
+
+### broadcast_playback_event_to_hubs
+
+```sql
+CREATE OR REPLACE FUNCTION public.broadcast_playback_event_to_hubs()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+DECLARE
+  device_record RECORD;
+  channel_name TEXT;
+BEGIN
+  -- Find all devices belonging to units owned by this user
+  FOR device_record IN
+    SELECT d.mac_address
+    FROM devices d
+    JOIN units u ON d.unit_id = u.id
+    WHERE u.consumer_user_id = NEW.user_id
+      AND u.is_online = true
+  LOOP
+    channel_name := 'device:' || REPLACE(device_record.mac_address, ':', '-');
+
+    PERFORM pg_notify(
+      'realtime:broadcast',
+      json_build_object(
+        'topic', channel_name,
+        'event', 'broadcast',
+        'payload', json_build_object(
+          'event', 'playback_event',
+          'payload', json_build_object(
+            'event_type', NEW.event_type,
+            'session_id', NEW.session_id,
+            'payload', NEW.payload,
+            'source_type', NEW.source_type,
+            'created_at', NEW.created_at
+          )
+        )
+      )::text
+    );
+  END LOOP;
+
+  RETURN NEW;
+END;
+$function$
+```
+
+### can_edit_cratelist
+
+```sql
+CREATE OR REPLACE FUNCTION public.can_edit_cratelist(cl_id uuid)
+ RETURNS boolean
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+AS $function$
+BEGIN
+    RETURN EXISTS (
+        SELECT 1 FROM cratelist_members
+        WHERE cratelist_id = cl_id
+        AND user_id = get_user_id_from_auth()
+        AND role IN ('owner', 'editor')
+    );
 END;
 $function$
 ```
@@ -1086,6 +1463,71 @@ BEGIN
 
     GET DIAGNOSTICS deleted_count = ROW_COUNT;
     RETURN deleted_count;
+END;
+$function$
+```
+
+### contribute_track_durations
+
+```sql
+CREATE OR REPLACE FUNCTION public.contribute_track_durations(p_album_id uuid, p_contributed_by uuid, p_track_durations jsonb, p_side text DEFAULT NULL::text)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+AS $function$
+DECLARE
+  v_album_tracks jsonb;
+  v_contribution jsonb;
+  v_updated_tracks jsonb;
+  v_i int;
+  v_track jsonb;
+  v_pos text;
+  v_dur int;
+BEGIN
+  -- 1. Insert the contribution record
+  INSERT INTO album_track_duration_contributions (album_id, contributed_by, track_durations, side)
+  VALUES (p_album_id, p_contributed_by, p_track_durations, p_side);
+
+  -- 2. Get the current tracks JSONB from the canonical album
+  SELECT tracks INTO v_album_tracks
+  FROM albums
+  WHERE id = p_album_id;
+
+  IF v_album_tracks IS NULL THEN
+    RETURN '{"error": "album not found or has no tracks"}'::jsonb;
+  END IF;
+
+  -- 3. Build a lookup from the contributed durations
+  --    and update tracks where duration_seconds is null
+  v_updated_tracks := '[]'::jsonb;
+
+  FOR v_i IN 0..jsonb_array_length(v_album_tracks) - 1 LOOP
+    v_track := v_album_tracks->v_i;
+    v_pos := v_track->>'position';
+
+    -- Check if this track has no duration and we have a contribution for it
+    IF (v_track->>'duration_seconds') IS NULL THEN
+      -- Search the contributed durations for a matching position
+      SELECT (elem->>'duration_seconds')::int INTO v_dur
+      FROM jsonb_array_elements(p_track_durations) AS elem
+      WHERE elem->>'position' = v_pos
+      LIMIT 1;
+
+      IF v_dur IS NOT NULL THEN
+        v_track := jsonb_set(v_track, '{duration_seconds}', to_jsonb(v_dur));
+      END IF;
+    END IF;
+
+    v_updated_tracks := v_updated_tracks || jsonb_build_array(v_track);
+  END LOOP;
+
+  -- 4. Update the canonical album with merged durations
+  UPDATE albums
+  SET tracks = v_updated_tracks,
+      updated_at = now()
+  WHERE id = p_album_id;
+
+  RETURN v_updated_tracks;
 END;
 $function$
 ```
@@ -1297,7 +1739,7 @@ BEGIN
         a.cover_image_url,
         a.tracks,
         al.device_id AS current_device_id,
-        d.name AS current_device_name
+        u.consumer_name AS current_device_name
     FROM library_albums la
     JOIN albums a ON a.id = la.album_id
     LEFT JOIN LATERAL (
@@ -1308,7 +1750,7 @@ BEGIN
         ORDER BY alock.detected_at DESC
         LIMIT 1
     ) al ON true
-    LEFT JOIN consumer_devices d ON d.id = al.device_id
+    LEFT JOIN units u ON u.id = al.device_id
     WHERE la.library_id = p_library_id
     ORDER BY la.added_at DESC
     LIMIT p_limit
@@ -1452,6 +1894,155 @@ END;
 $function$
 ```
 
+### get_user_album_analytics
+
+```sql
+CREATE OR REPLACE FUNCTION public.get_user_album_analytics(p_top_limit integer DEFAULT 5, p_activity_days integer DEFAULT 30)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+DECLARE
+    v_user_id UUID := get_user_id_from_auth();
+    v_result  JSONB;
+BEGIN
+    IF v_user_id IS NULL THEN
+        RAISE EXCEPTION 'Not authenticated' USING ERRCODE = '42501';
+    END IF;
+
+    -- Clamp inputs to defensive ranges.
+    p_top_limit     := GREATEST(1, LEAST(p_top_limit, 50));
+    p_activity_days := GREATEST(1, LEAST(p_activity_days, 365));
+
+    WITH user_libraries AS (
+        SELECT library_id
+          FROM library_members
+         WHERE user_id = v_user_id
+    ),
+    user_library_albums AS (
+        SELECT la.id          AS library_album_id,
+               la.is_favorite,
+               a.id            AS album_id,
+               a.title,
+               a.artist,
+               a.year,
+               a.genres,
+               a.styles,
+               a.cover_image_url
+          FROM library_albums la
+          JOIN albums a ON a.id = la.album_id
+         WHERE la.library_id IN (SELECT library_id FROM user_libraries)
+    ),
+    plays AS (
+        SELECT lh.id,
+               lh.library_album_id,
+               lh.played_at,
+               lh.play_duration_seconds
+          FROM listening_history lh
+         WHERE lh.user_id = v_user_id
+    ),
+    play_album AS (
+        SELECT p.id,
+               p.played_at,
+               p.play_duration_seconds,
+               la.id    AS library_album_id,
+               a.id     AS album_id,
+               a.title,
+               a.artist,
+               a.year,
+               a.genres,
+               a.cover_image_url
+          FROM plays p
+          JOIN library_albums la ON la.id = p.library_album_id
+          JOIN albums a          ON a.id = la.album_id
+    ),
+    top_albums AS (
+        SELECT library_album_id,
+               album_id,
+               title,
+               artist,
+               year,
+               cover_image_url,
+               COUNT(*)::INTEGER AS play_count
+          FROM play_album
+         GROUP BY library_album_id, album_id, title, artist, year, cover_image_url
+         ORDER BY play_count DESC, title ASC
+         LIMIT p_top_limit
+    ),
+    top_artists AS (
+        SELECT artist,
+               COUNT(*)::INTEGER AS play_count
+          FROM play_album
+         WHERE artist IS NOT NULL AND length(trim(artist)) > 0
+         GROUP BY artist
+         ORDER BY play_count DESC, artist ASC
+         LIMIT p_top_limit
+    ),
+    top_genres AS (
+        SELECT genre,
+               COUNT(*)::INTEGER AS play_count
+          FROM play_album,
+               LATERAL UNNEST(COALESCE(genres, ARRAY[]::TEXT[])) AS genre
+         WHERE genre IS NOT NULL AND length(trim(genre)) > 0
+         GROUP BY genre
+         ORDER BY play_count DESC, genre ASC
+         LIMIT p_top_limit
+    ),
+    decade_counts AS (
+        SELECT ((year / 10) * 10)::INTEGER AS decade,
+               COUNT(DISTINCT album_id)::INTEGER AS album_count
+          FROM user_library_albums
+         WHERE year IS NOT NULL AND year > 0
+         GROUP BY ((year / 10) * 10)
+         ORDER BY decade
+    ),
+    activity_range AS (
+        SELECT generate_series(
+                   (NOW() AT TIME ZONE 'UTC')::date - (p_activity_days - 1),
+                   (NOW() AT TIME ZONE 'UTC')::date,
+                   INTERVAL '1 day'
+               )::date AS day
+    ),
+    daily_play_counts AS (
+        SELECT (played_at AT TIME ZONE 'UTC')::date AS day,
+               COUNT(*)::INTEGER                    AS play_count
+          FROM plays
+         WHERE played_at >= NOW() - make_interval(days => p_activity_days)
+         GROUP BY 1
+    ),
+    daily_activity AS (
+        SELECT ar.day,
+               COALESCE(dpc.play_count, 0) AS play_count
+          FROM activity_range ar
+          LEFT JOIN daily_play_counts dpc ON dpc.day = ar.day
+         ORDER BY ar.day
+    ),
+    totals AS (
+        SELECT (SELECT COUNT(*)::INTEGER FROM plays)                                  AS total_plays,
+               (SELECT COALESCE(SUM(play_duration_seconds), 0)::BIGINT FROM plays)    AS total_seconds,
+               (SELECT COUNT(*)::INTEGER FROM user_library_albums)                    AS total_albums,
+               (SELECT COUNT(*)::INTEGER FROM user_library_albums WHERE is_favorite)  AS total_favorites,
+               (SELECT COUNT(DISTINCT artist)::INTEGER
+                  FROM user_library_albums
+                 WHERE artist IS NOT NULL AND length(trim(artist)) > 0)               AS total_artists
+    )
+    SELECT jsonb_build_object(
+        'generated_at', to_jsonb(NOW()),
+        'totals',       (SELECT to_jsonb(t.*) FROM totals t),
+        'top_albums',   (SELECT COALESCE(jsonb_agg(to_jsonb(ta.*)), '[]'::jsonb) FROM top_albums ta),
+        'top_artists',  (SELECT COALESCE(jsonb_agg(to_jsonb(ar.*)), '[]'::jsonb) FROM top_artists ar),
+        'top_genres',   (SELECT COALESCE(jsonb_agg(to_jsonb(g.*)),  '[]'::jsonb) FROM top_genres g),
+        'decades',      (SELECT COALESCE(jsonb_agg(to_jsonb(d.*)),  '[]'::jsonb) FROM decade_counts d),
+        'daily_plays',  (SELECT COALESCE(jsonb_agg(to_jsonb(da.*)), '[]'::jsonb) FROM daily_activity da)
+    )
+      INTO v_result;
+
+    RETURN v_result;
+END;
+$function$
+```
+
 ### get_user_id_from_auth
 
 ```sql
@@ -1551,6 +2142,23 @@ END;
 $function$
 ```
 
+### handle_new_cratelist
+
+```sql
+CREATE OR REPLACE FUNCTION public.handle_new_cratelist()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+AS $function$
+BEGIN
+    INSERT INTO cratelist_members (cratelist_id, user_id, role, added_by)
+    VALUES (NEW.id, NEW.created_by, 'owner', NEW.created_by)
+    ON CONFLICT (cratelist_id, user_id) DO NOTHING;
+    RETURN NEW;
+END;
+$function$
+```
+
 ### handle_new_library
 
 ```sql
@@ -1564,6 +2172,43 @@ BEGIN
     VALUES (NEW.id, NEW.created_by, 'owner', NOW())
     ON CONFLICT (library_id, user_id) DO NOTHING;
     RETURN NEW;
+END;
+$function$
+```
+
+### is_cratelist_member
+
+```sql
+CREATE OR REPLACE FUNCTION public.is_cratelist_member(cl_id uuid)
+ RETURNS boolean
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+AS $function$
+BEGIN
+    RETURN EXISTS (
+        SELECT 1 FROM cratelist_members
+        WHERE cratelist_id = cl_id
+        AND user_id = get_user_id_from_auth()
+    );
+END;
+$function$
+```
+
+### is_cratelist_owner
+
+```sql
+CREATE OR REPLACE FUNCTION public.is_cratelist_owner(cl_id uuid)
+ RETURNS boolean
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+AS $function$
+BEGIN
+    RETURN EXISTS (
+        SELECT 1 FROM cratelist_members
+        WHERE cratelist_id = cl_id
+        AND user_id = get_user_id_from_auth()
+        AND role = 'owner'
+    );
 END;
 $function$
 ```
@@ -1601,6 +2246,67 @@ BEGIN
         AND user_id = get_user_id_from_auth()
         AND role = 'owner'
     );
+END;
+$function$
+```
+
+### populate_heartbeat_telemetry
+
+```sql
+CREATE OR REPLACE FUNCTION public.populate_heartbeat_telemetry()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+BEGIN
+  IF NEW.telemetry IS NOT NULL THEN
+    -- Case A: telemetry JSONB provided — extract known fields into typed columns
+    -- COALESCE preserves any column value already set by the POST (column wins)
+    NEW.firmware_version := COALESCE(NEW.firmware_version, NEW.telemetry->>'firmware_version');
+    NEW.battery_level := COALESCE(NEW.battery_level, (NEW.telemetry->>'battery_level')::INTEGER);
+    NEW.battery_charging := COALESCE(NEW.battery_charging, (NEW.telemetry->>'battery_charging')::BOOLEAN);
+    NEW.wifi_rssi := COALESCE(NEW.wifi_rssi, (NEW.telemetry->>'wifi_rssi')::INTEGER);
+    NEW.thread_rssi := COALESCE(NEW.thread_rssi, (NEW.telemetry->>'thread_rssi')::INTEGER);
+    NEW.uptime_sec := COALESCE(NEW.uptime_sec, (NEW.telemetry->>'uptime_sec')::INTEGER);
+    NEW.free_heap := COALESCE(NEW.free_heap, (NEW.telemetry->>'free_heap')::INTEGER);
+    NEW.min_free_heap := COALESCE(NEW.min_free_heap, (NEW.telemetry->>'min_free_heap')::INTEGER);
+    NEW.largest_free_block := COALESCE(NEW.largest_free_block, (NEW.telemetry->>'largest_free_block')::INTEGER);
+
+    -- Enrich telemetry with routing fields so it's a complete record.
+    -- Use routing_fields || telemetry so telemetry keys take priority on collision.
+    NEW.telemetry := jsonb_strip_nulls(jsonb_build_object(
+      'mac_address', NEW.mac_address,
+      'unit_id', NEW.unit_id,
+      'device_type', NEW.device_type,
+      'type', NEW.type,
+      'relay_device_type', NEW.relay_device_type,
+      'relay_instance_id', NEW.relay_instance_id,
+      'firmware_version', NEW.firmware_version
+    )) || NEW.telemetry;
+  ELSE
+    -- Case B: No telemetry JSONB — build from individual columns (flat POST)
+    NEW.telemetry := jsonb_strip_nulls(jsonb_build_object(
+      'mac_address', NEW.mac_address,
+      'unit_id', NEW.unit_id,
+      'device_type', NEW.device_type,
+      'type', NEW.type,
+      'relay_device_type', NEW.relay_device_type,
+      'relay_instance_id', NEW.relay_instance_id,
+      'firmware_version', NEW.firmware_version,
+      'battery_level', NEW.battery_level,
+      'battery_charging', NEW.battery_charging,
+      'wifi_rssi', NEW.wifi_rssi,
+      'thread_rssi', NEW.thread_rssi,
+      'uptime_sec', NEW.uptime_sec,
+      'free_heap', NEW.free_heap,
+      'min_free_heap', NEW.min_free_heap,
+      'largest_free_block', NEW.largest_free_block,
+      'command_id', NEW.command_id
+    ));
+  END IF;
+
+  RETURN NEW;
 END;
 $function$
 ```
@@ -1646,6 +2352,98 @@ BEGIN
     END IF;
 
     RETURN v_invitation;
+END;
+$function$
+```
+
+### reorder_cratelist_items
+
+```sql
+CREATE OR REPLACE FUNCTION public.reorder_cratelist_items(p_cratelist_id uuid, p_item_ids uuid[])
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+AS $function$
+BEGIN
+    IF NOT can_edit_cratelist(p_cratelist_id) THEN
+        RAISE EXCEPTION 'Not authorized to reorder cratelist %', p_cratelist_id
+            USING ERRCODE = '42501';
+    END IF;
+
+    -- Sanity-check: every passed item id must belong to this cratelist, and
+    -- the array must contain exactly the cratelist's items.
+    IF (
+        SELECT COUNT(*) FROM cratelist_items WHERE cratelist_id = p_cratelist_id
+    ) <> array_length(p_item_ids, 1) THEN
+        RAISE EXCEPTION 'reorder list must contain exactly the cratelist''s items';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+          FROM unnest(p_item_ids) AS u(item_id)
+          LEFT JOIN cratelist_items ci
+                 ON ci.id = u.item_id AND ci.cratelist_id = p_cratelist_id
+         WHERE ci.id IS NULL
+    ) THEN
+        RAISE EXCEPTION 'one or more item ids do not belong to cratelist %', p_cratelist_id;
+    END IF;
+
+    -- Single statement so the deferrable unique constraint is checked only
+    -- once, at end of statement, against the final positions.
+    UPDATE cratelist_items ci
+       SET position = sub.new_pos
+      FROM (
+          SELECT u.item_id,
+                 u.ordinality::INTEGER AS new_pos
+            FROM unnest(p_item_ids) WITH ORDINALITY AS u(item_id, ordinality)
+      ) sub
+     WHERE ci.id = sub.item_id
+       AND ci.cratelist_id = p_cratelist_id;
+END;
+$function$
+```
+
+### reorder_playback_queue
+
+```sql
+CREATE OR REPLACE FUNCTION public.reorder_playback_queue(p_item_ids uuid[])
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+AS $function$
+DECLARE
+    v_user_id UUID;
+BEGIN
+    v_user_id := get_user_id_from_auth();
+    IF v_user_id IS NULL THEN
+        RAISE EXCEPTION 'Not authenticated' USING ERRCODE = '42501';
+    END IF;
+
+    IF (
+        SELECT COUNT(*) FROM playback_queue WHERE user_id = v_user_id
+    ) <> array_length(p_item_ids, 1) THEN
+        RAISE EXCEPTION 'reorder list must contain exactly the queue''s items';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+          FROM unnest(p_item_ids) AS u(item_id)
+          LEFT JOIN playback_queue pq
+                 ON pq.id = u.item_id AND pq.user_id = v_user_id
+         WHERE pq.id IS NULL
+    ) THEN
+        RAISE EXCEPTION 'one or more item ids do not belong to caller''s queue';
+    END IF;
+
+    UPDATE playback_queue pq
+       SET position = sub.new_pos
+      FROM (
+          SELECT u.item_id,
+                 u.ordinality::INTEGER AS new_pos
+            FROM unnest(p_item_ids) WITH ORDINALITY AS u(item_id, ordinality)
+      ) sub
+     WHERE pq.id = sub.item_id
+       AND pq.user_id = v_user_id;
 END;
 $function$
 ```
@@ -1741,38 +2539,6 @@ END;
 $function$
 ```
 
-### sync_heartbeat_to_consumer_device
-
-```sql
-CREATE OR REPLACE FUNCTION public.sync_heartbeat_to_consumer_device()
- RETURNS trigger
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-BEGIN
-    UPDATE consumer_devices
-    SET
-        last_seen_at = NEW.device_timestamp,
-        battery_level = COALESCE(NEW.battery_level, battery_level),
-        firmware_version = COALESCE(NEW.firmware_version, firmware_version),
-        -- If device was offline, mark it back online
-        status = CASE
-            WHEN status = 'offline' THEN 'online'
-            ELSE status
-        END
-    WHERE serial_number = NEW.device_serial;
-
-    -- Log if no matching device found (helpful for debugging)
-    IF NOT FOUND THEN
-        RAISE WARNING 'No consumer_device found for serial_number: %', NEW.device_serial;
-    END IF;
-
-    RETURN NEW;
-END;
-$function$
-```
-
 ### sync_heartbeat_to_device_and_unit
 
 ```sql
@@ -1792,6 +2558,7 @@ DECLARE
   v_humidity_pct NUMERIC;
   v_firmware_version TEXT;
   v_heartbeat_ts TIMESTAMPTZ;
+  v_hub_mac VARCHAR(17);
 BEGIN
   v_heartbeat_ts := COALESCE(NEW.created_at, NOW());
   v_firmware_version := NEW.firmware_version;
@@ -1838,6 +2605,24 @@ BEGIN
   END IF;
 
   -- =========================================================================
+  -- Resolve hub_mac_address from relay info
+  -- =========================================================================
+  IF NEW.relay_device_type = 'hub' AND NEW.relay_instance_id IS NOT NULL THEN
+    -- Relayed heartbeat: look up the hub's MAC via its serial number
+    -- relay_instance_id contains the hub's unit_id (serial number)
+    SELECT d2.mac_address INTO v_hub_mac
+    FROM devices d2
+    JOIN units u ON d2.unit_id = u.id
+    WHERE u.serial_number = NEW.relay_instance_id
+    LIMIT 1;
+  ELSIF NEW.relay_device_type IS NULL THEN
+    -- Direct heartbeat (no relay): clear hub association
+    v_hub_mac := NULL;
+  END IF;
+  -- If relay_device_type is something other than 'hub' (e.g. phone relay),
+  -- v_hub_mac stays NULL and hub_mac_address is preserved unchanged below.
+
+  -- =========================================================================
   -- Update devices table (by mac_address)
   -- =========================================================================
   UPDATE devices
@@ -1845,7 +2630,12 @@ BEGIN
     last_seen_at = v_heartbeat_ts,
     firmware_version = COALESCE(v_firmware_version, firmware_version),
     latest_telemetry = v_telemetry,
-    status = CASE WHEN status = 'offline' THEN 'online' ELSE status END
+    status = CASE WHEN status = 'offline' THEN 'online' ELSE status END,
+    hub_mac_address = CASE
+      WHEN NEW.relay_device_type = 'hub' AND NEW.relay_instance_id IS NOT NULL THEN v_hub_mac
+      WHEN NEW.relay_device_type IS NULL THEN NULL
+      ELSE hub_mac_address  -- preserve existing for non-hub relays
+    END
   WHERE mac_address = NEW.mac_address;
 
   -- =========================================================================
@@ -1877,6 +2667,37 @@ BEGIN
   END IF;
 
   RETURN NEW;
+END;
+$function$
+```
+
+### touch_cratelist_from_item
+
+```sql
+CREATE OR REPLACE FUNCTION public.touch_cratelist_from_item()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+AS $function$
+BEGIN
+    UPDATE cratelists
+       SET updated_at = NOW()
+     WHERE id = COALESCE(NEW.cratelist_id, OLD.cratelist_id);
+    RETURN COALESCE(NEW, OLD);
+END;
+$function$
+```
+
+### touch_cratelist_updated_at
+
+```sql
+CREATE OR REPLACE FUNCTION public.touch_cratelist_updated_at()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
 END;
 $function$
 ```
@@ -1998,6 +2819,34 @@ END;
 $function$
 ```
 
+### update_parts_updated_at
+
+```sql
+CREATE OR REPLACE FUNCTION public.update_parts_updated_at()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$function$
+```
+
+### update_playback_session_timestamp
+
+```sql
+CREATE OR REPLACE FUNCTION public.update_playback_session_timestamp()
+ RETURNS trigger
+ LANGUAGE plpgsql
+AS $function$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$function$
+```
+
 ### update_units_updated_at
 
 ```sql
@@ -2020,8 +2869,8 @@ CREATE OR REPLACE FUNCTION public.update_updated_at_column()
  LANGUAGE plpgsql
 AS $function$
 BEGIN
-    NEW.updated_at = NOW();
-    RETURN NEW;
+  NEW.updated_at = NOW();
+  RETURN NEW;
 END;
 $function$
 ```
@@ -2069,12 +2918,17 @@ $function$
 ```sql
 CREATE TRIGGER update_albums_updated_at BEFORE UPDATE ON albums FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER trigger_capabilities_updated_at BEFORE UPDATE ON capabilities FOR EACH ROW EXECUTE FUNCTION update_capabilities_updated_at();
+CREATE TRIGGER crate_inventory_events_webhook AFTER INSERT ON crate_inventory_events FOR EACH ROW EXECUTE FUNCTION supabase_functions.http_request('https://ddhcmhbwppiqrqmefynv.supabase.co/functions/v1/process-crate-inventory', 'POST', '{"Content-type":"application/json","Authorization":"Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRkaGNtaGJ3cHBpcXJxbWVmeW52Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1OTk1MDA5MSwiZXhwIjoyMDc1NTI2MDkxfQ.KV7Ro37KMRr6D1zQEPd81hJMOTcLMO97oBbOVXnPPxc"}', '{}', '5000');
+CREATE TRIGGER trg_touch_cratelist_from_item AFTER INSERT OR DELETE OR UPDATE ON cratelist_items FOR EACH ROW EXECUTE FUNCTION touch_cratelist_from_item();
+CREATE TRIGGER trg_handle_new_cratelist AFTER INSERT ON cratelists FOR EACH ROW EXECUTE FUNCTION handle_new_cratelist();
+CREATE TRIGGER trg_touch_cratelist_updated_at BEFORE UPDATE ON cratelists FOR EACH ROW EXECUTE FUNCTION touch_cratelist_updated_at();
 CREATE TRIGGER update_customers_updated_at BEFORE UPDATE ON customers FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER on_device_command_created AFTER INSERT ON device_commands FOR EACH ROW WHEN (new.status = 'pending'::text) EXECUTE FUNCTION broadcast_device_command();
 CREATE TRIGGER trigger_device_commands_updated_at BEFORE UPDATE ON device_commands FOR EACH ROW EXECUTE FUNCTION update_device_commands_updated_at();
-CREATE TRIGGER device_heartbeat_sync_consumer_device AFTER INSERT ON device_heartbeats FOR EACH ROW EXECUTE FUNCTION sync_heartbeat_to_consumer_device();
 CREATE TRIGGER on_command_ack_heartbeat AFTER INSERT ON device_heartbeats FOR EACH ROW WHEN (new.type = ANY (ARRAY['command_ack'::text, 'command_result'::text])) EXECUTE FUNCTION update_command_on_ack();
+CREATE TRIGGER on_heartbeat_populate_telemetry BEFORE INSERT ON device_heartbeats FOR EACH ROW EXECUTE FUNCTION populate_heartbeat_telemetry();
 CREATE TRIGGER on_heartbeat_sync AFTER INSERT ON device_heartbeats FOR EACH ROW EXECUTE FUNCTION sync_heartbeat_to_device_and_unit();
+CREATE TRIGGER update_device_sessions_updated_at BEFORE UPDATE ON device_sessions FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_device_types_updated_at BEFORE UPDATE ON device_types FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER trigger_devices_updated_at BEFORE UPDATE ON devices FOR EACH ROW EXECUTE FUNCTION update_devices_updated_at();
 CREATE TRIGGER update_files_updated_at BEFORE UPDATE ON files FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
@@ -2085,6 +2939,9 @@ CREATE TRIGGER machine_macros_updated_at_trigger BEFORE UPDATE ON machine_macros
 CREATE TRIGGER notification_preferences_updated_at BEFORE UPDATE ON notification_preferences FOR EACH ROW EXECUTE FUNCTION update_notification_preferences_updated_at();
 CREATE TRIGGER now_playing_events AFTER INSERT ON now_playing_events FOR EACH ROW EXECUTE FUNCTION supabase_functions.http_request('https://ddhcmhbwppiqrqmefynv.supabase.co/functions/v1/process-now-playing-event', 'POST', '{"Content-type":"application/json","Authorization":"Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRkaGNtaGJ3cHBpcXJxbWVmeW52Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1OTk1MDA5MSwiZXhwIjoyMDc1NTI2MDkxfQ.KV7Ro37KMRr6D1zQEPd81hJMOTcLMO97oBbOVXnPPxc"}', '{}', '5000');
 CREATE TRIGGER update_orders_updated_at BEFORE UPDATE ON orders FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER trigger_parts_updated_at BEFORE UPDATE ON parts FOR EACH ROW EXECUTE FUNCTION update_parts_updated_at();
+CREATE TRIGGER on_playback_event_broadcast AFTER INSERT ON playback_events FOR EACH ROW EXECUTE FUNCTION broadcast_playback_event_to_hubs();
+CREATE TRIGGER playback_sessions_updated_at BEFORE UPDATE ON playback_sessions FOR EACH ROW EXECUTE FUNCTION update_playback_session_timestamp();
 CREATE TRIGGER update_product_variants_updated_at BEFORE UPDATE ON product_variants FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_production_steps_updated_at BEFORE UPDATE ON production_steps FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_products_updated_at BEFORE UPDATE ON products FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
@@ -2092,7 +2949,8 @@ CREATE TRIGGER update_rfid_tag_rolls_updated_at BEFORE UPDATE ON rfid_tag_rolls 
 CREATE TRIGGER update_rfid_tags_updated_at BEFORE UPDATE ON rfid_tags FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_step_labels_updated_at BEFORE UPDATE ON step_labels FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_step_timers_updated_at BEFORE UPDATE ON step_timers FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-CREATE TRIGGER update_thread_credentials_updated_at BEFORE UPDATE ON thread_credentials FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER set_supplier_api_tokens_updated_at BEFORE UPDATE ON supplier_api_tokens FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_thread_networks_updated_at BEFORE UPDATE ON thread_networks FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_unit_timers_updated_at BEFORE UPDATE ON unit_timers FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER trigger_units_updated_at BEFORE UPDATE ON units FOR EACH ROW EXECUTE FUNCTION update_units_updated_at();
 CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
