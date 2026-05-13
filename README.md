@@ -11,6 +11,7 @@ Central repository for Saturday Vinyl technical documentation shared across all 
 - **[BLE Provisioning Protocol](protocols/ble_provisioning_protocol.md)** - BLE GATT interface for mobile app device provisioning
 - **[CoAP Mesh Protocol](protocols/coap_mesh_protocol.md)** - CoAP communication over Thread mesh (Hub ↔ Node)
 - **[Device Command Protocol](protocols/device_command_protocol.md)** - Unified command interface for device communication
+- **[Playback Event Protocol](protocols/playback_event_protocol.md)** - Canonical playback state and event model across all Saturday devices
 - **[Service Mode Protocol](protocols/service_mode_protocol.md)** - USB serial interface for factory provisioning and diagnostics
 
 ### Schemas
@@ -93,6 +94,7 @@ saturday-vinyl-shared-docs/
 │   ├── coap_mesh_protocol.md
 │   ├── device_command_protocol.md
 │   ├── led_status_protocol.md
+│   ├── playback_event_protocol.md
 │   └── service_mode_protocol.md
 ├── schemas/                     # Schema specifications
 │   └── capability_schema.md
