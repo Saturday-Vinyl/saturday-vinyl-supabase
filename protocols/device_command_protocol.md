@@ -1,7 +1,7 @@
 # Saturday Device Command Protocol
 
-**Version:** 1.4.0
-**Last Updated:** 2026-05-11
+**Version:** 1.4.1
+**Last Updated:** 2026-05-13
 **Audience:** Saturday Admin App developers, Firmware engineers, Consumer App developers
 
 ---
@@ -109,6 +109,26 @@ Note: `device_commands` is also in the `supabase_realtime` publication for Postg
 - Device reports command results via `command_result` heartbeat type
 - Database trigger automatically updates `device_commands.status` from heartbeats
 - Device updates `devices.last_seen_at` on each heartbeat
+
+#### Mesh Relay Routing (Crate and other Hub-relayed devices)
+
+Devices that lack direct cloud connectivity (Crates, etc.) reach the cloud through a Hub on the user's account. Since firmware v0.6.0 a user account may have **multiple Hubs sharing one Thread mesh**, and a Crate may parent through any of them. The cloud cannot reliably know which Hub currently has a working CoAP path to a given Crate, so it broadcasts the command to all of them and lets the Hubs decide.
+
+**Routing rules (`broadcast_device_command()` trigger):**
+
+| Target device | Routing |
+|---|---|
+| `devices.hub_mac_address IS NULL` (Hub itself, or device with direct cloud access) | Send to `device:{mac_address}` — the device's own channel. |
+| `devices.hub_mac_address IS NOT NULL` (Crate / Thread-only device) | Fan out: send to `device:{hub_mac}` for **every** Hub on the same `units.consumer_user_id` account, with `target_mac` set to the Crate's MAC. |
+
+`devices.hub_mac_address` is still maintained by the heartbeat trigger but is now treated as informational "last reachable via" telemetry, not as the routing key.
+
+**Hub behavior on receiving a `target_mac` command:**
+
+1. If the target MAC is in the Hub's local Crate cache, relay via CoAP to the mesh node. The Crate's `command_ack` / `command_result` heartbeats flow back through this Hub.
+2. If the target MAC is **not** in the local cache, **silently drop the command**. Do not execute it locally (Crate-targeted commands must never run on the Hub), and do not publish a `command_result` failure (a sibling Hub on the same account may successfully relay).
+
+**Idempotency requirement.** Because two or more Hubs may both have a Crate cached during mesh transitions, the same `target_mac` command may be relayed and executed more than once. Relay-eligible commands must therefore be idempotent (`scan`, `get_status`, `consumer_reset`, `reboot`, etc.). Any future non-idempotent command must use a delivery path other than the mesh relay broadcast.
 
 ---
 
@@ -1783,6 +1803,7 @@ Key components:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.4.1 | 2026-05-13 | **Multi-Hub command relay.** Added [Mesh Relay Routing](#mesh-relay-routing-crate-and-other-hub-relayed-devices) under Supabase Realtime: relay-required commands are now fanned out by the cloud trigger to every Hub on the owning user account; each Hub relays only if it has the target Crate cached, and silently drops otherwise. Relay-eligible commands must be idempotent. Firmware: cache-miss for `target_mac` no longer falls through to local execution. |
 | 1.4.0 | 2026-05-11 | **Cloud-canonical Thread credentials.** Removed `thread_*` input fields and `thread_credentials` output from `factory_provision`. Added [Device Adoption Lifecycle](#device-adoption-lifecycle) section covering the new cloud edge functions (`adopt_device`, `get_thread_credentials`, `refresh_device_session`, `unadopt_device`), the new S3↔H2 UART commands `CMD_SET_CREDENTIALS` and `CMD_CLEAR_CREDENTIALS`, the new `THREAD_STATE_UNPROVISIONED` state, and the boot-reconciliation + consumer-reset behavior. See [BLE Provisioning Protocol](ble_provisioning_protocol.md) v1.4.0 for the corresponding BLE-side changes. |
 | 1.3.1 | 2026-03-09 | Added Heartbeat POST Format section documenting the two supported POST formats (telemetry-wrapped and flat) and the BEFORE INSERT trigger that normalizes both; listed typed columns available for extraction |
 | 1.3.0 | 2026-02-20 | Replaced `run_test` meta-command with flat capability commands (`connect`, `scan`, `get_dataset`, `register`, etc.); renamed `tests` → `commands` in schema references; `run_test` kept as deprecated alias; added `register` command for hub-initiated re-registration |
