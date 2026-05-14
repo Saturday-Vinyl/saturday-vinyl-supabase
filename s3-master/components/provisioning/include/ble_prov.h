@@ -89,6 +89,13 @@ extern "C" {
  */
 #define BLE_PROV_MAX_RESPONSE_LEN       128
 
+/**
+ * @brief Maximum length for a user JWT written across multiple BLE writes
+ *        to characteristic 0x0030. Supabase JWTs are typically 700-1200 bytes;
+ *        2048 gives headroom for future header growth.
+ */
+#define BLE_PROV_MAX_JWT_LEN            2048
+
 /*******************************************************************************
  * Types
  ******************************************************************************/
@@ -102,7 +109,9 @@ typedef enum {
     BLE_PROV_STATE_CONNECTED,       /**< Connected, awaiting credentials */
     BLE_PROV_STATE_CREDENTIALS_SET, /**< Credentials received, ready to connect */
     BLE_PROV_STATE_CONNECTING_WIFI, /**< Attempting Wi-Fi connection */
-    BLE_PROV_STATE_SUCCESS,         /**< Wi-Fi connected, provisioning complete */
+    BLE_PROV_STATE_ADOPTING,        /**< Wi-Fi up; calling cloud adopt_device with user JWT */
+    BLE_PROV_STATE_SUCCESS,         /**< Wi-Fi connected (legacy or no JWT supplied) */
+    BLE_PROV_STATE_ADOPTED,         /**< Cloud adoption succeeded, Thread credentials pushed to H2 */
     BLE_PROV_STATE_FAILED,          /**< Provisioning failed (bad credentials, etc.) */
     BLE_PROV_STATE_TIMEOUT,         /**< Advertising timed out */
 } ble_prov_state_t;
@@ -118,8 +127,9 @@ typedef enum {
     BLE_PROV_STATUS_READY = 0x01,           /**< Ready to receive credentials */
     BLE_PROV_STATUS_CREDENTIALS_OK = 0x02,  /**< Credentials received */
     BLE_PROV_STATUS_CONNECTING = 0x03,      /**< Connecting to network */
-    BLE_PROV_STATUS_VERIFYING = 0x04,       /**< Verifying cloud connectivity */
-    BLE_PROV_STATUS_SUCCESS = 0x05,         /**< Provisioning complete */
+    BLE_PROV_STATUS_VERIFYING = 0x04,       /**< Verifying cloud connectivity (cloud adoption call in flight) */
+    BLE_PROV_STATUS_SUCCESS = 0x05,         /**< Wi-Fi provisioning complete (legacy / no adoption) */
+    BLE_PROV_STATUS_ADOPTED = 0x06,         /**< Cloud adoption complete, Thread credentials installed, mesh up */
 
     /* Error states (0x10-0x1F) */
     BLE_PROV_STATUS_ERROR_SSID = 0x10,      /**< Invalid SSID */
@@ -128,6 +138,7 @@ typedef enum {
     BLE_PROV_STATUS_ERROR_TIMEOUT = 0x13,   /**< Connection timeout */
     BLE_PROV_STATUS_ERROR_THREAD = 0x14,    /**< Thread join failed */
     BLE_PROV_STATUS_ERROR_CLOUD = 0x15,     /**< Cloud verification failed */
+    BLE_PROV_STATUS_ERROR_ADOPTION = 0x16,  /**< Cloud adoption failed (generic - check Response JSON code) */
     BLE_PROV_STATUS_ERROR_BUSY = 0x1E,      /**< Device busy */
     BLE_PROV_STATUS_ERROR_UNKNOWN = 0x1F,   /**< Unknown error */
 } ble_prov_status_code_t;

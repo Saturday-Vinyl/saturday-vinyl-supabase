@@ -286,11 +286,24 @@ static void on_wifi_event(void *handler_args, esp_event_base_t base,
                     }
                 }
             }
-            /* Release BLE stack memory after successful WiFi connection.
-             * NimBLE stays resident after provisioning otherwise (~30KB).
-             * A device reboot is required to re-provision WiFi via BLE. */
-            if (!s_ble_deinitialized) {
-                ESP_LOGI(TAG, "WiFi connected - deinitializing BLE to free memory");
+            /* Free the NimBLE stack (~30KB) when it's safe.
+             *
+             * Two cases here:
+             *   1. Stored-WiFi boot: BLE was initialized but never started
+             *      (config_has_wifi() was true so main never called
+             *      ble_prov_start). The prov state machine has been parked
+             *      in IDLE since boot - the state callback won't fire to
+             *      deinit because there's no transition. Deinit now.
+             *   2. Active prov flow (legacy or new cloud adoption): the
+             *      ble_prov flow needs NimBLE alive to publish SUCCESS or
+             *      ADOPTED status. We leave it alone here and let the
+             *      state callback on on_ble_prov_state_change() tear it
+             *      down once the flow reaches IDLE on its own.
+             *
+             * ble_prov_is_active() is the right gate - it returns true only
+             * when advertising or connected. */
+            if (!s_ble_deinitialized && !ble_prov_is_active()) {
+                ESP_LOGI(TAG, "WiFi connected, BLE prov not active - deinitializing to free memory");
                 ble_prov_deinit();
                 s_ble_deinitialized = true;
             }
@@ -356,7 +369,14 @@ static void on_ble_prov_state_change(ble_prov_state_t state, void *user_data)
             led_set_state(LED_COLOR_BLUE, LED_PATTERN_BLINK_FAST, 250);
             break;
 
+        case BLE_PROV_STATE_ADOPTING:
+            /* WiFi up, cloud adopt_device call in flight. Keep BLE alive so
+             * the adoption task can publish ADOPTED status when complete. */
+            led_set_state(LED_COLOR_CYAN, LED_PATTERN_BLINK_FAST, 250);
+            break;
+
         case BLE_PROV_STATE_SUCCESS:
+        case BLE_PROV_STATE_ADOPTED:
             led_flash(LED_COLOR_GREEN, 1000);
             break;
 
@@ -367,6 +387,14 @@ static void on_ble_prov_state_change(ble_prov_state_t state, void *user_data)
         case BLE_PROV_STATE_TIMEOUT:
         case BLE_PROV_STATE_IDLE:
             s_ble_prov_active = false;
+            /* Provisioning flow has fully terminated (ble_prov_stop() was
+             * called from inside the success/failure paths). Now it's safe
+             * to free the NimBLE stack memory (~30KB). */
+            if (!s_ble_deinitialized) {
+                ESP_LOGI(TAG, "BLE provisioning complete - deinitializing BLE to free memory");
+                ble_prov_deinit();
+                s_ble_deinitialized = true;
+            }
             /* Return to appropriate state based on WiFi */
             if (s_wifi_connected) {
                 led_set_state(LED_COLOR_GREEN, LED_PATTERN_PULSE, 3000);
@@ -801,9 +829,15 @@ static void run_test_task(void *arg)
     const char *cap = cJSON_IsString(cap_json) ? cap_json->valuestring : "";
     const char *test = cJSON_IsString(test_json) ? test_json->valuestring : "";
 
-    if (strcmp(cap, "thread_br") == 0 &&
-        (strcmp(test, "connect") == 0 || strcmp(test, "start") == 0
-         || strcmp(test, "get_dataset") == 0)) {
+    /* Accept flat dispatch (cmd: "get_dataset") and legacy run_test
+     * (cmd: "run_test", params.capability: "thread_br", params.test_name: "get_dataset"). */
+    bool is_thread_diagnostic =
+        (strcmp(event->command, "get_dataset") == 0) ||
+        (strcmp(cap, "thread_br") == 0 &&
+         (strcmp(test, "connect") == 0 || strcmp(test, "start") == 0
+          || strcmp(test, "get_dataset") == 0));
+
+    if (is_thread_diagnostic) {
 
         /* Get Thread status and credentials from H2 */
         s3h2_status_payload_t h2_status;
@@ -859,9 +893,10 @@ static void run_test_task(void *arg)
         cJSON_Delete(result);
 
     } else {
-        char err_msg[128];
+        char err_msg[160];
         snprintf(err_msg, sizeof(err_msg),
-            "{\"error\":\"test_not_found\",\"message\":\"Unknown test: %s/%s\"}", cap, test);
+            "{\"error\":\"command_not_found\",\"message\":\"Unknown command: %s (cap=%s test=%s)\"}",
+            event->command, cap, test);
         realtime_client_ack_command(event->command_id, "failed", err_msg);
     }
 
@@ -923,6 +958,62 @@ static esp_err_t lookup_h2_firmware_url(const char *firmware_id,
     url_out[url_out_len - 1] = '\0';
     cJSON_Delete(root);
     return ESP_OK;
+}
+
+/**
+ * @brief Task that handles a remote `consumer_reset` command.
+ *
+ * Reset is destructive (clears WiFi, reboots) so we must send the
+ * `command_result` heartbeat BEFORE doing the work - the cloud needs to see
+ * the result before the Hub goes offline. The pattern is:
+ *
+ *   1. Send command_result "completed" with a short result envelope.
+ *   2. Brief delay so the heartbeat POST finishes flushing.
+ *   3. Clear S3 NVS (WiFi, adoption namespace, etc.).
+ *   4. Clear H2 Thread NVS over UART.
+ *   5. Reboot.
+ *
+ * Mirrors the serial-command flow in serial_prov.c:handle_customer_reset.
+ */
+static void consumer_reset_task(void *arg)
+{
+    realtime_command_event_t *event = (realtime_command_event_t *)arg;
+    ESP_LOGW(TAG, "Remote consumer_reset starting (cmd=%s)", event->command_id);
+
+    /* Tell the cloud we accepted the command BEFORE we go offline. */
+    realtime_client_ack_command(event->command_id, "completed",
+        "{\"action\":\"consumer_reset\",\"message\":\"Reset starting; device will reboot.\"}");
+
+    /* Give the heartbeat POST time to actually flush. The realtime ack is a
+     * REST POST that needs to complete before we kill WiFi in the reset. */
+    vTaskDelay(pdMS_TO_TICKS(1000));
+
+    ESP_LOGW(TAG, "Performing consumer reset");
+    led_set_state(LED_COLOR_RED, LED_PATTERN_BLINK_FAST, 100);
+
+    esp_err_t err = config_customer_reset();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "config_customer_reset failed: %s - continuing anyway",
+                 esp_err_to_name(err));
+    }
+
+    /* Wipe H2 Thread NVS so both chips return to UNPROVISIONED in lockstep. */
+    if (h2_comm_is_connected()) {
+        esp_err_t h2_err = h2_comm_clear_credentials(5000);
+        if (h2_err != ESP_OK) {
+            ESP_LOGW(TAG, "h2_comm_clear_credentials failed: %s",
+                     esp_err_to_name(h2_err));
+        }
+    } else {
+        ESP_LOGW(TAG, "H2 not connected during consumer_reset - H2 NVS not cleared");
+    }
+
+    ESP_LOGW(TAG, "Consumer reset complete - rebooting");
+    vTaskDelay(pdMS_TO_TICKS(500));
+
+    free(event);
+    esp_restart();
+    /* unreachable */
 }
 
 static void ota_update_task(void *arg)
@@ -1082,7 +1173,8 @@ static void on_realtime_event(void *handler_args, esp_event_base_t base,
             realtime_command_event_t *event = (realtime_command_event_t *)event_data;
             ESP_LOGI(TAG, "Remote command received: %s", event->command);
             /* Built-in commands (reboot, check_update, get_status) are handled by realtime_client */
-            if (strcmp(event->command, "run_test") == 0) {
+            if (strcmp(event->command, "run_test") == 0 ||
+                strcmp(event->command, "get_dataset") == 0) {
                 /* Spawn on a dedicated task — H2 comm + cJSON need more stack than sys_evt provides */
                 realtime_command_event_t *event_copy = malloc(sizeof(*event_copy));
                 if (event_copy != NULL) {
@@ -1102,6 +1194,20 @@ static void on_realtime_event(void *handler_args, esp_event_base_t base,
                         ESP_LOGE(TAG, "Failed to create ota_update task");
                         realtime_client_ack_command(event->command_id, "failed",
                             "{\"error\":\"task_failed\",\"message\":\"Could not create OTA task\"}");
+                        free(event_copy);
+                    }
+                }
+            } else if (strcmp(event->command, "consumer_reset") == 0) {
+                /* Destructive: clears WiFi + adoption state, wipes H2 Thread
+                 * credentials, reboots. Spawned as a task so we can send the
+                 * command_result heartbeat before going offline. */
+                realtime_command_event_t *event_copy = malloc(sizeof(*event_copy));
+                if (event_copy != NULL) {
+                    memcpy(event_copy, event, sizeof(*event_copy));
+                    if (xTaskCreate(consumer_reset_task, "consumer_reset", 4096, event_copy, 5, NULL) != pdPASS) {
+                        ESP_LOGE(TAG, "Failed to create consumer_reset task");
+                        realtime_client_ack_command(event->command_id, "failed",
+                            "{\"error\":\"task_failed\",\"message\":\"Could not create reset task\"}");
                         free(event_copy);
                     }
                 }
@@ -1191,18 +1297,34 @@ static void on_button_press(button_press_t press_type)
             }
             break;
         case BUTTON_PRESS_FACTORY:
-            /* Customer reset: clears WiFi credentials but keeps unit_id/Supabase config.
+            /* Customer reset: clears WiFi credentials, adoption state, and
+             * device session tokens on S3; tells H2 to wipe its Thread NVS
+             * and stop the Thread stack. Keeps unit_id/Supabase config.
              * Factory reset (clears everything) is only available via service mode. */
             ESP_LOGW(TAG, "Customer reset requested!");
             led_set_state(LED_COLOR_RED, LED_PATTERN_BLINK_FAST, 100);
             esp_err_t ret = config_customer_reset();
-            if (ret == ESP_OK) {
-                ESP_LOGW(TAG, "Customer reset complete - restarting...");
-                vTaskDelay(pdMS_TO_TICKS(2000));
-                esp_restart();
-            } else {
-                ESP_LOGE(TAG, "Customer reset failed: %s", esp_err_to_name(ret));
+            if (ret != ESP_OK) {
+                ESP_LOGE(TAG, "Customer reset (S3) failed: %s", esp_err_to_name(ret));
+                /* Continue anyway - still try to clear H2 so it doesn't come
+                 * back up with stale credentials on the next boot. */
             }
+
+            /* Wipe H2 Thread credentials so both chips return to UNPROVISIONED
+             * in lockstep. Best-effort - we still reboot regardless. */
+            if (h2_comm_is_connected()) {
+                esp_err_t h2_err = h2_comm_clear_credentials(5000);
+                if (h2_err != ESP_OK) {
+                    ESP_LOGW(TAG, "H2 clear_credentials failed during customer_reset: %s",
+                             esp_err_to_name(h2_err));
+                }
+            } else {
+                ESP_LOGW(TAG, "H2 not connected during customer_reset - H2 NVS not cleared");
+            }
+
+            ESP_LOGW(TAG, "Customer reset complete - restarting...");
+            vTaskDelay(pdMS_TO_TICKS(2000));
+            esp_restart();
             break;
     }
 }
@@ -1610,6 +1732,35 @@ void app_main(void)
             ESP_LOGI(TAG, "H2 health monitor started");
         } else {
             ESP_LOGW(TAG, "Failed to start H2 health monitor: %s", esp_err_to_name(ret));
+        }
+
+        /* Boot reconciliation: if this Hub has been adopted, push the cached
+         * Thread credentials to the H2. This makes the H2's NVS state
+         * recoverable - even if it gets wiped (regression, future OTA bug,
+         * dev erase), we re-seed it from the S3-side cache that was populated
+         * at adoption time. The push is idempotent if H2 already has them.
+         *
+         * Cloud reconciliation (compare cache to fresh cloud value) is a
+         * future enhancement; for now the cache is treated as authoritative
+         * until the next BLE adoption replaces it. See
+         * .context/thread-credential-architecture.md. */
+        {
+            adoption_state_t adopt_state = ADOPTION_STATE_UNPROVISIONED;
+            if (config_get_adoption_state(&adopt_state) == ESP_OK
+                && adopt_state == ADOPTION_STATE_ADOPTED) {
+                s3h2_credentials_payload_t cached_creds;
+                if (config_get_thread_creds_cache(&cached_creds) == ESP_OK) {
+                    ESP_LOGI(TAG, "Adopted: pushing cached Thread credentials to H2");
+                    esp_err_t push_err = h2_comm_set_credentials(&cached_creds, 10000);
+                    if (push_err != ESP_OK) {
+                        ESP_LOGW(TAG, "Boot push to H2 failed: %s (will retry "
+                                      "via health monitor if needed)",
+                                 esp_err_to_name(push_err));
+                    }
+                } else {
+                    ESP_LOGW(TAG, "Adopted but no cached Thread creds in S3 NVS");
+                }
+            }
         }
     }
 

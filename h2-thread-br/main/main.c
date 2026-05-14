@@ -41,6 +41,8 @@ static s3h2_thread_state_t convert_to_protocol_state(thread_br_state_t state)
     switch (state) {
         case THREAD_BR_STATE_DISABLED:
             return S3H2_THREAD_STATE_DISABLED;
+        case THREAD_BR_STATE_UNPROVISIONED:
+            return S3H2_THREAD_STATE_UNPROVISIONED;
         case THREAD_BR_STATE_DETACHED:
             return S3H2_THREAD_STATE_DETACHED;
         case THREAD_BR_STATE_ATTACHING:

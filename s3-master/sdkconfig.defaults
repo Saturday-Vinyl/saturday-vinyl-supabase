@@ -65,8 +65,17 @@ CONFIG_ESP_HTTP_CLIENT_ENABLE_BASIC_AUTH=y
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_CMN=y
 CONFIG_MBEDTLS_ASYMMETRIC_CONTENT_LEN=y
-CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN=16384
+# Reduced from 16384 to 8192 to fit in fragmented heap during BLE adoption.
+# Supabase edge functions and PostgREST responses are well under 8KB; OTA
+# downloads negotiate down to whatever we advertise. 8KB leaves margin
+# above any expected response size.
+CONFIG_MBEDTLS_SSL_IN_CONTENT_LEN=8192
 CONFIG_MBEDTLS_SSL_OUT_CONTENT_LEN=4096
+# Dynamic allocation during handshake; buffers are freed when handshake
+# completes. Critical for opening new TLS connections while NimBLE is alive
+# (BLE adoption flow opens HTTPS to adopt_device before BLE is freed).
+CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
+CONFIG_MBEDTLS_DYNAMIC_FREE_CA_CERT=y
 
 # =============================================================================
 # Bluetooth (NimBLE for BLE Provisioning)

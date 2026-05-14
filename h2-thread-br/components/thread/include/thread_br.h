@@ -58,6 +58,7 @@ extern "C" {
  */
 typedef enum {
     THREAD_BR_STATE_DISABLED,       /**< Thread BR not initialized */
+    THREAD_BR_STATE_UNPROVISIONED,  /**< Initialized, NVS empty, idling - waiting for S3 to push credentials via CMD_SET_CREDENTIALS */
     THREAD_BR_STATE_DETACHED,       /**< Initialized but not attached to network */
     THREAD_BR_STATE_ATTACHING,      /**< Attempting to attach to network */
     THREAD_BR_STATE_CHILD,          /**< Attached as child (rarely used for BR) */
@@ -86,9 +87,12 @@ typedef enum {
 /**
  * @brief Thread network credentials
  *
- * These credentials define a Thread network. They are generated on first boot
- * and stored in NVS for persistence. The mobile app can retrieve these via
- * the cloud to provision new crates.
+ * These credentials define a Thread network. They are issued by the cloud
+ * `adopt_device` edge function (once per user account, on first Hub adoption),
+ * fetched by S3 over HTTPS, and pushed to the H2 via CMD_SET_CREDENTIALS.
+ *
+ * H2 never generates these locally - the H2 stays in UNPROVISIONED state until
+ * S3 hands it credentials. See .context/thread-credential-architecture.md.
  */
 typedef struct {
     char network_name[THREAD_NETWORK_NAME_MAX_LEN + 1];  /**< Network name */
@@ -110,6 +114,7 @@ typedef struct {
     char network_name[THREAD_NETWORK_NAME_MAX_LEN + 1]; /**< Current network name */
     uint16_t rloc16;                /**< Router Locator (16-bit address) */
     uint8_t device_count;           /**< Number of devices on network */
+    uint32_t partition_id;          /**< Thread partition ID (0 if not attached) */
     bool border_routing_enabled;    /**< Whether border routing is active */
     int64_t attached_time_us;       /**< Time when attached (esp_timer_get_time) */
 } thread_br_status_t;
@@ -141,10 +146,13 @@ esp_err_t thread_br_init(void);
 /**
  * @brief Start the Thread Border Router
  *
- * Forms or joins the Thread network using stored credentials.
- * If no credentials exist, generates new network credentials.
+ * If credentials exist in NVS, forms/joins the Thread network using them.
+ * If NVS is empty, transitions to THREAD_BR_STATE_UNPROVISIONED and returns
+ * ESP_OK without starting OpenThread - the H2 idles waiting for S3 to push
+ * credentials via thread_br_set_credentials() / CMD_SET_CREDENTIALS.
  *
- * @return ESP_OK on success, error code otherwise
+ * @return ESP_OK on success (including the unprovisioned-idle case),
+ *         error code on real failures
  */
 esp_err_t thread_br_start(void);
 
@@ -297,16 +305,39 @@ bool thread_br_has_credentials(void);
 esp_err_t thread_br_get_credentials(thread_network_credentials_t *creds);
 
 /**
- * @brief Ensure Thread credentials exist (generate if needed)
+ * @brief Check whether Thread credentials exist in NVS
  *
- * Checks if credentials exist in NVS. If not, generates new random credentials.
- * This function does NOT require the Thread stack to be initialized.
- * Used by service mode to ensure credentials are available for get_status
- * before the full Thread BR is started.
+ * In the cloud-canonical architecture, credentials are pushed by the S3 via
+ * CMD_SET_CREDENTIALS - they are never generated locally. This function is a
+ * thin existence check.
+ *
+ * @return ESP_OK if credentials are present, ESP_ERR_NOT_FOUND otherwise
+ */
+esp_err_t thread_br_ensure_credentials(void);
+
+/**
+ * @brief Set Thread credentials and (re)start the Thread network
+ *
+ * Persists the supplied credentials to NVS and starts the Thread stack with
+ * them. If Thread is already running, the stack is restarted with the new
+ * dataset. Called when S3 receives credentials from the cloud `adopt_device`
+ * or `get_thread_credentials` edge function and pushes them via UART.
+ *
+ * @param creds Pointer to the credentials to install
+ * @return ESP_OK on success, error code otherwise
+ */
+esp_err_t thread_br_set_credentials(const thread_network_credentials_t *creds);
+
+/**
+ * @brief Clear Thread credentials and stop the Thread network
+ *
+ * Stops the Thread stack and erases the sv_thread NVS namespace. After this
+ * the H2 returns to UNPROVISIONED state. Called on consumer reset and when
+ * the device is unadopted.
  *
  * @return ESP_OK on success, error code otherwise
  */
-esp_err_t thread_br_ensure_credentials(void);
+esp_err_t thread_br_clear_credentials_and_stop(void);
 
 /**
  * @brief Get network key as hex string (for cloud sync)
@@ -327,11 +358,12 @@ esp_err_t thread_br_get_network_key_hex(char *hex_str, size_t max_len);
 esp_err_t thread_br_get_extpanid_hex(char *hex_str, size_t max_len);
 
 /**
- * @brief Generate new network credentials
+ * @brief Generate new network credentials (legacy / diagnostic only)
  *
- * Generates new random network credentials and stores them in NVS.
- * Used for factory reset or initial setup.
- * WARNING: This will require all existing devices to be re-commissioned!
+ * Generates new random network credentials and stores them in NVS. In the
+ * cloud-canonical architecture this is NOT called on the boot path - the H2
+ * idles in UNPROVISIONED until S3 pushes creds from the cloud. Kept available
+ * for diagnostic / test paths only; do not invoke from new code.
  *
  * @return ESP_OK on success, error code otherwise
  */

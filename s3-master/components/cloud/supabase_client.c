@@ -618,6 +618,114 @@ esp_err_t supabase_get(const char *path, supabase_response_t *response,
     return err;
 }
 
+esp_err_t supabase_function_call(const char *function_name,
+                                 const char *method,
+                                 const char *json_body,
+                                 const char *bearer_override,
+                                 supabase_response_t *response,
+                                 uint32_t timeout_ms)
+{
+    if (function_name == NULL || method == NULL || response == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!supabase_is_configured()) {
+        ESP_LOGE(TAG, "Supabase not configured");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    bool is_post = (strcasecmp(method, "POST") == 0);
+    bool is_get  = (strcasecmp(method, "GET")  == 0);
+    if (!is_post && !is_get) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    memset(response, 0, sizeof(supabase_response_t));
+
+    /* URL: {base}/functions/v1/{function_name} */
+    char url[MAX_URL_SIZE];
+    int url_len = snprintf(url, sizeof(url), "%s/functions/v1/%s",
+                           s_state.config.url, function_name);
+    if (url_len >= (int)sizeof(url)) {
+        ESP_LOGE(TAG, "URL too long");
+        return ESP_ERR_INVALID_SIZE;
+    }
+
+    uint32_t per_attempt_timeout = (timeout_ms > 0) ? timeout_ms : RETRY_TIMEOUT_MS;
+
+    /* Build Authorization header. */
+    const char *bearer_value = (bearer_override != NULL) ? bearer_override
+                                                         : s_state.config.anon_key;
+    /* Supabase JWTs and device session tokens can be ~700-1200 bytes. */
+    size_t auth_buf_len = strlen(bearer_value) + 16;
+    char *auth_header = malloc(auth_buf_len);
+    if (auth_header == NULL) return ESP_ERR_NO_MEM;
+    snprintf(auth_header, auth_buf_len, "Bearer %s", bearer_value);
+
+    response_buffer_t resp_buf = {
+        .buffer = malloc(MAX_RESPONSE_SIZE),
+        .buffer_size = MAX_RESPONSE_SIZE,
+        .data_len = 0,
+    };
+    if (resp_buf.buffer == NULL) {
+        free(auth_header);
+        return ESP_ERR_NO_MEM;
+    }
+    resp_buf.buffer[0] = '\0';
+
+    /* TX buffer must fit all request headers. Authorization with a Supabase
+     * user JWT (~1.4KB) plus apikey (anon key JWT, ~250B) plus Host /
+     * Content-Type / Content-Length / etc. easily exceeds the default 1024.
+     * 4KB gives comfortable margin for any token shape we'd send. */
+    esp_http_client_config_t http_config = {
+        .url = url,
+        .event_handler = http_event_handler,
+        .user_data = &resp_buf,
+        .timeout_ms = per_attempt_timeout,
+        .cert_pem = supabase_ca_pem_start,
+        .buffer_size = 2048,
+        .buffer_size_tx = 4096,
+    };
+
+    esp_http_client_handle_t client = esp_http_client_init(&http_config);
+    if (client == NULL) {
+        free(auth_header);
+        free(resp_buf.buffer);
+        return ESP_FAIL;
+    }
+
+    esp_http_client_set_method(client, is_post ? HTTP_METHOD_POST : HTTP_METHOD_GET);
+    esp_http_client_set_header(client, "apikey", s_state.config.anon_key);
+    esp_http_client_set_header(client, "Authorization", auth_header);
+    esp_http_client_set_header(client, "Accept", "application/json");
+    if (is_post) {
+        esp_http_client_set_header(client, "Content-Type", "application/json");
+        if (json_body != NULL) {
+            esp_http_client_set_post_field(client, json_body, strlen(json_body));
+        }
+    }
+
+    int64_t start = esp_timer_get_time();
+    esp_err_t err = esp_http_client_perform(client);
+    response->request_time_ms = (esp_timer_get_time() - start) / 1000;
+
+    if (err == ESP_OK) {
+        response->status_code = esp_http_client_get_status_code(client);
+        response->body = resp_buf.buffer;  /* transfer ownership */
+        response->body_len = resp_buf.data_len;
+        ESP_LOGI(TAG, "%s /functions/v1/%s -> %d (%lldms)",
+                 method, function_name, response->status_code,
+                 response->request_time_ms);
+    } else {
+        ESP_LOGE(TAG, "%s /functions/v1/%s failed: %s",
+                 method, function_name, esp_err_to_name(err));
+        free(resp_buf.buffer);
+    }
+
+    esp_http_client_cleanup(client);
+    free(auth_header);
+    return err;
+}
+
 void supabase_response_free(supabase_response_t *response)
 {
     if (response != NULL && response->body != NULL) {

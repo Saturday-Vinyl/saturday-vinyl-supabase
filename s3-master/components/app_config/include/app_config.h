@@ -19,9 +19,9 @@
  * These values must match the firmware JSON schema exported from admin app
  ******************************************************************************/
 #define FW_VERSION_MAJOR    0
-#define FW_VERSION_MINOR    5
-#define FW_VERSION_PATCH    2
-#define FW_VERSION_STRING   "0.5.2"          /* From firmware JSON schema */
+#define FW_VERSION_MINOR    6
+#define FW_VERSION_PATCH    0
+#define FW_VERSION_STRING   "0.6.0"          /* From firmware JSON schema */
 #define DEVICE_TYPE         "hub-prototype"  /* From firmware JSON schema */
 
 /*******************************************************************************

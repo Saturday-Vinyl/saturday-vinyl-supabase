@@ -11,6 +11,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "esp_err.h"
+#include "s3_h2_protocol.h"  /* for s3h2_credentials_payload_t */
 
 #ifdef __cplusplus
 extern "C" {
@@ -139,6 +140,69 @@ esp_err_t config_get_unit_id(char *unit_id, size_t max_len);
  * @return ESP_OK on success, error code otherwise
  */
 esp_err_t config_set_unit_id(const char *unit_id);
+
+/*******************************************************************************
+ * Adoption + Cloud-Canonical Thread Credentials
+ *
+ * The Hub becomes "adopted" when a user, through the BLE adoption flow, writes
+ * their JWT to the User Token characteristic and the Hub calls `adopt_device`
+ * on Supabase. The cloud returns Thread credentials (cached locally for offline
+ * boot) and device-scoped access/refresh tokens (used for subsequent
+ * authenticated cloud calls instead of the shared anon key).
+ *
+ * All adoption-related NVS lives in the `sv_adopt` namespace and is cleared on
+ * consumer_reset. See .context/thread-credential-architecture.md.
+ ******************************************************************************/
+
+/**
+ * @brief Adoption lifecycle state.
+ */
+typedef enum {
+    ADOPTION_STATE_UNPROVISIONED = 0,  /**< Hub has never been adopted */
+    ADOPTION_STATE_ADOPTED       = 1,  /**< Hub is owned by a user account */
+    ADOPTION_STATE_UNADOPTING    = 2,  /**< Unadoption in progress (rare) */
+} adoption_state_t;
+
+esp_err_t config_get_adoption_state(adoption_state_t *out_state);
+esp_err_t config_set_adoption_state(adoption_state_t state);
+
+/**
+ * @brief Store the device session tokens returned by adopt_device or
+ *        refresh_device_session.
+ *
+ * @param access_token  Short-lived access token (NUL-terminated)
+ * @param refresh_token Long-lived refresh token (NUL-terminated)
+ * @param expires_at_ms Unix timestamp in milliseconds for access-token expiry
+ */
+esp_err_t config_set_device_tokens(const char *access_token,
+                                   const char *refresh_token,
+                                   int64_t expires_at_ms);
+
+/**
+ * @brief Load device session tokens from NVS.
+ *
+ * @param access_token  Buffer for access token. NULL to skip.
+ * @param at_size       Size of access_token buffer.
+ * @param refresh_token Buffer for refresh token. NULL to skip.
+ * @param rt_size       Size of refresh_token buffer.
+ * @param expires_at_ms Out param for expiry timestamp. NULL to skip.
+ *
+ * @return ESP_OK, ESP_ERR_NOT_FOUND if no tokens stored, other error codes.
+ */
+esp_err_t config_get_device_tokens(char *access_token, size_t at_size,
+                                   char *refresh_token, size_t rt_size,
+                                   int64_t *expires_at_ms);
+
+esp_err_t config_clear_device_tokens(void);
+
+/**
+ * @brief Cache Thread credentials received from the cloud. Used as the S3-side
+ *        offline source-of-truth; pushed to H2 via H2_SET_CREDENTIALS during
+ *        boot reconciliation.
+ */
+esp_err_t config_set_thread_creds_cache(const s3h2_credentials_payload_t *creds);
+esp_err_t config_get_thread_creds_cache(s3h2_credentials_payload_t *out_creds);
+esp_err_t config_clear_thread_creds_cache(void);
 
 /**
  * @brief Erase all configuration (full factory reset)

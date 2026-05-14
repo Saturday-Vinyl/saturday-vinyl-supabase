@@ -33,6 +33,7 @@
 
 #include "cbor.h"
 #include "s3_h2_protocol.h"
+#include "h2_comm.h"
 
 static const char *TAG = "EVENT_RPT";
 
@@ -304,7 +305,18 @@ static int format_now_playing_json(const queued_event_t *event, char *buf, size_
  * - largest_free_block: Largest contiguous block (fragmentation detection)
  *
  * WiFi capability heartbeat fields (from firmware JSON schema):
- * - wifi_rssi: Signal strength (only field in wifi.heartbeat schema)
+ * - wifi_rssi: Signal strength
+ *
+ * thread_br capability heartbeat fields (from firmware JSON schema):
+ * - thread_role: Current Thread role (s3h2_thread_state_t)
+ * - thread_pan_id: 16-bit PAN ID
+ * - thread_channel: 802.15.4 channel
+ * - thread_partition_id: Thread partition ID (split-mesh detection)
+ * - thread_neighbor_count: Visible Thread devices (excluding self)
+ *
+ * If the H2 coprocessor is unreachable or status query fails, the thread_*
+ * fields are omitted from the heartbeat - their absence implies the H2 is
+ * not connected.
  */
 static int format_heartbeat_json(char *buf, size_t buf_len)
 {
@@ -339,34 +351,80 @@ static int format_heartbeat_json(char *buf, size_t buf_len)
     /* WebSocket capability heartbeat field (websocket_connected per schema) */
     bool ws_connected = realtime_client_is_connected();
 
-    int len = snprintf(buf, buf_len,
-        "{\"mac_address\":\"%s\","
-        "\"unit_id\":\"%s\","
-        "\"device_type\":\"%s\","
-        "\"firmware_version\":\"%s\","
-        "\"telemetry\":{"
-        "\"uptime_sec\":%lu,"
-        "\"total_heap\":%lu,"
-        "\"free_heap\":%lu,"
-        "\"min_free_heap\":%lu,"
-        "\"largest_free_block\":%lu,"
-        "\"wifi_rssi\":%d,"
-        "\"h2_connected\":%s,"
-        "\"h2_thread_state\":%d,"
-        "\"websocket_connected\":%s}}",
-        mac_str,
-        unit_id,
-        DEVICE_TYPE,
-        FW_VERSION_STRING,
-        (unsigned long)uptime_sec,
-        (unsigned long)total_heap,
-        (unsigned long)free_heap,
-        (unsigned long)min_free_heap,
-        (unsigned long)largest_free_block,
-        wifi_rssi,
-        s_h2_connected ? "true" : "false",
-        s_h2_thread_state,
-        ws_connected ? "true" : "false");
+    /* thread_br capability heartbeat fields - fetched fresh from H2 on each
+     * heartbeat. If H2 is disconnected or unresponsive we omit all thread_*
+     * fields rather than ship stale or zero values; the consumer can infer
+     * H2 health from their absence. */
+    s3h2_status_payload_t h2_status = {0};
+    bool have_thread_status = false;
+    if (s_h2_connected) {
+        if (h2_comm_get_status(&h2_status, 1000) == ESP_OK) {
+            have_thread_status = true;
+        }
+    }
+
+    int len;
+    if (have_thread_status) {
+        len = snprintf(buf, buf_len,
+            "{\"mac_address\":\"%s\","
+            "\"unit_id\":\"%s\","
+            "\"device_type\":\"%s\","
+            "\"firmware_version\":\"%s\","
+            "\"telemetry\":{"
+            "\"uptime_sec\":%lu,"
+            "\"total_heap\":%lu,"
+            "\"free_heap\":%lu,"
+            "\"min_free_heap\":%lu,"
+            "\"largest_free_block\":%lu,"
+            "\"wifi_rssi\":%d,"
+            "\"thread_role\":%u,"
+            "\"thread_pan_id\":%u,"
+            "\"thread_channel\":%u,"
+            "\"thread_partition_id\":%lu,"
+            "\"thread_neighbor_count\":%u,"
+            "\"websocket_connected\":%s}}",
+            mac_str,
+            unit_id,
+            DEVICE_TYPE,
+            FW_VERSION_STRING,
+            (unsigned long)uptime_sec,
+            (unsigned long)total_heap,
+            (unsigned long)free_heap,
+            (unsigned long)min_free_heap,
+            (unsigned long)largest_free_block,
+            wifi_rssi,
+            (unsigned)h2_status.thread_state,
+            (unsigned)h2_status.pan_id,
+            (unsigned)h2_status.channel,
+            (unsigned long)h2_status.partition_id,
+            (unsigned)h2_status.device_count,
+            ws_connected ? "true" : "false");
+    } else {
+        len = snprintf(buf, buf_len,
+            "{\"mac_address\":\"%s\","
+            "\"unit_id\":\"%s\","
+            "\"device_type\":\"%s\","
+            "\"firmware_version\":\"%s\","
+            "\"telemetry\":{"
+            "\"uptime_sec\":%lu,"
+            "\"total_heap\":%lu,"
+            "\"free_heap\":%lu,"
+            "\"min_free_heap\":%lu,"
+            "\"largest_free_block\":%lu,"
+            "\"wifi_rssi\":%d,"
+            "\"websocket_connected\":%s}}",
+            mac_str,
+            unit_id,
+            DEVICE_TYPE,
+            FW_VERSION_STRING,
+            (unsigned long)uptime_sec,
+            (unsigned long)total_heap,
+            (unsigned long)free_heap,
+            (unsigned long)min_free_heap,
+            (unsigned long)largest_free_block,
+            wifi_rssi,
+            ws_connected ? "true" : "false");
+    }
 
     return len;
 }

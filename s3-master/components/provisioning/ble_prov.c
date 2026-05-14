@@ -28,6 +28,9 @@
 #include "config_store.h"
 #include "wifi_manager.h"
 #include "led_manager.h"
+#include "adoption_client.h"
+#include "h2_comm.h"
+#include "s3_h2_protocol.h"
 
 static const char *TAG = "BLE_PROV";
 
@@ -98,6 +101,16 @@ static const ble_uuid128_t gatt_svr_chr_wifi_pass_uuid =
     BLE_UUID128_INIT(0xfb, 0x34, 0x9b, 0x5f, 0x80, 0x00, 0x00, 0x80,
                      0x00, 0x10, 0x01, 0x00, 0x11, 0x00, 0x56, 0x53);
 
+/* User Token (0x0030): 53560030-0001-1000-8000-00805f9b34fb
+ *
+ * App writes the user's Supabase JWT here during adoption. Writes accumulate
+ * into a buffer (JWTs are ~700-1200 bytes, exceeding any reasonable single ATT
+ * write); when the CONNECT command arrives, the accumulated token is forwarded
+ * to the cloud adopt_device endpoint. */
+static const ble_uuid128_t gatt_svr_chr_user_token_uuid =
+    BLE_UUID128_INIT(0xfb, 0x34, 0x9b, 0x5f, 0x80, 0x00, 0x00, 0x80,
+                     0x00, 0x10, 0x01, 0x00, 0x30, 0x00, 0x56, 0x53);
+
 /*******************************************************************************
  * Forward Declarations
  ******************************************************************************/
@@ -160,6 +173,12 @@ static const struct ble_gatt_svc_def gatt_svr_svcs[] = {
                 .flags = BLE_GATT_CHR_F_WRITE,
             },
             {
+                /* User Token (0x0030) - Write (multi-write, accumulates) */
+                .uuid = &gatt_svr_chr_user_token_uuid.u,
+                .access_cb = gatt_svr_chr_access,
+                .flags = BLE_GATT_CHR_F_WRITE,
+            },
+            {
                 0, /* Terminator */
             },
         },
@@ -185,6 +204,12 @@ static struct {
     char wifi_pass[BLE_PROV_MAX_PASS_LEN + 1];
     bool ssid_received;
     bool pass_received;
+
+    /* Adoption: user JWT received over multiple writes to char 0x0030.
+     * Allocated on first write, freed after adoption completes (success or
+     * failure). NULL if no user JWT has been written for this session. */
+    char *user_jwt;
+    size_t user_jwt_len;
 
     /* Status and response values */
     uint8_t status_value;
@@ -398,12 +423,134 @@ static void cleanup_wifi_event_handler(void)
 /**
  * @brief Handle successful WiFi connection
  */
+static void run_cloud_adoption(void)
+{
+    char response[BLE_PROV_MAX_RESPONSE_LEN];
+
+    set_state(BLE_PROV_STATE_ADOPTING);
+    update_status(BLE_PROV_STATUS_VERIFYING);
+    send_response("{\"type\":\"progress\",\"code\":\"VERIFYING\","
+                  "\"message\":\"Adopting device with Saturday cloud...\"}");
+
+    /* Build MAC address string. esp_read_mac with ESP_MAC_WIFI_STA matches the
+     * identity Supabase has registered for this Hub. */
+    uint8_t mac[6];
+    esp_read_mac(mac, ESP_MAC_WIFI_STA);
+    char mac_str[18];
+    snprintf(mac_str, sizeof(mac_str), "%02X:%02X:%02X:%02X:%02X:%02X",
+             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+
+    s3h2_credentials_payload_t creds = {0};
+    char access_token[ADOPTION_TOKEN_MAX_LEN] = {0};
+    char refresh_token[ADOPTION_TOKEN_MAX_LEN] = {0};
+    int64_t expires_at_ms = 0;
+
+    esp_err_t err = adoption_adopt_device(mac_str, s_ble.user_jwt,
+                                          &creds,
+                                          access_token,
+                                          refresh_token,
+                                          &expires_at_ms);
+
+    /* Always wipe the JWT immediately - it's a user credential and we don't
+     * need it again after this single call. */
+    if (s_ble.user_jwt != NULL) {
+        memset(s_ble.user_jwt, 0, s_ble.user_jwt_len);
+        free(s_ble.user_jwt);
+        s_ble.user_jwt = NULL;
+        s_ble.user_jwt_len = 0;
+    }
+
+    if (err == ESP_ERR_NOT_FOUND) {
+        ESP_LOGE(TAG, "adopt_device: device_not_factory_provisioned");
+        set_state(BLE_PROV_STATE_FAILED);
+        update_status(BLE_PROV_STATUS_ERROR_ADOPTION);
+        send_response("{\"type\":\"error\",\"code\":\"DEVICE_NOT_PROVISIONED\","
+                      "\"message\":\"This Hub is not registered with Saturday\"}");
+        return;
+    }
+    if (err == ESP_ERR_INVALID_STATE) {
+        ESP_LOGE(TAG, "adopt_device: device_owned_by_another_user");
+        set_state(BLE_PROV_STATE_FAILED);
+        update_status(BLE_PROV_STATUS_ERROR_ADOPTION);
+        send_response("{\"type\":\"error\",\"code\":\"DEVICE_OWNED_BY_ANOTHER_USER\","
+                      "\"message\":\"This Hub is already adopted by another account\"}");
+        return;
+    }
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "adopt_device failed: %s", esp_err_to_name(err));
+        set_state(BLE_PROV_STATE_FAILED);
+        update_status(BLE_PROV_STATUS_ERROR_ADOPTION);
+        send_response("{\"type\":\"error\",\"code\":\"ADOPTION_FAILED\","
+                      "\"message\":\"Could not reach Saturday cloud\"}");
+        return;
+    }
+
+    /* Persist tokens + cached creds + adoption state in S3 NVS. */
+    err = config_set_device_tokens(access_token, refresh_token, expires_at_ms);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to persist device tokens: %s", esp_err_to_name(err));
+    }
+    err = config_set_thread_creds_cache(&creds);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to cache Thread creds: %s", esp_err_to_name(err));
+    }
+    err = config_set_adoption_state(ADOPTION_STATE_ADOPTED);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to set adoption_state: %s", esp_err_to_name(err));
+    }
+
+    /* Push Thread credentials to H2. Generous timeout - H2 may restart Thread
+     * stack before ACKing. */
+    ESP_LOGI(TAG, "Pushing Thread credentials to H2");
+    err = h2_comm_set_credentials(&creds, 10000);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "h2_comm_set_credentials failed: %s", esp_err_to_name(err));
+        set_state(BLE_PROV_STATE_FAILED);
+        update_status(BLE_PROV_STATUS_ERROR_THREAD);
+        send_response("{\"type\":\"error\",\"code\":\"THREAD_FAILED\","
+                      "\"message\":\"Got Thread credentials but H2 push failed\"}");
+        return;
+    }
+
+    /* Success. */
+    set_state(BLE_PROV_STATE_ADOPTED);
+    update_status(BLE_PROV_STATUS_ADOPTED);
+    snprintf(response, sizeof(response),
+             "{\"type\":\"message\",\"code\":\"ADOPTED\","
+             "\"message\":\"Saturday Hub is now adopted on %s\"}",
+             s_ble.wifi_ssid);
+    send_response(response);
+
+    s_ble.provisioning_complete = true;
+
+    led_flash(LED_COLOR_GREEN, 500);
+    vTaskDelay(pdMS_TO_TICKS(600));
+    led_set_state(LED_COLOR_GREEN, LED_PATTERN_SOLID, 0);
+    led_set_brightness(64);
+
+    if (s_ble.complete_cb) {
+        s_ble.complete_cb(true, s_ble.wifi_ssid, s_ble.user_data);
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    ble_prov_stop();
+}
+
 static void handle_wifi_prov_success(void)
 {
     char response[BLE_PROV_MAX_RESPONSE_LEN];
 
     ESP_LOGI(TAG, "Wi-Fi connected successfully!");
 
+    /* If the app supplied a user JWT, drive the cloud adoption flow. */
+    if (s_ble.user_jwt != NULL && s_ble.user_jwt_len > 0) {
+        ESP_LOGI(TAG, "User token present - starting cloud adoption");
+        run_cloud_adoption();
+        return;
+    }
+
+    /* Legacy path: no JWT, just report Wi-Fi success. Useful for development
+     * and factory flows that don't go through the consumer app. */
     set_state(BLE_PROV_STATE_SUCCESS);
     update_status(BLE_PROV_STATUS_SUCCESS);
     snprintf(response, sizeof(response),
@@ -692,6 +839,55 @@ static int gatt_svr_chr_access(uint16_t conn_handle, uint16_t attr_handle,
                 send_response("{\"type\":\"message\",\"code\":\"CREDENTIALS_OK\",\"message\":\"Credentials received\"}");
             }
 
+            return 0;
+        }
+        return BLE_ATT_ERR_UNLIKELY;
+    }
+
+    /* User Token Characteristic (0x0030) - Write, multi-write accumulating */
+    if (ble_uuid_cmp(uuid, &gatt_svr_chr_user_token_uuid.u) == 0) {
+        if (ctxt->op == BLE_GATT_ACCESS_OP_WRITE_CHR) {
+            uint16_t len = OS_MBUF_PKTLEN(ctxt->om);
+            if (len == 0) {
+                /* Empty write resets the buffer (app can use this to start over). */
+                free(s_ble.user_jwt);
+                s_ble.user_jwt = NULL;
+                s_ble.user_jwt_len = 0;
+                return 0;
+            }
+
+            /* Lazy-allocate on first write. */
+            if (s_ble.user_jwt == NULL) {
+                s_ble.user_jwt = malloc(BLE_PROV_MAX_JWT_LEN);
+                if (s_ble.user_jwt == NULL) {
+                    ESP_LOGE(TAG, "Failed to allocate JWT buffer");
+                    return BLE_ATT_ERR_INSUFFICIENT_RES;
+                }
+                s_ble.user_jwt_len = 0;
+                s_ble.user_jwt[0] = '\0';
+            }
+
+            if (s_ble.user_jwt_len + len >= BLE_PROV_MAX_JWT_LEN) {
+                ESP_LOGW(TAG, "JWT buffer overflow (have %zu, +%u, max %d)",
+                         s_ble.user_jwt_len, len, BLE_PROV_MAX_JWT_LEN);
+                /* Wipe to avoid leaving a half-written, unusable token. */
+                free(s_ble.user_jwt);
+                s_ble.user_jwt = NULL;
+                s_ble.user_jwt_len = 0;
+                return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+            }
+
+            rc = ble_hs_mbuf_to_flat(ctxt->om,
+                                     s_ble.user_jwt + s_ble.user_jwt_len,
+                                     len, NULL);
+            if (rc != 0) {
+                return BLE_ATT_ERR_UNLIKELY;
+            }
+            s_ble.user_jwt_len += len;
+            s_ble.user_jwt[s_ble.user_jwt_len] = '\0';
+
+            ESP_LOGI(TAG, "User token chunk received (%u bytes, total %zu)",
+                     len, s_ble.user_jwt_len);
             return 0;
         }
         return BLE_ATT_ERR_UNLIKELY;
@@ -999,6 +1195,14 @@ esp_err_t ble_prov_deinit(void)
     /* Stop advertising and disconnect */
     ble_prov_stop();
 
+    /* Wipe any lingering JWT (sensitive). */
+    if (s_ble.user_jwt != NULL) {
+        memset(s_ble.user_jwt, 0, s_ble.user_jwt_len);
+        free(s_ble.user_jwt);
+        s_ble.user_jwt = NULL;
+        s_ble.user_jwt_len = 0;
+    }
+
     /* Stop timeout timer */
     if (s_ble.timeout_timer) {
         esp_timer_stop(s_ble.timeout_timer);
@@ -1194,7 +1398,9 @@ const char *ble_prov_state_to_string(ble_prov_state_t state)
         case BLE_PROV_STATE_CONNECTED:       return "CONNECTED";
         case BLE_PROV_STATE_CREDENTIALS_SET: return "CREDENTIALS_SET";
         case BLE_PROV_STATE_CONNECTING_WIFI: return "CONNECTING_WIFI";
+        case BLE_PROV_STATE_ADOPTING:        return "ADOPTING";
         case BLE_PROV_STATE_SUCCESS:         return "SUCCESS";
+        case BLE_PROV_STATE_ADOPTED:         return "ADOPTED";
         case BLE_PROV_STATE_FAILED:          return "FAILED";
         case BLE_PROV_STATE_TIMEOUT:         return "TIMEOUT";
         default:                             return "UNKNOWN";

@@ -308,14 +308,46 @@ esp_err_t h2_comm_enable_joining(uint32_t duration_sec, uint32_t timeout_ms);
 esp_err_t h2_comm_disable_joining(uint32_t timeout_ms);
 
 /**
- * @brief Reset Thread network credentials
+ * @brief Reset Thread network credentials (legacy)
  *
- * Generates new Thread network credentials. Requires restarting Thread.
+ * Triggers the legacy H2 path that generates new random credentials locally.
+ * Not used in the cloud-canonical architecture - kept for diagnostic / manual
+ * reset paths only. Prefer h2_comm_set_credentials() with creds from the
+ * cloud `adopt_device` or `get_thread_credentials` edge functions.
  *
  * @param timeout_ms Response timeout in milliseconds (0 = default)
  * @return ESP_OK if ACK received
  */
 esp_err_t h2_comm_reset_credentials(uint32_t timeout_ms);
+
+/**
+ * @brief Push Thread credentials from S3 to H2
+ *
+ * Persists the supplied credentials to H2 NVS and (re)starts the Thread stack
+ * with them. This is the canonical mechanism for installing Thread credentials
+ * in the cloud-canonical architecture: credentials originate from the cloud
+ * `adopt_device` / `get_thread_credentials` edge functions, the S3 receives
+ * them over HTTPS, and pushes them to the H2 via this UART command.
+ *
+ * @param creds Credentials payload to push (see s3h2_credentials_payload_t)
+ * @param timeout_ms Response timeout in milliseconds (0 = default).
+ *                   Use a generous value (>=5000ms) as the H2 may restart its
+ *                   Thread stack before ACKing.
+ * @return ESP_OK if ACK received
+ */
+esp_err_t h2_comm_set_credentials(const s3h2_credentials_payload_t *creds, uint32_t timeout_ms);
+
+/**
+ * @brief Clear Thread credentials on H2 and stop the Thread stack
+ *
+ * Erases H2 NVS Thread credentials and stops the Thread stack. After this,
+ * the H2 reports THREAD_STATE_UNPROVISIONED until S3 pushes new credentials.
+ * Used by consumer_reset and device unadoption flows.
+ *
+ * @param timeout_ms Response timeout in milliseconds (0 = default)
+ * @return ESP_OK if ACK received
+ */
+esp_err_t h2_comm_clear_credentials(uint32_t timeout_ms);
 
 /**
  * @brief Relay a CBOR command to a mesh node via H2

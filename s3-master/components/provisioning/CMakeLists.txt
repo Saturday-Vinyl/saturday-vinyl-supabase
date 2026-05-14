@@ -19,4 +19,6 @@ idf_component_register(
         ui
         ota
         esp_driver_usb_serial_jtag
+        h2_comm
+        shared
 )

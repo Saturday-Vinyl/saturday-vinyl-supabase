@@ -15,9 +15,9 @@
  * Firmware Version
  ******************************************************************************/
 #define FW_VERSION_MAJOR    0
-#define FW_VERSION_MINOR    5
-#define FW_VERSION_PATCH    2
-#define FW_VERSION_STRING   "0.5.2"
+#define FW_VERSION_MINOR    6
+#define FW_VERSION_PATCH    0
+#define FW_VERSION_STRING   "0.6.0"
 
 /*******************************************************************************
  * Hardware Pin Definitions - ESP32-H2

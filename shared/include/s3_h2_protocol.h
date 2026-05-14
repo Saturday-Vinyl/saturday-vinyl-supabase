@@ -54,7 +54,9 @@ typedef enum {
     S3H2_CMD_STOP_THREAD        = 0x06,     /**< Stop Thread network */
     S3H2_CMD_ENABLE_JOINING     = 0x07,     /**< Enable device joining */
     S3H2_CMD_DISABLE_JOINING    = 0x08,     /**< Disable device joining */
-    S3H2_CMD_RESET_CREDENTIALS  = 0x09,     /**< Generate new network credentials */
+    S3H2_CMD_RESET_CREDENTIALS  = 0x09,     /**< Generate new network credentials (legacy, unused in cloud-canonical model) */
+    S3H2_CMD_SET_CREDENTIALS    = 0x0A,     /**< Set Thread credentials from S3 (payload: s3h2_credentials_payload_t). Persists to NVS and (re)starts Thread stack. */
+    S3H2_CMD_CLEAR_CREDENTIALS  = 0x0B,     /**< Clear Thread credentials and stop Thread stack. Empty payload. */
 
     /* System Commands */
     S3H2_CMD_ENTER_BOOTLOADER   = 0x10,     /**< Enter bootloader for firmware update */
@@ -137,12 +139,13 @@ typedef enum {
  ******************************************************************************/
 
 typedef enum {
-    S3H2_THREAD_STATE_DISABLED  = 0x00,     /**< Thread BR disabled */
-    S3H2_THREAD_STATE_DETACHED  = 0x01,     /**< Initialized but not attached */
-    S3H2_THREAD_STATE_ATTACHING = 0x02,     /**< Attempting to attach */
-    S3H2_THREAD_STATE_CHILD     = 0x03,     /**< Attached as child */
-    S3H2_THREAD_STATE_ROUTER    = 0x04,     /**< Operating as router */
-    S3H2_THREAD_STATE_LEADER    = 0x05,     /**< Operating as network leader */
+    S3H2_THREAD_STATE_DISABLED      = 0x00, /**< Thread BR disabled */
+    S3H2_THREAD_STATE_DETACHED      = 0x01, /**< Initialized but not attached */
+    S3H2_THREAD_STATE_ATTACHING     = 0x02, /**< Attempting to attach */
+    S3H2_THREAD_STATE_CHILD         = 0x03, /**< Attached as child */
+    S3H2_THREAD_STATE_ROUTER        = 0x04, /**< Operating as router */
+    S3H2_THREAD_STATE_LEADER        = 0x05, /**< Operating as network leader */
+    S3H2_THREAD_STATE_UNPROVISIONED = 0x06, /**< H2 has no credentials and is idling; waiting for S3 to push via SET_CREDENTIALS */
 } s3h2_thread_state_t;
 
 /*******************************************************************************
@@ -157,20 +160,27 @@ typedef struct __attribute__((packed)) {
     uint16_t pan_id;                /**< Current PAN ID */
     uint8_t channel;                /**< Current channel */
     uint16_t rloc16;                /**< Router Locator (16-bit address) */
-    uint8_t device_count;           /**< Number of devices on network */
+    uint8_t device_count;           /**< Number of devices on network (neighbors, excluding self) */
     uint8_t joining_enabled;        /**< 1 if joining enabled, 0 otherwise */
+    uint32_t partition_id;          /**< Thread partition ID (0 if not attached). Different values across Hubs in the same account indicate a split mesh. */
 } s3h2_status_payload_t;
 
 /**
- * @brief Credentials response payload (RSP_CREDENTIALS)
+ * @brief Credentials payload (RSP_CREDENTIALS response, CMD_SET_CREDENTIALS command)
+ *
+ * INVARIANT: Thread credentials are NEVER generated locally on the H2.
+ * They originate from the cloud `adopt_device` / `get_thread_credentials` edge
+ * functions, are received by the S3 over HTTPS, and pushed to the H2 via
+ * CMD_SET_CREDENTIALS. The H2 only persists what S3 hands it.
  */
 typedef struct __attribute__((packed)) {
     char network_name[17];          /**< Network name (null-terminated) */
     uint16_t pan_id;                /**< PAN ID */
     uint8_t channel;                /**< Channel */
-    uint8_t network_key[16];        /**< Network master key */
-    uint8_t extended_pan_id[8];     /**< Extended PAN ID */
-    uint8_t mesh_local_prefix[8];   /**< Mesh-local prefix */
+    uint8_t network_key[16];        /**< 128-bit Thread network master key */
+    uint8_t extended_pan_id[8];     /**< 64-bit Extended PAN ID */
+    uint8_t mesh_local_prefix[8];   /**< 64-bit Mesh-local prefix */
+    uint8_t pskc[16];               /**< 128-bit Pre-Shared Key for Commissioner */
 } s3h2_credentials_payload_t;
 
 /**

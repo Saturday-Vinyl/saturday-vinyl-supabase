@@ -18,6 +18,14 @@ static const char *TAG = "CONFIG";
 #define NVS_NAMESPACE_CONFIG    "sv_config"
 #define NVS_NAMESPACE_RFID      "sv_rfid"
 #define NVS_NAMESPACE_WIFI      "sv_wifi"
+#define NVS_NAMESPACE_ADOPT     "sv_adopt"
+
+/* NVS keys for adoption namespace. ESP-IDF NVS key limit is 15 chars. */
+#define NVS_KEY_ADOPT_STATE     "state"
+#define NVS_KEY_ACCESS_TOKEN    "access_token"
+#define NVS_KEY_REFRESH_TOKEN   "refresh_token"
+#define NVS_KEY_TOKEN_EXPIRES   "tok_exp_ms"
+#define NVS_KEY_THREAD_CREDS    "thr_creds"
 
 /* NVS keys for RFID configuration */
 #define NVS_KEY_POLL_INTERVAL   "poll_int"
@@ -442,6 +450,185 @@ esp_err_t config_set_unit_id(const char *unit_id)
     return err;
 }
 
+/*******************************************************************************
+ * Adoption + Cloud-Canonical Thread Credentials
+ ******************************************************************************/
+
+esp_err_t config_get_adoption_state(adoption_state_t *out_state)
+{
+    if (out_state == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE_ADOPT, NVS_READONLY, &handle);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        *out_state = ADOPTION_STATE_UNPROVISIONED;
+        return ESP_OK;
+    } else if (err != ESP_OK) {
+        return err;
+    }
+
+    uint8_t v = ADOPTION_STATE_UNPROVISIONED;
+    err = nvs_get_u8(handle, NVS_KEY_ADOPT_STATE, &v);
+    nvs_close(handle);
+
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        *out_state = ADOPTION_STATE_UNPROVISIONED;
+        return ESP_OK;
+    } else if (err != ESP_OK) {
+        return err;
+    }
+
+    *out_state = (adoption_state_t)v;
+    return ESP_OK;
+}
+
+esp_err_t config_set_adoption_state(adoption_state_t state)
+{
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE_ADOPT, NVS_READWRITE, &handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "open adopt namespace: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    err = nvs_set_u8(handle, NVS_KEY_ADOPT_STATE, (uint8_t)state);
+    if (err == ESP_OK) {
+        err = nvs_commit(handle);
+    }
+    nvs_close(handle);
+    return err;
+}
+
+esp_err_t config_set_device_tokens(const char *access_token,
+                                   const char *refresh_token,
+                                   int64_t expires_at_ms)
+{
+    if (access_token == NULL || refresh_token == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE_ADOPT, NVS_READWRITE, &handle);
+    if (err != ESP_OK) return err;
+
+    err = nvs_set_str(handle, NVS_KEY_ACCESS_TOKEN, access_token);
+    if (err != ESP_OK) goto done;
+
+    err = nvs_set_str(handle, NVS_KEY_REFRESH_TOKEN, refresh_token);
+    if (err != ESP_OK) goto done;
+
+    err = nvs_set_i64(handle, NVS_KEY_TOKEN_EXPIRES, expires_at_ms);
+    if (err != ESP_OK) goto done;
+
+    err = nvs_commit(handle);
+
+done:
+    nvs_close(handle);
+    return err;
+}
+
+esp_err_t config_get_device_tokens(char *access_token, size_t at_size,
+                                   char *refresh_token, size_t rt_size,
+                                   int64_t *expires_at_ms)
+{
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE_ADOPT, NVS_READONLY, &handle);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        return ESP_ERR_NOT_FOUND;
+    } else if (err != ESP_OK) {
+        return err;
+    }
+
+    if (access_token != NULL) {
+        size_t len = at_size;
+        err = nvs_get_str(handle, NVS_KEY_ACCESS_TOKEN, access_token, &len);
+        if (err != ESP_OK) goto done;
+    }
+
+    if (refresh_token != NULL) {
+        size_t len = rt_size;
+        err = nvs_get_str(handle, NVS_KEY_REFRESH_TOKEN, refresh_token, &len);
+        if (err != ESP_OK) goto done;
+    }
+
+    if (expires_at_ms != NULL) {
+        err = nvs_get_i64(handle, NVS_KEY_TOKEN_EXPIRES, expires_at_ms);
+        if (err != ESP_OK) goto done;
+    }
+
+done:
+    nvs_close(handle);
+    return err;
+}
+
+esp_err_t config_clear_device_tokens(void)
+{
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE_ADOPT, NVS_READWRITE, &handle);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        return ESP_OK;
+    } else if (err != ESP_OK) {
+        return err;
+    }
+
+    nvs_erase_key(handle, NVS_KEY_ACCESS_TOKEN);
+    nvs_erase_key(handle, NVS_KEY_REFRESH_TOKEN);
+    nvs_erase_key(handle, NVS_KEY_TOKEN_EXPIRES);
+    err = nvs_commit(handle);
+    nvs_close(handle);
+    return err;
+}
+
+esp_err_t config_set_thread_creds_cache(const s3h2_credentials_payload_t *creds)
+{
+    if (creds == NULL) return ESP_ERR_INVALID_ARG;
+
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE_ADOPT, NVS_READWRITE, &handle);
+    if (err != ESP_OK) return err;
+
+    err = nvs_set_blob(handle, NVS_KEY_THREAD_CREDS, creds, sizeof(*creds));
+    if (err == ESP_OK) err = nvs_commit(handle);
+    nvs_close(handle);
+    return err;
+}
+
+esp_err_t config_get_thread_creds_cache(s3h2_credentials_payload_t *out_creds)
+{
+    if (out_creds == NULL) return ESP_ERR_INVALID_ARG;
+
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE_ADOPT, NVS_READONLY, &handle);
+    if (err == ESP_ERR_NVS_NOT_FOUND) return ESP_ERR_NOT_FOUND;
+    if (err != ESP_OK) return err;
+
+    size_t len = sizeof(*out_creds);
+    err = nvs_get_blob(handle, NVS_KEY_THREAD_CREDS, out_creds, &len);
+    nvs_close(handle);
+
+    if (err == ESP_OK && len != sizeof(*out_creds)) {
+        ESP_LOGW(TAG, "thread_creds blob size mismatch: %zu vs %zu",
+                 len, sizeof(*out_creds));
+        return ESP_ERR_INVALID_SIZE;
+    }
+    return err;
+}
+
+esp_err_t config_clear_thread_creds_cache(void)
+{
+    nvs_handle_t handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE_ADOPT, NVS_READWRITE, &handle);
+    if (err == ESP_ERR_NVS_NOT_FOUND) return ESP_OK;
+    if (err != ESP_OK) return err;
+
+    nvs_erase_key(handle, NVS_KEY_THREAD_CREDS);
+    err = nvs_commit(handle);
+    nvs_close(handle);
+    return err;
+}
+
 esp_err_t config_factory_reset(void)
 {
     ESP_LOGW(TAG, "Factory reset requested - erasing all NVS data");
@@ -490,6 +677,19 @@ esp_err_t config_customer_reset(void)
         nvs_erase_all(handle);
         nvs_commit(handle);
         nvs_close(handle);
+    }
+
+    /* Clear adoption namespace: device tokens, cached creds, adoption state.
+     * Thread credentials on H2 are cleared by the caller (consumer_reset
+     * handler sends H2_CLEAR_CREDENTIALS over UART). */
+    {
+        nvs_handle_t handle;
+        esp_err_t aerr = nvs_open(NVS_NAMESPACE_ADOPT, NVS_READWRITE, &handle);
+        if (aerr == ESP_OK) {
+            nvs_erase_all(handle);
+            nvs_commit(handle);
+            nvs_close(handle);
+        }
     }
 
     /* Note: Supabase config (sv_supabase namespace) is preserved */

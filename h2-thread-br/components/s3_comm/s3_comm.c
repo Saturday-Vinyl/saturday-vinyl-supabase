@@ -78,6 +78,8 @@ static void handle_stop_thread(void);
 static void handle_enable_joining(const uint8_t *payload, uint16_t len);
 static void handle_disable_joining(void);
 static void handle_reset_credentials(void);
+static void handle_set_credentials(const uint8_t *payload, uint16_t len);
+static void handle_clear_credentials(void);
 static void handle_enter_bootloader(void);
 static void handle_reset(void);
 
@@ -367,6 +369,14 @@ static void handle_command(uint8_t cmd_type, const uint8_t *payload, uint16_t le
             handle_reset_credentials();
             break;
 
+        case S3H2_CMD_SET_CREDENTIALS:
+            handle_set_credentials(payload, len);
+            break;
+
+        case S3H2_CMD_CLEAR_CREDENTIALS:
+            handle_clear_credentials();
+            break;
+
         case S3H2_CMD_ENTER_BOOTLOADER:
             handle_enter_bootloader();
             break;
@@ -435,6 +445,9 @@ static void handle_get_status(void)
         case THREAD_BR_STATE_DISABLED:
             status.thread_state = S3H2_THREAD_STATE_DISABLED;
             break;
+        case THREAD_BR_STATE_UNPROVISIONED:
+            status.thread_state = S3H2_THREAD_STATE_UNPROVISIONED;
+            break;
         case THREAD_BR_STATE_DETACHED:
             status.thread_state = S3H2_THREAD_STATE_DETACHED;
             break;
@@ -461,6 +474,7 @@ static void handle_get_status(void)
         status.channel = br_status.channel;
         status.rloc16 = br_status.rloc16;
         status.device_count = br_status.device_count;
+        status.partition_id = br_status.partition_id;
     }
 
     status.joining_enabled = thread_br_is_joining_enabled() ? 1 : 0;
@@ -495,8 +509,65 @@ static void handle_get_credentials(void)
     memcpy(payload.network_key, creds.network_key, sizeof(payload.network_key));
     memcpy(payload.extended_pan_id, creds.extended_pan_id, sizeof(payload.extended_pan_id));
     memcpy(payload.mesh_local_prefix, creds.mesh_local_prefix, sizeof(payload.mesh_local_prefix));
+    /* pskc is stored as 4 uint32_t (16 bytes); copy raw bytes to wire format */
+    memcpy(payload.pskc, creds.pskc, sizeof(payload.pskc));
 
     s3_comm_send_credentials(&payload);
+}
+
+static void handle_set_credentials(const uint8_t *payload, uint16_t len)
+{
+    ESP_LOGI(TAG, "SET_CREDENTIALS received");
+
+    if (payload == NULL || len < sizeof(s3h2_credentials_payload_t)) {
+        ESP_LOGE(TAG, "Invalid payload size: %u (expected %u)",
+                 (unsigned)len, (unsigned)sizeof(s3h2_credentials_payload_t));
+        s3_comm_send_nak(S3H2_ERR_INVALID_PARAM);
+        return;
+    }
+
+    const s3h2_credentials_payload_t *p = (const s3h2_credentials_payload_t *)payload;
+
+    thread_network_credentials_t creds = {0};
+    strncpy(creds.network_name, p->network_name, THREAD_NETWORK_NAME_MAX_LEN);
+    creds.network_name[THREAD_NETWORK_NAME_MAX_LEN] = '\0';
+    creds.pan_id = p->pan_id;
+    creds.channel = p->channel;
+    memcpy(creds.network_key, p->network_key, sizeof(creds.network_key));
+    memcpy(creds.extended_pan_id, p->extended_pan_id, sizeof(creds.extended_pan_id));
+    memcpy(creds.mesh_local_prefix, p->mesh_local_prefix, sizeof(creds.mesh_local_prefix));
+    memcpy(creds.pskc, p->pskc, sizeof(creds.pskc));
+
+    /* Lazy-init Thread BR if S3 is pushing credentials before we've init'd */
+    esp_err_t ret = thread_br_init();
+    if (ret != ESP_OK && ret != ESP_ERR_INVALID_STATE) {
+        ESP_LOGE(TAG, "Failed to init Thread BR: %s", esp_err_to_name(ret));
+        s3_comm_send_nak(S3H2_ERR_INTERNAL);
+        return;
+    }
+
+    ret = thread_br_set_credentials(&creds);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to set credentials: %s", esp_err_to_name(ret));
+        s3_comm_send_nak(S3H2_ERR_INTERNAL);
+        return;
+    }
+
+    s3_comm_send_ack();
+}
+
+static void handle_clear_credentials(void)
+{
+    ESP_LOGI(TAG, "CLEAR_CREDENTIALS received");
+
+    esp_err_t ret = thread_br_clear_credentials_and_stop();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to clear credentials: %s", esp_err_to_name(ret));
+        s3_comm_send_nak(S3H2_ERR_INTERNAL);
+        return;
+    }
+
+    s3_comm_send_ack();
 }
 
 static void handle_get_version(void)

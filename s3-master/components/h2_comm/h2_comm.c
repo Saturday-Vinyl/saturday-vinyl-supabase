@@ -986,6 +986,24 @@ esp_err_t h2_comm_reset_credentials(uint32_t timeout_ms)
                                        timeout_ms);
 }
 
+esp_err_t h2_comm_set_credentials(const s3h2_credentials_payload_t *creds, uint32_t timeout_ms)
+{
+    if (creds == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    return send_command_wait_response(S3H2_CMD_SET_CREDENTIALS,
+                                       creds, sizeof(s3h2_credentials_payload_t),
+                                       S3H2_RSP_ACK, NULL, 0,
+                                       timeout_ms);
+}
+
+esp_err_t h2_comm_clear_credentials(uint32_t timeout_ms)
+{
+    return send_command_wait_response(S3H2_CMD_CLEAR_CREDENTIALS, NULL, 0,
+                                       S3H2_RSP_ACK, NULL, 0,
+                                       timeout_ms);
+}
+
 esp_err_t h2_comm_relay_command(const uint8_t *target_ext_addr,
                                  const uint8_t *cbor_data,
                                  uint16_t cbor_len,

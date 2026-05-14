@@ -160,6 +160,32 @@ esp_err_t supabase_get(const char *path, supabase_response_t *response,
                        uint32_t timeout_ms);
 
 /**
+ * @brief Call a Supabase Edge Function.
+ *
+ * URL: {base_url}/functions/v1/{function_name}
+ *
+ * The `apikey` header always uses the configured anon key (Supabase functions
+ * require an apikey even when using a custom bearer). The `Authorization`
+ * header uses `bearer_override` if non-NULL, otherwise the anon key. Pass the
+ * device session access_token here for authenticated edge-function calls, or
+ * the user JWT during BLE adoption.
+ *
+ * @param function_name Function name (e.g., "adopt_device")
+ * @param method        "POST" or "GET"
+ * @param json_body     Request body for POST. NULL for GET (or no body).
+ * @param bearer_override Bearer token to use in Authorization; NULL for anon key.
+ * @param response      Output response (caller must call supabase_response_free)
+ * @param timeout_ms    Request timeout in ms (0 for default).
+ * @return ESP_OK on success (HTTP request completed; check response->status_code)
+ */
+esp_err_t supabase_function_call(const char *function_name,
+                                 const char *method,
+                                 const char *json_body,
+                                 const char *bearer_override,
+                                 supabase_response_t *response,
+                                 uint32_t timeout_ms);
+
+/**
  * @brief Free response body memory
  *
  * @param response Response to free

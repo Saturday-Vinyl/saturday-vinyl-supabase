@@ -386,6 +386,14 @@ static esp_err_t flash_firmware(const esp_partition_t *partition, size_t fw_size
         return ESP_ERR_NO_MEM;
     }
 
+    /* INVARIANT: must NOT touch H2 NVS (0x9000..0xF000) or phy_init (0xF000..0x10000)
+     * during OTA. The merged binary has 0xFF padding in this gap, but
+     * esp_loader_flash_start() erases the targeted sectors before writing -
+     * so even "writing 0xFF" over NVS still wipes persisted Thread credentials.
+     * Skip the gap entirely. See .context/thread-credential-architecture.md. */
+    const uint32_t H2_RESERVED_REGION_START = 0x9000;
+    const uint32_t H2_RESERVED_REGION_END   = 0x10000;
+
     size_t offset = 0;
     while (offset < actual_size) {
         if (s_state.abort_requested) {
@@ -394,8 +402,22 @@ static esp_err_t flash_firmware(const esp_partition_t *partition, size_t fw_size
             return ESP_ERR_INVALID_STATE;
         }
 
+        /* Skip the NVS + phy_init region entirely - no read, no flash. */
+        if (offset >= H2_RESERVED_REGION_START && offset < H2_RESERVED_REGION_END) {
+            ESP_LOGI(TAG, "Skipping H2 reserved region at 0x%lx (NVS + phy_init)",
+                     (unsigned long)offset);
+            offset = H2_RESERVED_REGION_END;
+            continue;
+        }
+
         size_t chunk_size = (actual_size - offset) > CHUNK_SIZE ?
                            CHUNK_SIZE : (actual_size - offset);
+
+        /* Clamp the final pre-reserved chunk so it doesn't straddle the region */
+        if (offset < H2_RESERVED_REGION_START &&
+            offset + chunk_size > H2_RESERVED_REGION_START) {
+            chunk_size = H2_RESERVED_REGION_START - offset;
+        }
 
         ret = esp_partition_read(partition, offset, buffer, chunk_size);
         if (ret != ESP_OK) {
@@ -404,8 +426,9 @@ static esp_err_t flash_firmware(const esp_partition_t *partition, size_t fw_size
             return ret;
         }
 
-        /* Flash address matches offset directly — merged binary is laid out
-         * with bootloader at 0x0, partition table at 0x8000, app at 0x10000 */
+        /* Flash address matches offset directly - merged binary is laid out
+         * with bootloader at 0x0, partition table at 0x8000, app at 0x10000.
+         * The NVS region (0x9000..0xF000) is unconditionally skipped above. */
         uint32_t flash_addr = offset;
 
         /* Start flash at this address */

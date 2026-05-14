@@ -5,7 +5,12 @@
  * Implements Thread mesh network management with Border Router capabilities.
  * Uses ESP-IDF's OpenThread integration with native 802.15.4 radio support.
  *
- * Phase 8: Thread Border Router
+ * INVARIANT: Thread credentials are NEVER generated locally on the H2 in the
+ * cloud-canonical architecture. They are issued by the cloud `adopt_device`
+ * edge function, received by the S3 over HTTPS, and pushed to the H2 via
+ * CMD_SET_CREDENTIALS. On boot with empty NVS the H2 idles in UNPROVISIONED
+ * state until S3 hands it credentials. See
+ * .context/thread-credential-architecture.md.
  */
 
 #include "thread_br.h"
@@ -179,22 +184,16 @@ esp_err_t thread_br_start(void)
 
     ESP_LOGI(TAG, "Starting Thread Border Router...");
 
-    /* Load or generate network credentials */
+    /* Load network credentials from NVS. If absent, idle in UNPROVISIONED -
+     * the S3 will push credentials via CMD_SET_CREDENTIALS once adoption
+     * succeeds. We never generate credentials locally on the H2. */
     thread_network_credentials_t creds;
     esp_err_t ret = load_credentials_from_nvs(&creds);
 
     if (ret == ESP_ERR_NOT_FOUND) {
-        ESP_LOGI(TAG, "No stored credentials - generating new network");
-        ret = thread_br_generate_credentials();
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to generate credentials: %s", esp_err_to_name(ret));
-            return ret;
-        }
-        ret = load_credentials_from_nvs(&creds);
-        if (ret != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to load generated credentials: %s", esp_err_to_name(ret));
-            return ret;
-        }
+        ESP_LOGI(TAG, "No stored credentials - idling in UNPROVISIONED state");
+        s_state = THREAD_BR_STATE_UNPROVISIONED;
+        return ESP_OK;
     } else if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to load credentials: %s", esp_err_to_name(ret));
         return ret;
@@ -556,13 +555,14 @@ thread_br_state_t thread_br_get_state(void)
 const char *thread_br_state_to_string(thread_br_state_t state)
 {
     switch (state) {
-        case THREAD_BR_STATE_DISABLED:  return "disabled";
-        case THREAD_BR_STATE_DETACHED:  return "detached";
-        case THREAD_BR_STATE_ATTACHING: return "attaching";
-        case THREAD_BR_STATE_CHILD:     return "child";
-        case THREAD_BR_STATE_ROUTER:    return "router";
-        case THREAD_BR_STATE_LEADER:    return "leader";
-        default:                        return "unknown";
+        case THREAD_BR_STATE_DISABLED:      return "disabled";
+        case THREAD_BR_STATE_UNPROVISIONED: return "unprovisioned";
+        case THREAD_BR_STATE_DETACHED:      return "detached";
+        case THREAD_BR_STATE_ATTACHING:     return "attaching";
+        case THREAD_BR_STATE_CHILD:         return "child";
+        case THREAD_BR_STATE_ROUTER:        return "router";
+        case THREAD_BR_STATE_LEADER:        return "leader";
+        default:                            return "unknown";
     }
 }
 
@@ -584,6 +584,7 @@ esp_err_t thread_br_get_status(thread_br_status_t *status)
     status->pan_id = otLinkGetPanId(s_ot_instance);
     status->channel = otLinkGetChannel(s_ot_instance);
     status->rloc16 = otThreadGetRloc16(s_ot_instance);
+    status->partition_id = otThreadGetPartitionId(s_ot_instance);
 
     const char *net_name = otThreadGetNetworkName(s_ot_instance);
     if (net_name != NULL) {
@@ -747,15 +748,59 @@ esp_err_t thread_br_get_credentials(thread_network_credentials_t *creds)
 
 esp_err_t thread_br_ensure_credentials(void)
 {
-    /* Check if credentials already exist */
-    if (thread_br_has_credentials()) {
-        ESP_LOGI(TAG, "Thread credentials already exist in NVS");
-        return ESP_OK;
+    /* Cloud-canonical architecture: credentials are pushed by S3, never
+     * generated locally. This call is now a simple existence check. */
+    return thread_br_has_credentials() ? ESP_OK : ESP_ERR_NOT_FOUND;
+}
+
+esp_err_t thread_br_set_credentials(const thread_network_credentials_t *creds)
+{
+    if (creds == NULL) {
+        return ESP_ERR_INVALID_ARG;
     }
 
-    /* Generate new credentials */
-    ESP_LOGI(TAG, "Generating Thread network credentials...");
-    return thread_br_generate_credentials();
+    ESP_LOGI(TAG, "Setting Thread credentials from S3 (network=%s pan_id=0x%04X channel=%u)",
+             creds->network_name, creds->pan_id, creds->channel);
+
+    /* Persist to NVS first - this is the durable source of truth on H2 */
+    esp_err_t ret = save_credentials_to_nvs(creds);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to save credentials: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    /* Bring Thread up (or restart if already running with old creds) */
+    if (s_started) {
+        ESP_LOGI(TAG, "Thread already running - stopping to apply new dataset");
+        ret = thread_br_stop();
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to stop Thread: %s", esp_err_to_name(ret));
+            return ret;
+        }
+    }
+
+    /* Note: thread_br_start() will load_credentials_from_nvs again. We could
+     * fast-path by applying the supplied creds directly, but going through
+     * the normal start path keeps state transitions consistent. */
+    return thread_br_start();
+}
+
+esp_err_t thread_br_clear_credentials_and_stop(void)
+{
+    ESP_LOGI(TAG, "Clearing Thread credentials and stopping Thread");
+
+    if (s_started) {
+        thread_br_stop();
+    }
+
+    esp_err_t ret = thread_br_clear_credentials();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to clear credentials: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    s_state = THREAD_BR_STATE_UNPROVISIONED;
+    return ESP_OK;
 }
 
 esp_err_t thread_br_get_network_key_hex(char *hex_str, size_t max_len)
