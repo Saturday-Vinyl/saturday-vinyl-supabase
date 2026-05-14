@@ -1,137 +1,118 @@
-# Saturday Vinyl Hub Firmware
+# Saturday Vinyl Shared Documentation
 
-Dual-SoC firmware for the Saturday Vinyl Hub — a Thread Border Router and "Now Playing" detector for vinyl record enthusiasts.
+Central repository for Saturday Vinyl technical documentation shared across all projects.
 
-## Overview
+## Contents
 
-The Saturday Vinyl Hub performs two primary functions:
+### Concepts
+- **[Data Model](concepts/data_model.md)** - Core entity relationships (Units, Devices, Products, Device Types, Capabilities, Firmware)
 
-1. **Thread Border Router** — Bridges the Thread mesh network (connecting battery-powered RFID crates) to Wi-Fi and the Saturday cloud (Supabase)
-2. **Now Playing Detection** — Uses an integrated UHF RFID reader (YRM100) to detect which record is currently on the turntable
+### Protocols
+- **[BLE Provisioning Protocol](protocols/ble_provisioning_protocol.md)** - BLE GATT interface for mobile app device provisioning
+- **[CoAP Mesh Protocol](protocols/coap_mesh_protocol.md)** - CoAP communication over Thread mesh (Hub ↔ Node)
+- **[Device Command Protocol](protocols/device_command_protocol.md)** - Unified command interface for device communication
+- **[Playback Event Protocol](protocols/playback_event_protocol.md)** - Canonical playback state and event model across all Saturday devices
+- **[Service Mode Protocol](protocols/service_mode_protocol.md)** - USB serial interface for factory provisioning and diagnostics
 
-### Architecture
+### Schemas
+- **[Capability Schema](schemas/capability_schema.md)** - Capability definition and attribute schema specification
 
-The hub uses a **dual-SoC design** to avoid WiFi/Thread radio contention:
+### Templates
+- **[Claude Command Templates](templates/claude-commands/)** - Slash command wrappers for Claude Code integration
 
-| SoC | Role | Responsibilities |
-|-----|------|------------------|
-| **ESP32-S3** | Master | WiFi, BLE provisioning, RFID, cloud sync, USB service mode, UI |
-| **ESP32-H2** | Slave | Thread Border Router, CoAP server for crate communication |
+## Usage
 
-The two chips communicate via a binary UART protocol. See [Developer's Guide](docs/developers_guide.md) for the full architecture.
+### Adding to a New Project
 
-## Hardware
-
-- **ESP32-S3** — Master MCU (WiFi 4, BLE 5.0, USB OTG)
-- **ESP32-H2** — Thread co-processor (802.15.4)
-- **YRM100** — UHF RFID module (ISO 18000-6C / EPC Gen2)
-- **Interface** — USB-C for power and serial console
-
-For pin assignments and wiring, see [Hub Wiring Reference](docs/wiring/hub_wiring.md).
-
-## Project Structure
-
-```
-sv-hub-firmware/
-├── s3-master/                  # ESP32-S3 master firmware (active)
-│   ├── main/                   #   Application entry point
-│   ├── components/             #   WiFi, RFID, cloud, BLE, H2 comm, UI
-│   ├── sdkconfig.defaults      #   Default SDK configuration
-│   └── partitions.csv          #   Partition table (dual OTA + H2 staging)
-│
-├── h2-thread-br/               # ESP32-H2 Thread BR firmware (active)
-│   ├── main/                   #   Thread BR entry point
-│   ├── components/             #   OpenThread, CoAP server, S3 comm
-│   └── sdkconfig.defaults      #   SDK configuration
-│
-├── shared/                     # Shared code between S3 and H2
-│   └── include/                #   S3↔H2 binary protocol definitions
-│
-├── shared-docs/                # Cross-project protocols and concepts (git subtree)
-├── shared-supabase/            # Database migrations and edge functions (git subtree)
-├── docs/                       # Developer guides, wiring references
-│
-├── components/                 # [DEPRECATED] Old single-SoC ESP32-C6 code
-├── main/                       # [DEPRECATED] Old single-SoC entry point
-└── CMakeLists.txt (root)       # [DEPRECATED] Old single-SoC build
+**Step 1:** Clone this repo locally (one-time, anywhere on your machine):
+```bash
+git clone https://github.com/Saturday-Vinyl/saturday-vinyl-shared-docs.git ~/saturday-vinyl-shared-docs
+chmod +x ~/saturday-vinyl-shared-docs/scripts/setup-shared-docs.sh
 ```
 
-> **Note:** The root-level `components/`, `main/`, `CMakeLists.txt`, `sdkconfig.defaults`, and `partitions.csv` are from the original ESP32-C6 prototype. Do not modify them. All active development is in `s3-master/` and `h2-thread-br/`.
+**Step 2:** Run the setup script from your project root:
+```bash
+# From your project directory (e.g., ~/projects/my-saturday-app)
+~/saturday-vinyl-shared-docs/scripts/setup-shared-docs.sh
+```
 
-## Building
+**Alternative: Manual setup**
+```bash
+git remote add shared-docs https://github.com/Saturday-Vinyl/saturday-vinyl-shared-docs.git
+git subtree add --prefix=shared-docs shared-docs main --squash
+mkdir -p ./.claude/commands
+cp ./shared-docs/templates/claude-commands/*.md ./.claude/commands/
+```
 
-### Prerequisites
+### Pulling Updates
 
-- **ESP-IDF v5.2+** (latest stable recommended)
-- **Python 3.8+**
-- **USB-C cable** (data-capable)
-
-### Build Commands
+When the central docs are updated, pull changes into your project:
 
 ```bash
-# Activate ESP-IDF environment
-get_idf  # or: source ~/esp/esp-idf/export.sh
-
-# Build S3 master firmware
-cd s3-master
-idf.py set-target esp32s3  # only needed once
-idf.py build
-
-# Build H2 Thread BR firmware
-cd ../h2-thread-br
-idf.py set-target esp32h2  # only needed once
-idf.py build
+git subtree pull --prefix=shared-docs shared-docs main --squash -m "Merge shared-docs updates"
 ```
 
-### Flashing
+### Contributing Changes
+
+Edit docs locally in the `./shared-docs/` directory, commit as usual, then push upstream:
 
 ```bash
-# Flash S3 (connect USB to S3 DevKit)
-cd s3-master
-idf.py -p /dev/cu.usbmodem* flash monitor
+# 1. Edit the doc
+vim ./shared-docs/protocols/ble_provisioning_protocol.md
 
-# Flash H2 directly (connect USB to H2 DevKit — development only)
-cd h2-thread-br
-idf.py -p /dev/cu.usbmodem* flash monitor
+# 2. Commit locally
+git add ./shared-docs/
+git commit -m "Update BLE protocol: add new characteristic"
 
-# In production, H2 is flashed via S3 using esp-serial-flasher over UART
+# 3. Push to central repo
+git subtree push --prefix=shared-docs shared-docs main
 ```
 
-## LED States
+## Claude Code Integration
 
-The onboard WS2812 RGB LED (GPIO48) indicates device state:
+After setup, these slash commands are available:
 
-| State | Color | Pattern | Meaning |
-|-------|-------|---------|---------|
-| Booting | White | Pulsing | Hardware initialization |
-| Service Mode | White | Pulsing | Awaiting service mode commands |
-| Unprovisioned | Blue | Slow blink | Awaiting BLE provisioning |
-| Connecting | Yellow | Pulsing | Connecting to WiFi |
-| H2 Starting | Cyan | Pulsing | Waiting for H2 Thread BR |
-| Running (Idle) | Green | Solid dim | Normal operation |
-| Tag Detected | Green | Brief flash | Record placed on turntable |
-| WiFi Lost | Orange | Slow blink | WiFi disconnected, reconnecting |
-| H2 Error | Red/Cyan | Alternating | H2 not responding |
-| Error | Red | Slow blink | Recoverable error |
-| Factory Reset | Red | Fast blink | Clearing configuration |
-| OTA Update | Magenta | Pulsing | Firmware update in progress |
+| Command | Description |
+|---------|-------------|
+| `/ble-provisioning` | Load BLE Provisioning Protocol into context |
+| `/service-mode` | Load Service Mode Protocol into context |
 
-## Button Actions
+You can also reference docs directly in prompts:
+```
+Read @./shared-docs/protocols/ble_provisioning_protocol.md and implement the Status characteristic handler.
+```
 
-| Duration | Action |
-|----------|--------|
-| < 500ms | Short press (reserved) |
-| 3–5 seconds | Enter BLE provisioning mode |
-| > 10 seconds | Factory reset |
+## Directory Structure
 
-## Documentation
+```
+saturday-vinyl-shared-docs/
+├── README.md                    # This file
+├── concepts/                    # Architectural concepts
+│   └── data_model.md            # Core entity relationships
+├── protocols/                   # Protocol specifications
+│   ├── ble_provisioning_protocol.md
+│   ├── coap_mesh_protocol.md
+│   ├── device_command_protocol.md
+│   ├── led_status_protocol.md
+│   ├── playback_event_protocol.md
+│   └── service_mode_protocol.md
+├── schemas/                     # Schema specifications
+│   └── capability_schema.md
+├── templates/
+│   └── claude-commands/         # Claude Code command templates
+│       ├── ble-provisioning.md
+│       └── service-mode.md
+└── scripts/
+    └── setup-shared-docs.sh     # Project setup script
+```
 
-- [Developer's Guide](docs/developers_guide.md) — Full technical specification and architecture
-- [Hub Wiring Reference](docs/wiring/hub_wiring.md) — Pin assignments and wiring diagrams
-- [Hub Provisioning Guide](docs/hub_provisioning_guide.md) — Factory provisioning procedures
-- [Service Mode Protocol](shared-docs/protocols/service_mode_protocol.md) — USB serial protocol reference
-- [Database Schema](shared-supabase/schema/SCHEMA.md) — Supabase schema reference
+## Projects Using This
 
-## License
+- **sv-hub-firmware** - Saturday Vinyl Hub (ESP32-S3 + ESP32-H2)
+- **saturday-mobile-app** - Consumer mobile app (Flutter)
+- **saturday-admin-app** - Factory/technician desktop app (Flutter)
+- (Future firmware projects)
 
-Proprietary — Saturday Vinyl, Inc.
+---
+
+*This repository is proprietary to Saturday Vinyl. Do not distribute externally.*
