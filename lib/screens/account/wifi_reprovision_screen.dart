@@ -239,7 +239,6 @@ class _WifiReprovisionScreenState extends ConsumerState<WifiReprovisionScreen> {
       if (newSsid != null) {
         await unitRepo.updateUnitProvisioning(
           unitId: widget.unitId,
-          userId: userId,
           deviceName: widget.deviceName,
           provisionData: ProvisionData.wifi(
             ssid: newSsid,

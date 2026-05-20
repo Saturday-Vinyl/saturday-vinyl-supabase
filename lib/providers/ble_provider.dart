@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:saturday_consumer_app/services/auth_service.dart';
 import 'package:saturday_consumer_app/services/ble_service.dart';
 
 /// Provider for the BLE service singleton.
@@ -30,9 +31,6 @@ class DeviceSetupState {
   /// Thread dataset used for provisioning (stored in provision_data).
   final String? threadDataset;
 
-  /// Hub ID used for crate provisioning (to track which hub provided Thread credentials).
-  final String? selectedHubId;
-
   /// Specific error code from Response characteristic (more detailed than status).
   /// Added in BLE Provisioning Protocol v1.2.0.
   final BleErrorCode? errorCode;
@@ -54,7 +52,6 @@ class DeviceSetupState {
     this.customDeviceName,
     this.wifiSsid,
     this.threadDataset,
-    this.selectedHubId,
     this.errorCode,
     this.consumerOutput,
   });
@@ -72,7 +69,6 @@ class DeviceSetupState {
     String? customDeviceName,
     String? wifiSsid,
     String? threadDataset,
-    String? selectedHubId,
     BleErrorCode? errorCode,
     bool clearErrorCode = false,
     Map<String, dynamic>? consumerOutput,
@@ -90,7 +86,6 @@ class DeviceSetupState {
       customDeviceName: customDeviceName ?? this.customDeviceName,
       wifiSsid: wifiSsid ?? this.wifiSsid,
       threadDataset: threadDataset ?? this.threadDataset,
-      selectedHubId: selectedHubId ?? this.selectedHubId,
       errorCode: clearErrorCode ? null : (errorCode ?? this.errorCode),
       consumerOutput: consumerOutput ?? this.consumerOutput,
     );
@@ -113,7 +108,9 @@ class DeviceSetupState {
   bool get hasError => errorMessage != null || provisioningStatus?.isError == true;
 
   /// Whether provisioning was successful.
-  bool get isSuccess => provisioningStatus == BleProvisioningStatus.success;
+  ///
+  /// Includes both legacy `SUCCESS (0x05)` and v1.4.0 adoption `ADOPTED (0x06)`.
+  bool get isSuccess => provisioningStatus?.isTerminalSuccess ?? false;
 
   /// Whether we're connected to a device.
   bool get isConnected =>
@@ -323,16 +320,47 @@ class DeviceSetupNotifier extends StateNotifier<DeviceSetupState> {
     }
   }
 
-  /// Provision with Wi-Fi credentials.
+  /// Provision a Hub with Wi-Fi credentials and adopt it into the user's account.
+  ///
+  /// Requires a current Supabase session. The JWT is written to the Hub's
+  /// User Token characteristic (0x0030) before CONNECT, which switches the Hub
+  /// into the v1.4.0 adoption flow — the Hub forwards the JWT to the cloud
+  /// `adopt_device` edge function and signals `ADOPTED (0x06)` when done.
   Future<void> provisionWifi({
     required String ssid,
     required String password,
   }) async {
+    // Pre-flight: must be signed in to adopt a Hub.
+    final auth = AuthService.instance;
+    String? token = auth.currentSession?.accessToken;
+    if (token == null) {
+      state = state.copyWith(
+        errorMessage: 'Sign in to set up devices.',
+      );
+      return;
+    }
+    if (!auth.isSessionValid()) {
+      try {
+        final refreshed = await auth.refreshSession();
+        token = refreshed?.accessToken ?? token;
+      } catch (e) {
+        debugPrint('[BLE Provider] Session refresh failed: $e');
+      }
+    }
+
     // Store the SSID in state for later use in provision_data
-    state = state.copyWith(errorMessage: null, wifiSsid: ssid);
+    state = state.copyWith(
+      errorMessage: null,
+      clearErrorCode: true,
+      wifiSsid: ssid,
+    );
 
     try {
-      await _bleService.provisionWifi(ssid: ssid, password: password);
+      await _bleService.provisionWifi(
+        ssid: ssid,
+        password: password,
+        userToken: token,
+      );
     } catch (e) {
       state = state.copyWith(
         errorMessage: 'Failed to provision: $e',
@@ -340,16 +368,19 @@ class DeviceSetupNotifier extends StateNotifier<DeviceSetupState> {
     }
   }
 
-  /// Provision with Thread credentials.
+  /// Provision a Crate with the account's Thread credentials.
+  ///
+  /// The credentials are fetched from the cloud by the caller and written to
+  /// the Crate's Thread Dataset characteristic (0x0020). No JWT write is
+  /// needed on the Crate side — the cloud is authoritative for mesh state,
+  /// and the phone (not the Crate) calls `adopt_device` after BLE success.
   Future<void> provisionThread({
     required String threadDataset,
-    String? hubId,
   }) async {
-    // Store the Thread dataset and hub ID in state for later use in provision_data
     state = state.copyWith(
       errorMessage: null,
+      clearErrorCode: true,
       threadDataset: threadDataset,
-      selectedHubId: hubId,
     );
 
     try {
@@ -388,10 +419,15 @@ class DeviceSetupNotifier extends StateNotifier<DeviceSetupState> {
   /// Smart retry behavior based on error type:
   /// - AUTH_FAILED: Keep SSID, clear password (user needs to re-enter)
   /// - NETWORK_NOT_FOUND: Keep all fields (user may want to edit SSID)
+  /// - Adoption errors (cloud round-trip failures): the Hub stays advertising
+  ///   in a valid state, so we skip the RESET command — the user can simply
+  ///   retry CONNECT after fixing the underlying issue (e.g., WAN).
   /// - Other errors: Keep all fields intact for retry
   Future<void> retry() async {
     final previousErrorCode = state.errorCode;
-    debugPrint('[BLE Provider] Retry: starting (error was: $previousErrorCode)');
+    final wasAdoptionError = previousErrorCode?.isAdoptionError ?? false;
+    debugPrint(
+        '[BLE Provider] Retry: starting (error was: $previousErrorCode, adoption=$wasAdoptionError)');
 
     // Clear error state but preserve provisioning config for retry
     // Also reset provisioningStatus to ready (hasError checks this)
@@ -404,8 +440,14 @@ class DeviceSetupNotifier extends StateNotifier<DeviceSetupState> {
     );
 
     // If we're connected and have device info, send RESET command to device
-    // to reset its state machine back to READY, then return to configure step
+    // to reset its state machine back to READY, then return to configure step.
+    // For adoption errors, the Hub is already in a recoverable state — skip
+    // RESET so we don't clobber stored WiFi creds.
     if (state.deviceInfo != null && state.selectedDevice != null) {
+      if (wasAdoptionError) {
+        debugPrint('[BLE Provider] Retry: adoption error, skipping RESET');
+        return;
+      }
       debugPrint('[BLE Provider] Retry: sending RESET command to device');
       try {
         await _bleService.resetCredentials();

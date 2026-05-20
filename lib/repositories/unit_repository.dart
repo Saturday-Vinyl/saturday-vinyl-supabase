@@ -137,54 +137,92 @@ class UnitRepository extends BaseRepository {
     return _withInventory(device, inventory);
   }
 
-  /// Claims a unit by serial number for the current user.
+  /// Adopts a non-Hub device (typically a Crate) into the current user's account.
   ///
-  /// This calls the `claim-unit` Edge Function which:
-  /// 1. Verifies the unit exists and is unclaimed
-  /// 2. Sets the user_id on the unit
-  /// 3. Updates the status to 'user_claimed'
+  /// Calls the `adopt_device` Edge Function which:
+  /// 1. Verifies the device exists and is either unclaimed or already owned
+  ///    by the current user (idempotent re-adoption).
+  /// 2. Sets `consumer_user_id` on the unit and marks status `claimed`.
+  /// 3. Stamps `consumer_provisioned_at` / `consumer_provisioned_by` on the
+  ///    linked device row.
+  /// 4. Ensures a `thread_networks` row exists for the user.
   ///
-  /// Returns the claimed device on success.
-  /// Throws if the unit is not found or already claimed.
-  Future<Device> claimUnit(String serialNumber) async {
+  /// Returns the adopted [Device] on success. Throws if the device is owned
+  /// by another user, not provisioned, or the cloud is unreachable.
+  ///
+  /// For Hub adoption, do NOT call this from the app — the Hub's BLE flow
+  /// invokes `adopt_device` server-side via the User Token characteristic.
+  Future<Device> adoptDevice(String serialNumber) async {
     final response = await client.functions.invoke(
-      'claim-unit',
+      'adopt_device',
       body: {'serial_number': serialNumber},
     );
 
     if (response.status != 200) {
-      final error = response.data?['error'] ?? 'Failed to claim unit';
+      final error = response.data?['error'] ?? 'Failed to adopt device';
       throw Exception(error);
     }
 
-    return Device.fromJoinedJson(response.data as Map<String, dynamic>);
+    // adopt_device returns a slim `{ id, serial_number, status }` payload —
+    // not the full joined unit row that Device.fromJoinedJson expects. Fetch
+    // the canonical row so callers get a fully-populated Device.
+    //
+    // TODO(saturday-supabase): have `adopt_device` return the full joined
+    // unit row (matching the old `claim-unit` shape). Once that lands, drop
+    // this follow-up fetch and parse the response directly.
+    final device = await getDeviceBySerial(serialNumber);
+    if (device == null) {
+      throw Exception('Adopted device not found after claim: $serialNumber');
+    }
+    return device;
   }
 
-  /// Updates a unit with consumer provisioning data.
+  /// Fetches the user's Thread network credentials from the cloud.
   ///
-  /// This should be called after BLE provisioning is complete to:
-  /// 1. Update the unit with the consumer's chosen name
-  /// 2. Update the linked device with WiFi/Thread credentials (provision_data)
-  ///    and consumer provisioning timestamps
+  /// The returned JSON is shaped for writing directly to a Crate's Thread
+  /// Dataset BLE characteristic (0x0020):
   ///
-  /// The provision_data column on the devices table uses a flattened JSONB structure:
-  /// - For hubs: { "wifi_ssid": "MyNetwork" }
-  /// - For crates: { "thread_dataset": "...", "thread_network_name": "..." }
+  /// ```
+  /// { "thread_credentials": { "pan_id": ..., "channel": ..., ... } }
+  /// ```
+  ///
+  /// Returns `null` if the user has not yet adopted any Hub (HTTP 404
+  /// `no_thread_network`). Throws on other transport/cloud errors.
+  Future<String?> getThreadCredentials() async {
+    final response = await client.functions.invoke('get_thread_credentials');
+
+    if (response.status == 404) return null;
+    if (response.status != 200) {
+      final error = response.data?['error'] ?? 'Failed to fetch Thread credentials';
+      throw Exception(error);
+    }
+
+    final data = response.data as Map<String, dynamic>;
+    final creds = data['thread_credentials'] as Map<String, dynamic>?;
+    if (creds == null) return null;
+    return jsonEncode({'thread_credentials': creds});
+  }
+
+  /// Persists the consumer-chosen device name and merges any user-supplied
+  /// [provisionData] into the linked device's `provision_data` JSONB.
+  ///
+  /// This is called after BLE provisioning to set fields the cloud doesn't
+  /// own — specifically `consumer_name` on the unit and the Hub's WiFi SSID
+  /// in `provision_data` (used for display in the device detail screen).
+  ///
+  /// `consumer_provisioned_at` / `consumer_provisioned_by` are stamped
+  /// server-side by `adopt_device`; do not write them from the app.
   ///
   /// Note: provision_data is MERGED with existing data, not overwritten.
   Future<Device> updateUnitProvisioning({
     required String unitId,
-    required String userId,
     required String deviceName,
-    required ProvisionData provisionData,
+    ProvisionData? provisionData,
   }) async {
     // Step 1: Update the unit with consumer-specific data
     final unitResponse = await client
         .from(_unitsTable)
-        .update({
-          'consumer_name': deviceName,
-          'status': 'claimed',
-        })
+        .update({'consumer_name': deviceName})
         .eq('id', unitId)
         .select('''
           *,
@@ -203,28 +241,27 @@ class UnitRepository extends BaseRepository {
         ''')
         .single();
 
-    // Step 2: If there's a linked device, update it with provision data and timestamps
-    final devicesList = unitResponse['devices'] as List<dynamic>?;
-    if (devicesList != null && devicesList.isNotEmpty) {
-      final deviceData = devicesList.first as Map<String, dynamic>?;
-      if (deviceData != null && deviceData['id'] != null) {
-        final deviceId = deviceData['id'] as String;
-        final newProvisionData = provisionData.toJson();
-
-        // Merge with existing provision_data instead of overwriting
-        final existingProvisionData =
-            deviceData['provision_data'] as Map<String, dynamic>? ?? {};
-        final mergedProvisionData = {
-          ...existingProvisionData,
-          ...newProvisionData,
-        };
-
-        // Update device with merged provision_data and consumer provisioning info
-        await client.from(_devicesTable).update({
-          'provision_data': mergedProvisionData,
-          'consumer_provisioned_at': DateTime.now().toIso8601String(),
-          'consumer_provisioned_by': userId,
-        }).eq('id', deviceId);
+    // Step 2: If there's a linked device and we have provision data to write,
+    // merge it into the existing JSONB.
+    if (provisionData != null) {
+      final devicesList = unitResponse['devices'] as List<dynamic>?;
+      if (devicesList != null && devicesList.isNotEmpty) {
+        final deviceData = devicesList.first as Map<String, dynamic>?;
+        if (deviceData != null && deviceData['id'] != null) {
+          final deviceId = deviceData['id'] as String;
+          final newProvisionData = provisionData.toJson();
+          if (newProvisionData.isNotEmpty) {
+            final existingProvisionData =
+                deviceData['provision_data'] as Map<String, dynamic>? ?? {};
+            final mergedProvisionData = {
+              ...existingProvisionData,
+              ...newProvisionData,
+            };
+            await client.from(_devicesTable).update({
+              'provision_data': mergedProvisionData,
+            }).eq('id', deviceId);
+          }
+        }
       }
     }
 
@@ -260,21 +297,29 @@ class UnitRepository extends BaseRepository {
     await client.from(_unitsTable).update({'consumer_name': name}).eq('id', unitId);
   }
 
-  /// Unclaims a unit, releasing it back to factory state.
+  /// Unadopts a device, releasing it back to factory state.
   ///
-  /// This calls the `unclaim-unit` Edge Function which:
-  /// 1. Verifies the current user owns the unit
-  /// 2. Clears user_id, device_name, consumer_provisioned_at on the unit
-  /// 3. Clears provision_data on the linked device
-  /// 4. Updates unit status to 'factory_provisioned'
-  Future<void> unclaimUnit(String unitId) async {
-    final response = await client.functions.invoke(
-      'unclaim-unit',
-      body: {'unit_id': unitId},
-    );
+  /// Calls the `unadopt_device` Edge Function which:
+  /// 1. Verifies the current user owns the device
+  /// 2. Clears `consumer_user_id`, `consumer_name`, provisioning timestamps
+  /// 3. Clears `provision_data` on the linked device
+  /// 4. Revokes any device session tokens (Hubs must be re-adopted via BLE
+  ///    before they can talk to authenticated cloud endpoints again)
+  ///
+  /// Provide either [macAddress] or [serialNumber] — the cloud accepts either.
+  Future<void> unadoptDevice({String? macAddress, String? serialNumber}) async {
+    assert(macAddress != null || serialNumber != null,
+        'unadoptDevice requires macAddress or serialNumber');
+
+    final body = <String, dynamic>{
+      if (macAddress != null) 'mac_address': macAddress,
+      if (serialNumber != null) 'serial_number': serialNumber,
+    };
+
+    final response = await client.functions.invoke('unadopt_device', body: body);
 
     if (response.status != 200) {
-      final error = response.data?['error'] ?? 'Failed to unclaim unit';
+      final error = response.data?['error'] ?? 'Failed to unadopt device';
       throw Exception(error);
     }
   }
@@ -289,18 +334,6 @@ class UnitRepository extends BaseRepository {
   Future<List<Device>> getUserCrates(String userId) async {
     final devices = await getUserDevices(userId);
     return devices.where((d) => d.isCrate).toList();
-  }
-
-  /// Gets the primary (first online) hub for a user.
-  ///
-  /// Used for crate provisioning to get Thread credentials.
-  Future<Device?> getPrimaryHub(String userId) async {
-    final hubs = await getUserHubs(userId);
-    // Prefer online hubs
-    final onlineHubs = hubs.where((h) => h.isEffectivelyOnline).toList();
-    if (onlineHubs.isNotEmpty) return onlineHubs.first;
-    // Fall back to any hub
-    return hubs.isNotEmpty ? hubs.first : null;
   }
 
   /// Sends a command to a device by inserting into the device_commands table.
@@ -319,44 +352,4 @@ class UnitRepository extends BaseRepository {
     });
   }
 
-  /// Gets the Thread credentials from a hub's linked device provision data.
-  ///
-  /// This is used during crate provisioning to get the Thread network
-  /// credentials from a provisioned hub. The Hub stores Thread credentials
-  /// in `devices.provision_data.thread_credentials` (set during factory
-  /// provisioning). The returned JSON string is written directly to the
-  /// Crate's Thread Dataset BLE characteristic.
-  Future<String?> getHubThreadDataset(String hubUnitId) async {
-    // Query the unit with its linked device to get provision_data
-    final response = await client
-        .from(_unitsTable)
-        .select('''
-          devices!left(
-            provision_data
-          )
-        ''')
-        .eq('id', hubUnitId)
-        .maybeSingle();
-
-    if (response == null) return null;
-
-    // Extract provision_data from the linked device
-    final devicesList = response['devices'] as List<dynamic>?;
-    if (devicesList == null || devicesList.isEmpty) return null;
-
-    final deviceData = devicesList.first as Map<String, dynamic>?;
-    if (deviceData == null) return null;
-
-    final data = deviceData['provision_data'] as Map<String, dynamic>?;
-    if (data == null) return null;
-
-    // Thread credentials are stored under 'thread_credentials' key
-    // (set during factory provisioning of the Hub)
-    final threadCreds = data['thread_credentials'] as Map<String, dynamic>?;
-    if (threadCreds == null) return null;
-
-    // The Crate firmware's consumer_input schema expects the wrapping object:
-    // { "thread_credentials": { "pan_id", "channel", "network_key", ... } }
-    return jsonEncode({'thread_credentials': threadCreds});
-  }
 }

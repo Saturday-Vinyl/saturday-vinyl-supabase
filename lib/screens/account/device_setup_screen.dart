@@ -158,6 +158,18 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
       case BleErrorCode.storageFailed:
         icon = Icons.storage_outlined;
         title = 'Storage Error';
+      case BleErrorCode.deviceNotProvisioned:
+        icon = Icons.help_outline;
+        title = 'Hub Not Recognized';
+      case BleErrorCode.deviceOwnedByAnotherUser:
+        icon = Icons.person_off_outlined;
+        title = 'Hub Already Adopted';
+      case BleErrorCode.adoptionFailed:
+        icon = Icons.cloud_off_outlined;
+        title = 'Cloud Unreachable';
+      case BleErrorCode.threadFailed:
+        icon = Icons.sensors_off;
+        title = 'Mesh Setup Failed';
       default:
         icon = Icons.error_outline;
         title = 'Something went wrong';
@@ -229,53 +241,52 @@ class _DeviceSetupScreenState extends ConsumerState<DeviceSetupScreen> {
       return;
     }
 
-    // Claim the unit and update with provisioning data
     try {
       final unitRepo = ref.read(unitRepositoryProvider);
 
-      // Step 1: Claim the unit via Edge Function
-      debugPrint('[DeviceSetup] Claiming unit: ${deviceInfo.serialNumber}');
-      final claimedDevice = await unitRepo.claimUnit(deviceInfo.serialNumber);
-      debugPrint('[DeviceSetup] Unit claimed successfully: ${claimedDevice.id}');
+      // Resolve the unit/device. For Hubs the BLE adoption flow has already
+      // claimed the unit server-side (the Hub forwarded our JWT to
+      // `adopt_device`); we just need to look it up by serial number to get
+      // the unit_id. For Crates the phone is the one that adopts, so we call
+      // `adopt_device` directly here.
+      Device? resolved;
+      if (deviceInfo.isHub) {
+        debugPrint('[DeviceSetup] Looking up Hub: ${deviceInfo.serialNumber}');
+        resolved = await unitRepo.getDeviceBySerial(deviceInfo.serialNumber);
+      } else {
+        debugPrint('[DeviceSetup] Adopting Crate: ${deviceInfo.serialNumber}');
+        resolved = await unitRepo.adoptDevice(deviceInfo.serialNumber);
+      }
 
-      // Step 2: Build provision data based on device type
-      // Per the Device Command Protocol, both consumer_input (sent to device)
-      // and consumer_output (returned by device) are stored in provision_data.
+      if (resolved == null) {
+        throw Exception('Could not find unit for ${deviceInfo.serialNumber}');
+      }
+
+      // Build provision data. We only persist data the cloud doesn't own:
+      // - Hubs: the WiFi SSID for display in the device detail screen.
+      // - Crates: nothing Thread-related (the user's mesh lives centrally in
+      //   `thread_networks` now; per-device copies would just drift).
+      // The device's `consumer_output` from BLE is preserved either way.
       final consumerOutput = state.consumerOutput;
-      ProvisionData provisionData;
+      ProvisionData? provisionData;
       if (deviceInfo.isHub && state.wifiSsid != null) {
-        // For hubs, store the WiFi SSID that was used for provisioning
-        // Note: We don't store the password for security reasons
         provisionData = ProvisionData.wifi(
           ssid: state.wifiSsid!,
           consumerOutput: consumerOutput,
         );
-        debugPrint('[DeviceSetup] Storing WiFi config: SSID=${state.wifiSsid}, '
-            'consumerOutput=$consumerOutput');
-      } else if (deviceInfo.isCrate && state.threadDataset != null) {
-        // For crates, store the Thread dataset used for provisioning
-        provisionData = ProvisionData.thread(
-          dataset: state.threadDataset!,
-          networkName: 'Saturday Thread Network',
-          consumerOutput: consumerOutput,
-        );
-        debugPrint('[DeviceSetup] Storing Thread config from hub ${state.selectedHubId}, '
-            'consumerOutput=$consumerOutput');
-      } else {
+      } else if (consumerOutput != null && consumerOutput.isNotEmpty) {
         provisionData = ProvisionData(consumerOutput: consumerOutput);
       }
 
-      // Step 3: Update unit with device name and provisioning data
       final deviceName = state.effectiveDeviceName;
       await unitRepo.updateUnitProvisioning(
-        unitId: claimedDevice.id,
-        userId: userId,
+        unitId: resolved.id,
         deviceName: deviceName,
         provisionData: provisionData,
       );
       debugPrint('[DeviceSetup] Device provisioned successfully: $deviceName');
     } catch (e) {
-      debugPrint('[DeviceSetup] Error claiming/provisioning device: $e');
+      debugPrint('[DeviceSetup] Error finalizing device: $e');
       // Show error but still allow navigation
       if (context.mounted) {
         ScaffoldMessenger.of(context)
@@ -545,7 +556,6 @@ class _ConfigureStepState extends ConsumerState<_ConfigureStep> {
   final _passwordFocusNode = FocusNode();
   final _ssidFocusNode = FocusNode();
   bool _obscurePassword = true;
-  Device? _selectedHub;
   bool _hasRestoredFromRetry = false;
 
   @override
@@ -745,8 +755,6 @@ class _ConfigureStepState extends ConsumerState<_ConfigureStep> {
   }
 
   Widget _buildThreadConfig(BuildContext context) {
-    final hubsAsync = ref.watch(userHubsProvider);
-
     return SingleChildScrollView(
       padding: Spacing.pagePadding,
       child: Column(
@@ -778,184 +786,24 @@ class _ConfigureStepState extends ConsumerState<_ConfigureStep> {
           ),
           const SizedBox(height: 32),
           Text(
-            'Select a Hub',
+            'Join Your Saturday Mesh',
             style: Theme.of(context).textTheme.headlineSmall,
           ),
           const SizedBox(height: 8),
           Text(
-            'Choose a Saturday Hub to provide network credentials to your Crate. '
-            'The Hub must be online.',
+            'Your Crate will join your account\'s Thread mesh automatically. '
+            'Make sure at least one Saturday Hub on your account is online.',
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: SaturdayColors.secondary,
                 ),
           ),
-          const SizedBox(height: 16),
-          hubsAsync.when(
-            loading: () => const Center(
-              child: Padding(
-                padding: EdgeInsets.all(24),
-                child: CircularProgressIndicator(),
-              ),
-            ),
-            error: (error, _) => Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text(
-                'Failed to load hubs: $error',
-                style: TextStyle(color: SaturdayColors.error),
-              ),
-            ),
-            data: (hubs) => _buildHubList(context, hubs),
-          ),
           const SizedBox(height: 32),
           ElevatedButton(
-            onPressed: _selectedHub != null ? _submitThreadCredentials : null,
+            onPressed: _submitThreadCredentials,
             child: const Text('Continue'),
           ),
         ],
       ),
-    );
-  }
-
-  Widget _buildHubList(BuildContext context, List<Device> hubs) {
-    if (hubs.isEmpty) {
-      return Container(
-        padding: const EdgeInsets.all(24),
-        decoration: BoxDecoration(
-          color: SaturdayColors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: SaturdayColors.secondary.withValues(alpha: 0.2)),
-        ),
-        child: Column(
-          children: [
-            Icon(
-              Icons.hub_outlined,
-              size: 48,
-              color: SaturdayColors.secondary,
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'No Hubs Found',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'You need to set up a Saturday Hub before you can add a Crate. '
-              'The Hub provides the network connection for your Crate.',
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: SaturdayColors.secondary,
-                  ),
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
-      );
-    }
-
-    return Column(
-      children: hubs.map((hub) {
-        final isOnline = hub.isEffectivelyOnline;
-        final isSelected = _selectedHub?.id == hub.id;
-
-        return Padding(
-          padding: const EdgeInsets.only(bottom: 8),
-          child: Material(
-            color: isSelected
-                ? SaturdayColors.primaryDark.withValues(alpha: 0.1)
-                : SaturdayColors.white,
-            borderRadius: BorderRadius.circular(12),
-            child: InkWell(
-              onTap: isOnline
-                  ? () {
-                      setState(() {
-                        _selectedHub = hub;
-                      });
-                    }
-                  : null,
-              borderRadius: BorderRadius.circular(12),
-              child: Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: isSelected
-                        ? SaturdayColors.primaryDark
-                        : SaturdayColors.secondary.withValues(alpha: 0.2),
-                    width: isSelected ? 2 : 1,
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 48,
-                      height: 48,
-                      decoration: BoxDecoration(
-                        color: isOnline
-                            ? SaturdayColors.primaryDark.withValues(alpha: 0.1)
-                            : SaturdayColors.secondary.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Icon(
-                        Icons.hub_outlined,
-                        color: isOnline
-                            ? SaturdayColors.primaryDark
-                            : SaturdayColors.secondary,
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            hub.name,
-                            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                  color: isOnline ? null : SaturdayColors.secondary,
-                                ),
-                          ),
-                          const SizedBox(height: 4),
-                          Row(
-                            children: [
-                              Container(
-                                width: 8,
-                                height: 8,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: isOnline
-                                      ? SaturdayColors.success
-                                      : SaturdayColors.secondary,
-                                ),
-                              ),
-                              const SizedBox(width: 6),
-                              Text(
-                                isOnline ? 'Online' : 'Offline',
-                                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                      color: isOnline
-                                          ? SaturdayColors.success
-                                          : SaturdayColors.secondary,
-                                    ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                    if (isSelected)
-                      Icon(
-                        Icons.check_circle,
-                        color: SaturdayColors.primaryDark,
-                      )
-                    else if (!isOnline)
-                      Icon(
-                        Icons.block,
-                        color: SaturdayColors.secondary.withValues(alpha: 0.5),
-                      ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        );
-      }).toList(),
     );
   }
 
@@ -1010,27 +858,31 @@ class _ConfigureStepState extends ConsumerState<_ConfigureStep> {
   }
 
   void _submitThreadCredentials() async {
-    if (_selectedHub == null) {
-      ScaffoldMessenger.of(context)
-        ..clearSnackBars()
-        ..showSnackBar(
-          const SnackBar(content: Text('Please select a Hub')),
-        );
+    // Fetch the user's Thread credentials from the cloud. The cloud is now
+    // authoritative — Hubs all share one account-scoped mesh, so we don't
+    // need to pick a specific Hub here.
+    final unitRepo = ref.read(unitRepositoryProvider);
+    final String? threadDataset;
+    try {
+      threadDataset = await unitRepo.getThreadCredentials();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+          ..clearSnackBars()
+          ..showSnackBar(
+            SnackBar(content: Text('Internet required to set up new devices: $e')),
+          );
+      }
       return;
     }
 
-    // Get Thread dataset from the selected hub's consumer attributes
-    final unitRepo = ref.read(unitRepositoryProvider);
-    final threadDataset = await unitRepo.getHubThreadDataset(_selectedHub!.id);
-
-    if (threadDataset == null || threadDataset.isEmpty) {
+    if (threadDataset == null) {
       if (mounted) {
         ScaffoldMessenger.of(context)
           ..clearSnackBars()
           ..showSnackBar(
             const SnackBar(
-              content: Text('The selected Hub does not have Thread credentials. '
-                  'Please ensure the Hub is fully set up.'),
+              content: Text('Adopt a Hub first before adding a Crate.'),
             ),
           );
       }
@@ -1039,7 +891,6 @@ class _ConfigureStepState extends ConsumerState<_ConfigureStep> {
 
     ref.read(deviceSetupProvider.notifier).provisionThread(
           threadDataset: threadDataset,
-          hubId: _selectedHub!.id,
         );
   }
 }

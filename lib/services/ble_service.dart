@@ -47,7 +47,7 @@ class SaturdayBleUuids {
 /// Error codes from the Response characteristic (JSON).
 ///
 /// These provide more specific error information than Status byte alone.
-/// Added in BLE Provisioning Protocol v1.2.0.
+/// WiFi/storage codes added in v1.2.0; adoption codes added in v1.4.0.
 enum BleErrorCode {
   authFailed('AUTH_FAILED', 'Incorrect password. Please check and try again.'),
   networkNotFound(
@@ -56,6 +56,18 @@ enum BleErrorCode {
   timeout('TIMEOUT', 'Connection timed out. Make sure you\'re near your router.'),
   wifiFailed('WIFI_FAILED', 'Could not connect to Wi-Fi. Please try again.'),
   storageFailed('STORAGE_ERROR', 'Failed to store credentials. Please try again.'),
+  deviceNotProvisioned(
+      'DEVICE_NOT_PROVISIONED',
+      'This Hub is not registered with Saturday. Contact support.'),
+  deviceOwnedByAnotherUser(
+      'DEVICE_OWNED_BY_ANOTHER_USER',
+      'This Hub is already adopted by another account. The previous owner must unadopt it first.'),
+  adoptionFailed(
+      'ADOPTION_FAILED',
+      'Couldn\'t reach Saturday cloud. Check the Hub\'s internet and try again.'),
+  threadFailed(
+      'THREAD_FAILED',
+      'Hub had trouble setting up its mesh. Power-cycle the Hub and try again.'),
   unknown('UNKNOWN', 'An unexpected error occurred.');
 
   final String code;
@@ -74,6 +86,16 @@ enum BleErrorCode {
 
   /// Whether this error is related to network discovery.
   bool get isNetworkError => this == BleErrorCode.networkNotFound;
+
+  /// Whether this error came from the cloud adoption round-trip.
+  ///
+  /// On these failures the Hub stays advertising — the app can fix the
+  /// underlying issue and retry CONNECT without redoing BLE setup.
+  bool get isAdoptionError =>
+      this == BleErrorCode.deviceNotProvisioned ||
+      this == BleErrorCode.deviceOwnedByAnotherUser ||
+      this == BleErrorCode.adoptionFailed ||
+      this == BleErrorCode.threadFailed;
 }
 
 /// Status codes from the device.
@@ -84,6 +106,7 @@ enum BleProvisioningStatus {
   connecting(0x03),
   verifying(0x04),
   success(0x05),
+  adopted(0x06),
   errorInvalidSsid(0x10),
   errorInvalidPassword(0x11),
   errorWifiFailed(0x12),
@@ -105,6 +128,12 @@ enum BleProvisioningStatus {
 
   bool get isError => code >= 0x10;
 
+  /// Terminal success state for either legacy WiFi provisioning (SUCCESS)
+  /// or new account-adoption flow (ADOPTED, v1.4.0+).
+  bool get isTerminalSuccess =>
+      this == BleProvisioningStatus.success ||
+      this == BleProvisioningStatus.adopted;
+
   String get displayMessage {
     switch (this) {
       case BleProvisioningStatus.idle:
@@ -119,6 +148,8 @@ enum BleProvisioningStatus {
         return 'Verifying cloud connection...';
       case BleProvisioningStatus.success:
         return 'Setup complete!';
+      case BleProvisioningStatus.adopted:
+        return 'Hub set up!';
       case BleProvisioningStatus.errorInvalidSsid:
         return 'Invalid network name';
       case BleProvisioningStatus.errorInvalidPassword:
@@ -461,6 +492,18 @@ class BleService {
       _connectedDevice = discovered.device;
       debugPrint('[BLE] Device connected');
 
+      // Request a larger ATT MTU on Android so JWT chunked writes to the
+      // User Token characteristic (0x0030) are fewer GATT round-trips.
+      // iOS auto-negotiates and ignores requestMtu, so it's a no-op there.
+      if (defaultTargetPlatform == TargetPlatform.android) {
+        try {
+          final mtu = await discovered.device.requestMtu(247);
+          debugPrint('[BLE] Negotiated MTU: $mtu');
+        } catch (e) {
+          debugPrint('[BLE] MTU negotiation failed (continuing with default): $e');
+        }
+      }
+
       _connectionStateController.add(BleConnectionState.discovering);
 
       // Discover services
@@ -546,13 +589,26 @@ class BleService {
   }
 
   /// Provision the device with Wi-Fi credentials (for Hub).
+  ///
+  /// If [userToken] is provided, it is chunked-written to the User Token
+  /// characteristic (0x0030) before CONNECT, which switches the Hub into the
+  /// account-adoption flow (v1.4.0+): the Hub forwards the JWT to the cloud
+  /// `adopt_device` edge function, receives Thread credentials + device session
+  /// tokens, and signals `ADOPTED (0x06)` on success. When [userToken] is
+  /// omitted, the Hub falls back to the legacy provisioning path and signals
+  /// `SUCCESS (0x05)`.
   Future<void> provisionWifi({
     required String ssid,
     required String password,
+    String? userToken,
   }) async {
     _connectionStateController.add(BleConnectionState.provisioning);
 
     try {
+      if (userToken != null) {
+        await writeUserToken(userToken);
+      }
+
       // Write SSID
       final ssidChar = _characteristics[SaturdayBleUuids.wifiSsid.toLowerCase()];
       if (ssidChar == null) throw Exception('SSID characteristic not found');
@@ -591,11 +647,39 @@ class BleService {
     }
   }
 
-  /// Write user authentication token for account linking.
+  /// Write the user's Supabase JWT to the User Token characteristic (0x0030).
+  ///
+  /// Supabase JWTs are ~700–1200 bytes, larger than the default ATT MTU (23).
+  /// The firmware treats 0x0030 as an accumulating buffer: each write appends
+  /// to the buffer and the next CONNECT command finalizes it. No framing or
+  /// terminator required.
+  ///
+  /// We size each chunk at `mtu - 3` (ATT header overhead). If the MTU hasn't
+  /// been negotiated yet we fall back to a conservative 20-byte chunk.
   Future<void> writeUserToken(String token) async {
     final tokenChar = _characteristics[SaturdayBleUuids.userToken.toLowerCase()];
     if (tokenChar == null) throw Exception('User token characteristic not found');
-    await tokenChar.write(utf8.encode(token), withoutResponse: false);
+
+    final bytes = utf8.encode(token);
+    final device = _connectedDevice;
+    int mtu = 23;
+    if (device != null) {
+      try {
+        mtu = device.mtuNow;
+      } catch (_) {
+        // Older flutter_blue_plus versions may not expose mtuNow; keep default.
+      }
+    }
+    final chunkSize = (mtu > 3 ? mtu - 3 : 20);
+
+    debugPrint(
+        '[BLE] Writing user token: ${bytes.length} bytes in chunks of $chunkSize');
+    for (var offset = 0; offset < bytes.length; offset += chunkSize) {
+      final end = (offset + chunkSize < bytes.length)
+          ? offset + chunkSize
+          : bytes.length;
+      await tokenChar.write(bytes.sublist(offset, end), withoutResponse: false);
+    }
   }
 
   /// Request Wi-Fi network scan from the device.
@@ -694,10 +778,12 @@ class BleService {
     _statusSubscription = statusChar.onValueReceived.listen((value) {
       if (value.isNotEmpty) {
         final status = BleProvisioningStatus.fromCode(value[0]);
+        debugPrint(
+            '[BLE] Status: 0x${value[0].toRadixString(16).padLeft(2, '0')} ($status)');
         _statusController.add(status);
 
         // Update connection state based on status
-        if (status == BleProvisioningStatus.success) {
+        if (status.isTerminalSuccess) {
           _connectionStateController.add(BleConnectionState.ready);
         } else if (status.isError) {
           _connectionStateController.add(BleConnectionState.error);

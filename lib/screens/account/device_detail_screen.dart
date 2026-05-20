@@ -743,7 +743,10 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
   Future<void> _removeDevice(WidgetRef ref, Device device) async {
     try {
       final unitRepo = ref.read(unitRepositoryProvider);
-      await unitRepo.unclaimUnit(device.id);
+      await unitRepo.unadoptDevice(
+        macAddress: device.macAddress,
+        serialNumber: device.macAddress == null ? device.serialNumber : null,
+      );
       ref.invalidate(userDevicesProvider);
       if (mounted) {
         ScaffoldMessenger.of(context)
