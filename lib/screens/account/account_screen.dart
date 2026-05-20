@@ -210,7 +210,7 @@ class AccountScreen extends ConsumerWidget {
     return GestureDetector(
       onTap: () {
         if (isSignedIn) {
-          // TODO: Navigate to profile details
+          context.pushNamed(RouteNames.profile);
         } else {
           context.push(RoutePaths.login);
         }

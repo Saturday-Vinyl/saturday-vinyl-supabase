@@ -54,6 +54,12 @@ final listeningHistoryRepositoryProvider =
   return ListeningHistoryRepository();
 });
 
+/// Provider for AlbumAnalyticsRepository.
+final albumAnalyticsRepositoryProvider =
+    Provider<AlbumAnalyticsRepository>((ref) {
+  return AlbumAnalyticsRepository();
+});
+
 /// Provider for AlbumLocationRepository.
 final albumLocationRepositoryProvider =
     Provider<AlbumLocationRepository>((ref) {

@@ -339,17 +339,6 @@ class NowPlayingNotifier extends StateNotifier<NowPlayingState> {
     );
 
     try {
-      // Record the play in listening history
-      final userId = _ref.read(currentUserIdProvider);
-      if (userId != null) {
-        final historyRepo = _ref.read(listeningHistoryRepositoryProvider);
-        await historyRepo.recordPlay(
-          userId: userId,
-          libraryAlbumId: album.id,
-          deviceId: null, // Manual selection, no device
-        );
-      }
-
       state = state.copyWith(
         isLoading: false,
         currentAlbum: album,
@@ -563,20 +552,6 @@ class NowPlayingNotifier extends StateNotifier<NowPlayingState> {
       startedAt: DateTime.now(),
     );
     await _persistState();
-
-    // Record listening history when playback actually starts
-    final album = state.currentAlbum;
-    if (album != null) {
-      final userId = _ref.read(currentUserIdProvider);
-      if (userId != null) {
-        final historyRepo = _ref.read(listeningHistoryRepositoryProvider);
-        historyRepo
-            .recordPlay(userId: userId, libraryAlbumId: album.id)
-            .then((_) {}, onError: (e) {
-          debugPrint('[NowPlaying] Failed to record listening history: $e');
-        });
-      }
-    }
 
     final sessionId = state.cloudSessionId;
     if (sessionId != null) {

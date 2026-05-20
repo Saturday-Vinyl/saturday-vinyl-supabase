@@ -2,6 +2,7 @@
 library;
 
 export 'album.dart';
+export 'album_analytics.dart';
 export 'album_location.dart';
 export 'collection_item.dart';
 export 'cratelist.dart';
