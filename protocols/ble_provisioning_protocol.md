@@ -1,8 +1,8 @@
 # Saturday Vinyl BLE Provisioning Protocol
 
-**Version:** 1.3.0
+**Version:** 1.4.0
 **Status:** Draft
-**Last Updated:** 2026-02-04
+**Last Updated:** 2026-05-11
 **Audience:** Saturday Vinyl app developers, firmware engineers
 
 > **Note:** This protocol works with the unified device architecture. See
@@ -241,14 +241,16 @@ The `XXXX` portion identifies specific characteristics.
 | `0x01` | `READY` | Ready to receive credentials |
 | `0x02` | `CREDENTIALS_RECEIVED` | Credentials written, awaiting command |
 | `0x03` | `CONNECTING` | Attempting network connection |
-| `0x04` | `VERIFYING` | Verifying cloud connectivity |
-| `0x05` | `SUCCESS` | Provisioning complete |
+| `0x04` | `VERIFYING` | Verifying cloud connectivity / running cloud adoption |
+| `0x05` | `SUCCESS` | Wi-Fi provisioning complete (legacy / no user token supplied) |
+| `0x06` | `ADOPTED` | **Cloud adoption complete, Thread credentials installed, mesh up** (Hub-only) |
 | `0x10` | `ERROR_INVALID_SSID` | SSID validation failed |
 | `0x11` | `ERROR_INVALID_PASSWORD` | Password validation failed |
 | `0x12` | `ERROR_WIFI_FAILED` | Wi-Fi connection failed |
 | `0x13` | `ERROR_WIFI_TIMEOUT` | Wi-Fi connection timeout |
 | `0x14` | `ERROR_THREAD_FAILED` | Thread join failed |
 | `0x15` | `ERROR_CLOUD_FAILED` | Cloud verification failed |
+| `0x16` | `ERROR_ADOPTION` | Cloud adoption rejected (see Response JSON for specific code) |
 | `0x1E` | `ERROR_BUSY` | Device busy, try again |
 | `0x1F` | `ERROR_UNKNOWN` | Unknown error |
 
@@ -343,6 +345,9 @@ When Wi-Fi connection fails, the device sends a specific error code to help the 
 | `WIFI_FAILED` | "Connection failed" | Other WiFi errors | Generic retry |
 | `STORAGE_ERROR` | "Failed to store credentials" | NVS write failed | Retry or factory reset |
 | `THREAD_FAILED` | "Could not join Thread network" | Thread join failed or timed out | Check Hub is powered on, retry |
+| `DEVICE_NOT_PROVISIONED` | "This Hub is not registered with Saturday" | Cloud `adopt_device` returned 404 - the MAC is unknown to the backend | Contact support; verify hardware identity |
+| `DEVICE_OWNED_BY_ANOTHER_USER` | "This Hub is already adopted by another account" | Cloud `adopt_device` returned 403 - `units.consumer_user_id` is set to a different user | Sign out, sign in as the correct user, or unadopt from the original account |
+| `ADOPTION_FAILED` | "Could not reach Saturday cloud" | Cloud `adopt_device` failed for transport or generic reason | Retry with internet connectivity |
 
 > **Note:** `AUTH_FAILED` and `NETWORK_NOT_FOUND` errors are reported within 1-2 seconds
 > of the connection attempt, allowing for immediate user feedback. Previously, all errors
@@ -414,148 +419,181 @@ The Thread credentials are wrapped in a `thread_credentials` object per the
 
 ### User Token (0x0030)
 
-**Properties:** Write
-**Description:** Authentication token for linking device to user account.
+**Properties:** Write (multi-write accumulating)
+**Description:** Authentication token for adopting the Hub to a user account.
 
-**Format:** UTF-8 string (typically JWT or opaque token)
+**Format:** UTF-8 string — a fresh Supabase user access token (JWT) for the
+signed-in user.
 
-**Usage:**
-1. App authenticates user with Saturday backend
-2. Backend issues device linking token
-3. App writes token to device
-4. Device sends token to cloud for account linking
+**Multi-write behavior:**
+- Supabase user JWTs are typically 700-1200 bytes, well above any practical
+  ATT MTU, so the Hub accumulates consecutive writes to this characteristic
+  into a single buffer (up to 2048 bytes).
+- An empty write resets the buffer (use this to start over).
+- The accumulated token is consumed by the next `CONNECT` command (0x01).
+- The Hub wipes the JWT from memory immediately after the cloud round-trip,
+  whether the round-trip succeeds or fails.
+
+**Usage in the Hub adoption flow:**
+1. App signs the user in (or uses an existing session) and obtains a current
+   Supabase access token.
+2. App writes the token to characteristic 0x0030 (one or more writes).
+3. App writes Wi-Fi SSID (0x0010) and password (0x0011) as usual.
+4. App writes the `CONNECT` command (0x01).
+5. Hub connects to Wi-Fi, then calls the Supabase `adopt_device` edge function
+   with the user JWT in `Authorization: Bearer`. On success the cloud returns
+   the user's Thread credentials and a Hub-scoped access/refresh token pair.
+6. Hub stores the device tokens, pushes the Thread credentials to the H2
+   coprocessor, brings the Thread mesh up, and notifies status `ADOPTED (0x06)`.
+
+The token is **not** stored on the Hub after adoption — the Hub thereafter
+uses its own device session tokens (issued by the cloud) for authenticated
+cloud calls. The user's JWT is forwarded once, used, and forgotten.
+
+**Backward compatibility:** if no User Token is written before `CONNECT`, the
+Hub completes Wi-Fi provisioning only and signals legacy `SUCCESS (0x05)`
+instead of `ADOPTED (0x06)`. This path is for development / factory flows
+that do not exercise consumer adoption.
 
 ---
 
 ## Provisioning Flow
 
-### Hub Provisioning (Wi-Fi)
+### Hub Provisioning (Wi-Fi + Cloud Adoption)
 
 ```
-┌─────────────┐                              ┌─────────────┐
-│  Mobile App │                              │  Saturday   │
-│             │                              │    Hub      │
-└──────┬──────┘                              └──────┬──────┘
-       │                                            │
-       │  1. Scan for Saturday devices              │
-       │────────────────────────────────────────────>
-       │                                            │
-       │  2. Connect to "Saturday Hub XXXX"         │
-       │<───────────────────────────────────────────│
-       │                                            │
-       │  3. Discover services                      │
-       │────────────────────────────────────────────>
-       │                                            │
-       │  4. Read Device Info (0x0001)              │
-       │────────────────────────────────────────────>
-       │  {"device_type":"hub","capabilities":...}  │
-       │<───────────────────────────────────────────│
-       │                                            │
-       │  5. Subscribe to Status (0x0002)           │
-       │────────────────────────────────────────────>
-       │                                            │
-       │  6. Subscribe to Response (0x0004)         │
-       │────────────────────────────────────────────>
-       │                                            │
-       │  7. Write Wi-Fi SSID (0x0010)              │
-       │  "MyHomeNetwork"                           │
-       │────────────────────────────────────────────>
-       │                                            │
-       │  8. Write Wi-Fi Password (0x0011)          │
-       │  "mypassword123"                           │
-       │────────────────────────────────────────────>
-       │                                            │
-       │  9. Status Notification: CREDENTIALS_RX    │
-       │<───────────────────────────────────────────│
-       │                                            │
-       │  10. Write Command: CONNECT (0x01)         │
-       │────────────────────────────────────────────>
-       │                                            │
-       │  11. Status Notification: CONNECTING       │
-       │<───────────────────────────────────────────│
-       │                                            │
-       │  12. Response: "Connecting to Wi-Fi..."    │
-       │<───────────────────────────────────────────│
-       │                                            │
-       │      [Hub connects to Wi-Fi]               │
-       │                                            │
-       │  13. Status Notification: VERIFYING        │
-       │<───────────────────────────────────────────│
-       │                                            │
-       │  14. Response: "Verifying cloud..."        │
-       │<───────────────────────────────────────────│
-       │                                            │
-       │      [Hub verifies cloud connectivity]     │
-       │                                            │
-       │  15. Status Notification: SUCCESS          │
-       │<───────────────────────────────────────────│
-       │                                            │
-       │  16. Response: "Connected!"                │
-       │<───────────────────────────────────────────│
-       │                                            │
-       │  17. Disconnect BLE                        │
-       │────────────────────────────────────────────>
-       │                                            │
+┌─────────────┐                              ┌─────────────┐         ┌──────────┐
+│  Mobile App │                              │  Saturday   │         │ Saturday │
+│             │                              │    Hub      │         │  Cloud   │
+└──────┬──────┘                              └──────┬──────┘         └────┬─────┘
+       │                                            │                     │
+       │  1. Scan / connect / discover (as before)  │                     │
+       │<──────────────────────────────────────────>│                     │
+       │                                            │                     │
+       │  2. Subscribe to Status & Response notify  │                     │
+       │────────────────────────────────────────────>                     │
+       │                                            │                     │
+       │  3. Write User Token (0x0030) - JWT        │                     │
+       │     (split across multiple writes;         │                     │
+       │      Hub buffers up to 2048 bytes)         │                     │
+       │────────────────────────────────────────────>                     │
+       │                                            │                     │
+       │  4. Write Wi-Fi SSID (0x0010)              │                     │
+       │  5. Write Wi-Fi Password (0x0011)          │                     │
+       │────────────────────────────────────────────>                     │
+       │                                            │                     │
+       │  6. Write Command: CONNECT (0x01)          │                     │
+       │────────────────────────────────────────────>                     │
+       │                                            │                     │
+       │  7. Status: CONNECTING (0x03)              │                     │
+       │<───────────────────────────────────────────│                     │
+       │                                            │                     │
+       │      [Hub connects to Wi-Fi]               │                     │
+       │                                            │                     │
+       │  8. Status: VERIFYING (0x04)               │                     │
+       │     "Adopting device with Saturday cloud"  │                     │
+       │<───────────────────────────────────────────│                     │
+       │                                            │                     │
+       │                                            │  9. POST /functions/v1/adopt_device
+       │                                            │     Authorization: Bearer <user_jwt>
+       │                                            │     { mac_address, issue_device_tokens: true }
+       │                                            │────────────────────>│
+       │                                            │                     │
+       │                                            │  10. 200 OK         │
+       │                                            │      thread_credentials + device_tokens
+       │                                            │<────────────────────│
+       │                                            │                     │
+       │       [Hub stores tokens + cached creds    │                     │
+       │        in S3 NVS; pushes Thread creds to   │                     │
+       │        H2 via UART CMD_SET_CREDENTIALS;    │                     │
+       │        Thread mesh comes up]               │                     │
+       │                                            │                     │
+       │  11. Status: ADOPTED (0x06)                │                     │
+       │      "Saturday Hub is now adopted on …"    │                     │
+       │<───────────────────────────────────────────│                     │
+       │                                            │                     │
+       │  12. Disconnect BLE                        │                     │
+       │────────────────────────────────────────────>                     │
+       │                                            │                     │
 ```
+
+**Adoption-failure paths (Hub stays in BLE so the app can retry):**
+
+| Cloud response | Status byte | Response `code` |
+|---|---|---|
+| 404 `device_not_factory_provisioned` | `0x16 ERROR_ADOPTION` | `DEVICE_NOT_PROVISIONED` |
+| 403 `device_owned_by_another_user`   | `0x16 ERROR_ADOPTION` | `DEVICE_OWNED_BY_ANOTHER_USER` |
+| Transport / generic                  | `0x16 ERROR_ADOPTION` | `ADOPTION_FAILED` |
+| Cloud OK but H2 push fails           | `0x14 ERROR_THREAD`    | `THREAD_FAILED` |
+
+In the failure paths the Hub does **not** stop BLE - the app can fix the
+underlying issue (e.g. sign in as the correct user) and retry `CONNECT`.
+
+**Legacy Wi-Fi-only flow (no User Token written):**
+
+The original Wi-Fi-only flow still works: skip step 3 (don't write the User
+Token) and the Hub will signal `SUCCESS (0x05)` after step 7 instead of
+running the cloud adoption round-trip. This is intended for development /
+factory paths, not consumer adoption.
 
 ### Crate Provisioning (Thread)
 
+Thread credentials are sourced from the **Saturday cloud**, not from a
+specific Hub. The app calls the `get_thread_credentials` edge function (with
+the user's JWT in `Authorization`) and writes the returned dataset to the
+Crate via BLE characteristic `0x0020`. This way Crate adoption succeeds
+regardless of which (or how many) Hubs the user has online, and the Crate
+inherits the user's single, account-scoped Thread network.
+
 ```
-┌─────────────┐         ┌─────────────┐         ┌─────────────┐
-│  Mobile App │         │  Saturday   │         │  Saturday   │
-│             │         │    Hub      │         │   Crate     │
-└──────┬──────┘         └──────┬──────┘         └──────┬──────┘
-       │                       │                       │
-       │  1. Request Thread    │                       │
-       │     credentials       │                       │
-       │──────────────────────>│                       │
-       │                       │                       │
-       │  2. Thread dataset    │                       │
-       │<──────────────────────│                       │
-       │                       │                       │
-       │  3. Connect to Crate via BLE                  │
-       │───────────────────────────────────────────────>
-       │                       │                       │
-       │  4. Write Thread Dataset (0x0020)             │
-       │───────────────────────────────────────────────>
-       │                       │                       │
-       │  5. Write CONNECT command                     │
-       │───────────────────────────────────────────────>
-       │                       │                       │
-       │  6. Status: CONNECTING (0x03)                 │
-       │<──────────────────────────────────────────────│
-       │                       │                       │
-       │  7. Response: {"type":"message",              │
-       │     "code":"CONNECTING",                      │
-       │     "message":"Joining Thread network..."}    │
-       │<──────────────────────────────────────────────│
-       │                       │                       │
-       │                       │  8. Join Thread       │
-       │                       │<──────────────────────│
-       │                       │                       │
-       │  9. Status: VERIFYING (0x04)                  │
-       │<──────────────────────────────────────────────│
-       │                       │                       │
-       │  10. Response: {"type":"message",             │
-       │      "code":"VERIFYING",                      │
-       │      "message":"Verifying Hub connection..."}│
-       │<──────────────────────────────────────────────│
-       │                       │                       │
-       │      [Crate sends heartbeat to Hub]           │
-       │                       │                       │
-       │  11. Status: SUCCESS (0x05)                   │
-       │<──────────────────────────────────────────────│
-       │                       │                       │
-       │  12. Response: {"type":"message",             │
-       │      "code":"SUCCESS",                        │
-       │      "message":"Connected",                   │
-       │      "data":{"thread_network_name":"..."}}    │
-       │<──────────────────────────────────────────────│
-       │                       │                       │
-       │  13. Disconnect BLE                           │
-       │───────────────────────────────────────────────>
-       │                       │                       │
+┌─────────────┐         ┌──────────┐         ┌─────────────┐
+│  Mobile App │         │ Saturday │         │  Saturday   │
+│             │         │  Cloud   │         │   Crate     │
+└──────┬──────┘         └────┬─────┘         └──────┬──────┘
+       │                     │                      │
+       │  1. GET /functions/v1/get_thread_credentials
+       │     Authorization: Bearer <user_jwt>       │
+       │────────────────────>│                      │
+       │                     │                      │
+       │  2. 200 OK { thread_credentials: { ... } } │
+       │<────────────────────│                      │
+       │                     │                      │
+       │  3. Connect to Crate via BLE               │
+       │────────────────────────────────────────────>
+       │                                            │
+       │  4. Write Thread Dataset (0x0020)          │
+       │────────────────────────────────────────────>
+       │                                            │
+       │  5. Write CONNECT command                  │
+       │────────────────────────────────────────────>
+       │                                            │
+       │  6. Status: CONNECTING (0x03)              │
+       │<───────────────────────────────────────────│
+       │                                            │
+       │       [Crate joins Thread mesh via any     │
+       │        Border Router with matching creds]  │
+       │                                            │
+       │  7. Status: VERIFYING (0x04)               │
+       │<───────────────────────────────────────────│
+       │                                            │
+       │       [Crate sends heartbeat through a     │
+       │        Hub Border Router → cloud]          │
+       │                                            │
+       │  8. Status: SUCCESS (0x05)                 │
+       │<───────────────────────────────────────────│
+       │                                            │
+       │  9. Disconnect BLE                         │
+       │────────────────────────────────────────────>
 ```
+
+**Error: no Thread network yet.** If `get_thread_credentials` returns 404
+`no_thread_network` the user has not yet adopted any Hub. Surface this as
+"Adopt a Hub first before adopting a Crate."
+
+**Error: no internet.** Crate adoption requires cloud connectivity at the
+moment of provisioning (to fetch the credentials). The app should detect
+this state and surface "Internet required to set up new devices" rather
+than attempt a partial flow.
 
 ### Re-provisioning Flow
 
@@ -1056,12 +1094,14 @@ User Token:     53560030-0001-1000-8000-00805f9b34fb
 0x03 = CONNECTING
 0x04 = VERIFYING
 0x05 = SUCCESS
+0x06 = ADOPTED              (Hub only; cloud adoption complete)
 0x10 = ERROR_INVALID_SSID
 0x11 = ERROR_INVALID_PASSWORD
 0x12 = ERROR_WIFI_FAILED
 0x13 = ERROR_WIFI_TIMEOUT
 0x14 = ERROR_THREAD_FAILED
 0x15 = ERROR_CLOUD_FAILED
+0x16 = ERROR_ADOPTION       (see Response JSON code)
 0x1E = ERROR_BUSY
 0x1F = ERROR_UNKNOWN
 ```
@@ -1080,17 +1120,22 @@ User Token:     53560030-0001-1000-8000-00805f9b34fb
 ### D. Response Error Codes Quick Reference
 
 ```
-AUTH_FAILED       = Incorrect WiFi password (immediate, ~1-2s)
-NETWORK_NOT_FOUND = SSID not found (immediate, ~1-2s)
-TIMEOUT           = No WiFi event received within 45s
-WIFI_FAILED       = Other WiFi connection errors
-STORAGE_ERROR     = Failed to store credentials in NVS
+AUTH_FAILED                     = Incorrect WiFi password (immediate, ~1-2s)
+NETWORK_NOT_FOUND               = SSID not found (immediate, ~1-2s)
+TIMEOUT                         = No WiFi event received within 45s
+WIFI_FAILED                     = Other WiFi connection errors
+STORAGE_ERROR                   = Failed to store credentials in NVS
+THREAD_FAILED                   = Thread credentials could not be installed on H2
+DEVICE_NOT_PROVISIONED          = Cloud says this MAC is unknown
+DEVICE_OWNED_BY_ANOTHER_USER    = Cloud says unit is owned by a different user
+ADOPTION_FAILED                 = Cloud adoption failed (generic)
 ```
 
 ### E. Version History
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.4.0 | 2026-05-11 | **Cloud-canonical Thread credentials.** User Token characteristic (0x0030) is now wired in firmware as a multi-write accumulating buffer for the user JWT. New status `ADOPTED (0x06)`. New error status `ERROR_ADOPTION (0x16)` and Response codes `DEVICE_NOT_PROVISIONED`, `DEVICE_OWNED_BY_ANOTHER_USER`, `ADOPTION_FAILED`. Hub flow now includes a cloud `adopt_device` round-trip after WiFi connects; on success Thread credentials are pushed to H2 and BLE status advances to ADOPTED. Crate flow now sources Thread credentials from cloud `get_thread_credentials` instead of a paired Hub. Legacy `SUCCESS (0x05)` path retained for development / factory flows that don't write a User Token. |
 | 1.3.0 | 2026-02-04 | Added `data` envelope for device-specific output fields in Response characteristic (references `consumer_output_schema` from Capability Schema). Added detailed Crate provisioning flow with CONNECTING, VERIFYING, and SUCCESS response notifications. Added `THREAD_FAILED` error code for Thread provisioning failures. |
 | 1.2.0 | 2026-01-30 | Added specific WiFi error codes (`AUTH_FAILED`, `NETWORK_NOT_FOUND`) to Response characteristic for immediate error feedback. Auth failures now reported in ~1-2 seconds instead of 45-second timeout. Updated Error Handling section with Response code documentation. |
 | 1.1.0 | 2026-01-24 | Aligned with unified device architecture: renamed `unit_id` to `serial_number`, added `mac_address` to Device Info, added cross-references to Device Command Protocol and Capability Schema |
