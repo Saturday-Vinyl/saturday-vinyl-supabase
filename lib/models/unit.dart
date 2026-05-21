@@ -1,33 +1,47 @@
 import 'package:equatable/equatable.dart';
 
-/// Unit status enum representing lifecycle stages
+/// Unit status enum representing lifecycle stages.
+/// Values match the `unit_status` Postgres enum in the database.
 enum UnitStatus {
-  unprovisioned,
-  factoryProvisioned,
-  userProvisioned,
+  /// Unit is being built — no factory provisioning yet
+  inProduction,
+
+  /// Factory-provisioned and held in inventory (not linked to an order)
+  inventory,
+
+  /// Factory-provisioned and linked to an order, awaiting consumer setup
+  assigned,
+
+  /// Consumer has claimed/provisioned the unit
+  claimed,
 }
 
 /// Extension to convert UnitStatus to/from database string
 extension UnitStatusExtension on UnitStatus {
   String get databaseValue {
     switch (this) {
-      case UnitStatus.unprovisioned:
-        return 'unprovisioned';
-      case UnitStatus.factoryProvisioned:
-        return 'factory_provisioned';
-      case UnitStatus.userProvisioned:
-        return 'user_provisioned';
+      case UnitStatus.inProduction:
+        return 'in_production';
+      case UnitStatus.inventory:
+        return 'inventory';
+      case UnitStatus.assigned:
+        return 'assigned';
+      case UnitStatus.claimed:
+        return 'claimed';
     }
   }
 
   static UnitStatus fromString(String? value) {
     switch (value) {
-      case 'factory_provisioned':
-        return UnitStatus.factoryProvisioned;
-      case 'user_provisioned':
-        return UnitStatus.userProvisioned;
+      case 'inventory':
+        return UnitStatus.inventory;
+      case 'assigned':
+        return UnitStatus.assigned;
+      case 'claimed':
+        return UnitStatus.claimed;
+      case 'in_production':
       default:
-        return UnitStatus.unprovisioned;
+        return UnitStatus.inProduction;
     }
   }
 }
@@ -97,7 +111,7 @@ class Unit extends Equatable {
     this.consumerProvisionedAt,
     this.deviceName,
     this.consumerAttributes = const {},
-    this.status = UnitStatus.unprovisioned,
+    this.status = UnitStatus.inProduction,
     this.isOnline = false,
     this.lastSeenAt,
     this.batteryLevel,
@@ -122,10 +136,8 @@ class Unit extends Equatable {
   /// Check if unit is claimed by a consumer
   bool get isClaimed => userId != null;
 
-  /// Check if unit is factory provisioned
-  bool get isFactoryProvisioned =>
-      status == UnitStatus.factoryProvisioned ||
-      status == UnitStatus.userProvisioned;
+  /// Check if unit is factory provisioned (any post-production state)
+  bool get isFactoryProvisioned => status != UnitStatus.inProduction;
 
   /// Get formatted display name (device name or serial number)
   String get displayName => deviceName ?? serialNumber ?? 'Unprovisioned Unit';

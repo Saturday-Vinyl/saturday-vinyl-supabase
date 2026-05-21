@@ -5,7 +5,10 @@ enum HeartbeatMetric {
   batteryLevel('Battery', '%'),
   freeHeap('Free Heap', 'KB'),
   wifiRssi('WiFi RSSI', 'dBm'),
-  threadRssi('Thread RSSI', 'dBm');
+  threadRssi('Thread RSSI', 'dBm'),
+  temperatureCelsius('Temperature', '°C'),
+  humidityPercent('Humidity', '%'),
+  threadNeighborCount('Thread Neighbors', '');
 
   final String label;
   final String unit;
@@ -36,6 +39,13 @@ class HeartbeatDataPoint extends Equatable {
   final int? uptimeSec;
   final bool isRestartEvent;
 
+  // Environment sensor readings (from telemetry JSONB)
+  final double? temperatureCelsius;
+  final double? humidityPercent;
+
+  // Thread mesh diagnostics (from telemetry JSONB, hub devices)
+  final int? threadNeighborCount;
+
   // Boot diagnostics (from telemetry JSONB)
   final ResetReason? resetReason;
   final int? bootCount;
@@ -51,6 +61,9 @@ class HeartbeatDataPoint extends Equatable {
     this.threadRssi,
     this.uptimeSec,
     this.isRestartEvent = false,
+    this.temperatureCelsius,
+    this.humidityPercent,
+    this.threadNeighborCount,
     this.resetReason,
     this.bootCount,
     this.brownoutStreak,
@@ -67,6 +80,12 @@ class HeartbeatDataPoint extends Equatable {
         return wifiRssi?.toDouble();
       case HeartbeatMetric.threadRssi:
         return threadRssi?.toDouble();
+      case HeartbeatMetric.temperatureCelsius:
+        return temperatureCelsius;
+      case HeartbeatMetric.humidityPercent:
+        return humidityPercent;
+      case HeartbeatMetric.threadNeighborCount:
+        return threadNeighborCount?.toDouble();
     }
   }
 
@@ -79,6 +98,9 @@ class HeartbeatDataPoint extends Equatable {
     final resetReasonCode = telemetry?['reset_reason'] as int?;
     final bootCount = telemetry?['boot_count'] as int?;
     final brownoutStreak = telemetry?['brownout_streak'] as int?;
+    final temperature = telemetry?['temperature_c'] as num?;
+    final humidity = telemetry?['humidity_pct'] as num?;
+    final threadNeighborCount = telemetry?['thread_neighbor_count'] as int?;
 
     return HeartbeatDataPoint(
       timestamp: DateTime.parse(json['created_at'] as String),
@@ -90,6 +112,9 @@ class HeartbeatDataPoint extends Equatable {
       threadRssi: json['thread_rssi'] as int?,
       uptimeSec: json['uptime_sec'] as int?,
       isRestartEvent: isRestart,
+      temperatureCelsius: temperature?.toDouble(),
+      humidityPercent: humidity?.toDouble(),
+      threadNeighborCount: threadNeighborCount,
       resetReason: resetReasonCode != null
           ? ResetReason.fromCode(resetReasonCode)
           : null,
@@ -109,6 +134,9 @@ class HeartbeatDataPoint extends Equatable {
       threadRssi: threadRssi,
       uptimeSec: uptimeSec,
       isRestartEvent: isRestartEvent ?? this.isRestartEvent,
+      temperatureCelsius: temperatureCelsius,
+      humidityPercent: humidityPercent,
+      threadNeighborCount: threadNeighborCount,
       resetReason: resetReason,
       bootCount: bootCount,
       brownoutStreak: brownoutStreak,
@@ -126,6 +154,9 @@ class HeartbeatDataPoint extends Equatable {
         threadRssi,
         uptimeSec,
         isRestartEvent,
+        temperatureCelsius,
+        humidityPercent,
+        threadNeighborCount,
         resetReason,
         bootCount,
         brownoutStreak,

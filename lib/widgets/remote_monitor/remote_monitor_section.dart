@@ -3,6 +3,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:saturday_app/config/theme.dart';
 import 'package:saturday_app/models/device.dart';
+import 'package:saturday_app/models/heartbeat_chart_data.dart';
+import 'package:saturday_app/models/remote_log_entry.dart';
 import 'package:saturday_app/providers/remote_monitor_provider.dart';
 import 'package:saturday_app/widgets/remote_monitor/remote_command_panel.dart';
 import 'package:saturday_app/widgets/remote_monitor/remote_log_display.dart';
@@ -84,6 +86,9 @@ class _RemoteMonitorSectionState extends ConsumerState<RemoteMonitorSection> {
             // Header
             _buildHeader(context, monitorState),
             const SizedBox(height: 16),
+
+            // Latest reset reason per device (if reported)
+            _buildResetReasonRow(context, monitorState),
 
             // Error message
             if (monitorState.error != null) ...[
@@ -233,6 +238,87 @@ class _RemoteMonitorSectionState extends ConsumerState<RemoteMonitorSection> {
           ),
         ),
       ],
+    );
+  }
+
+  /// Decode the most recent heartbeat per device and surface its reset_reason.
+  /// Only renders devices whose latest heartbeat actually carries the field.
+  Widget _buildResetReasonRow(BuildContext context, RemoteMonitorState state) {
+    final latestByMac = <String, RemoteLogEntry>{};
+    for (final entry in state.logEntries.reversed) {
+      if (entry.type != RemoteLogEntryType.heartbeat) continue;
+      if (latestByMac.containsKey(entry.macAddress)) continue;
+      latestByMac[entry.macAddress] = entry;
+      if (latestByMac.length == state.devices.length) break;
+    }
+
+    final chips = <Widget>[];
+    for (final device in state.devices) {
+      final entry = latestByMac[device.macAddress];
+      final code = entry?.data['reset_reason'];
+      if (code is! int) continue;
+      final reason = ResetReason.fromCode(code);
+      chips.add(_buildResetReasonChip(context, device, reason));
+    }
+
+    if (chips.isEmpty) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: chips,
+      ),
+    );
+  }
+
+  Widget _buildResetReasonChip(
+    BuildContext context,
+    Device device,
+    ResetReason reason,
+  ) {
+    final color = switch (reason.severity) {
+      ResetSeverity.alert => SaturdayColors.error,
+      ResetSeverity.warning => SaturdayColors.warning,
+      ResetSeverity.normal => SaturdayColors.info,
+    };
+
+    final macSuffix = device.macAddress.length >= 5
+        ? device.macAddress.substring(device.macAddress.length - 5)
+        : device.macAddress;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.restart_alt, size: 14, color: color),
+          const SizedBox(width: 6),
+          Text(
+            '…$macSuffix',
+            style: TextStyle(
+              fontFamily: 'monospace',
+              fontSize: 11,
+              color: SaturdayColors.secondaryGrey,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            'Last boot: ${reason.label}',
+            style: TextStyle(
+              color: color,
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
     );
   }
 

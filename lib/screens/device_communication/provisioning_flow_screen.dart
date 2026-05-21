@@ -414,11 +414,11 @@ class _ProvisioningFlowScreenState
         // Search/Select existing unit
         Consumer(
           builder: (context, ref, _) {
-            final unitsAsync = ref.watch(unitsByStatusProvider(UnitStatus.unprovisioned));
+            final unitsAsync = ref.watch(unitsByStatusProvider(UnitStatus.inProduction));
 
             return unitsAsync.when(
               data: (units) {
-                // Units with unprovisioned status are available for provisioning
+                // Units still in production are available for factory provisioning
                 final unprovisionedUnits = units;
 
                 if (unprovisionedUnits.isEmpty) {

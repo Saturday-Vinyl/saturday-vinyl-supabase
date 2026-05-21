@@ -415,22 +415,26 @@ class _UnitListTile extends StatelessWidget {
 
   Color _getStatusColor() {
     switch (unit.status) {
-      case UnitStatus.unprovisioned:
+      case UnitStatus.inProduction:
         return SaturdayColors.info;
-      case UnitStatus.factoryProvisioned:
+      case UnitStatus.inventory:
         return SaturdayColors.success;
-      case UnitStatus.userProvisioned:
+      case UnitStatus.assigned:
+        return SaturdayColors.warning;
+      case UnitStatus.claimed:
         return SaturdayColors.primaryDark;
     }
   }
 
   IconData _getStatusIcon() {
     switch (unit.status) {
-      case UnitStatus.unprovisioned:
-        return Icons.new_releases_outlined;
-      case UnitStatus.factoryProvisioned:
-        return Icons.check_circle_outline;
-      case UnitStatus.userProvisioned:
+      case UnitStatus.inProduction:
+        return Icons.build_circle_outlined;
+      case UnitStatus.inventory:
+        return Icons.inventory_2_outlined;
+      case UnitStatus.assigned:
+        return Icons.assignment_outlined;
+      case UnitStatus.claimed:
         return Icons.person_outline;
     }
   }
@@ -459,12 +463,14 @@ class _UnitListTile extends StatelessWidget {
 
   String _getStatusLabel() {
     switch (unit.status) {
-      case UnitStatus.unprovisioned:
-        return 'NEW';
-      case UnitStatus.factoryProvisioned:
-        return 'FACTORY';
-      case UnitStatus.userProvisioned:
-        return 'USER';
+      case UnitStatus.inProduction:
+        return 'PROD';
+      case UnitStatus.inventory:
+        return 'STOCK';
+      case UnitStatus.assigned:
+        return 'ASSIGNED';
+      case UnitStatus.claimed:
+        return 'CLAIMED';
     }
   }
 
@@ -473,12 +479,14 @@ class _UnitListTile extends StatelessWidget {
       return 'Already has $deviceTypeName provisioned';
     }
     switch (unit.status) {
-      case UnitStatus.unprovisioned:
-        return 'Ready for provisioning';
-      case UnitStatus.factoryProvisioned:
-        return 'Factory provisioned';
-      case UnitStatus.userProvisioned:
-        return 'Owned by consumer';
+      case UnitStatus.inProduction:
+        return 'Ready for factory provisioning';
+      case UnitStatus.inventory:
+        return 'Factory provisioned, in inventory';
+      case UnitStatus.assigned:
+        return 'Assigned to an order';
+      case UnitStatus.claimed:
+        return 'Claimed by consumer';
     }
   }
 }

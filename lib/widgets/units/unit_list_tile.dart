@@ -90,10 +90,13 @@ class UnitListTile extends StatelessWidget {
 
               // Chevron
               const SizedBox(width: 4),
-              Icon(
-                Icons.chevron_right,
-                color: SaturdayColors.secondaryGrey.withValues(alpha: 0.5),
-                size: 20,
+              Tooltip(
+                message: 'Open unit details',
+                child: Icon(
+                  Icons.chevron_right,
+                  color: SaturdayColors.secondaryGrey.withValues(alpha: 0.5),
+                  size: 20,
+                ),
               ),
             ],
           ),
@@ -129,15 +132,19 @@ class UnitListTile extends StatelessWidget {
     String label;
 
     switch (unit.status) {
-      case UnitStatus.unprovisioned:
+      case UnitStatus.inProduction:
         color = SaturdayColors.secondaryGrey;
-        label = 'Unprov';
+        label = 'Production';
         break;
-      case UnitStatus.factoryProvisioned:
+      case UnitStatus.inventory:
         color = SaturdayColors.info;
-        label = 'Factory';
+        label = 'Inventory';
         break;
-      case UnitStatus.userProvisioned:
+      case UnitStatus.assigned:
+        color = SaturdayColors.warning;
+        label = 'Assigned';
+        break;
+      case UnitStatus.claimed:
         color = SaturdayColors.success;
         label = 'Claimed';
         break;
@@ -165,23 +172,26 @@ class UnitListTile extends StatelessWidget {
     final lastSeen = unit.lastSeenAt!;
     final ago = timeago.format(lastSeen, locale: 'en_short');
 
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(
-          Icons.access_time,
-          size: 12,
-          color: SaturdayColors.secondaryGrey.withValues(alpha: 0.7),
-        ),
-        const SizedBox(width: 2),
-        Text(
-          ago,
-          style: TextStyle(
-            fontSize: 11,
+    return Tooltip(
+      message: 'Last heartbeat received ${timeago.format(lastSeen)}',
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.access_time,
+            size: 12,
             color: SaturdayColors.secondaryGrey.withValues(alpha: 0.7),
           ),
-        ),
-      ],
+          const SizedBox(width: 2),
+          Text(
+            ago,
+            style: TextStyle(
+              fontSize: 11,
+              color: SaturdayColors.secondaryGrey.withValues(alpha: 0.7),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -194,6 +204,9 @@ class UnitListTile extends StatelessWidget {
             icon: _getBatteryIcon(unit.batteryLevel!, unit.isCharging),
             value: '${unit.batteryLevel}%',
             color: _getBatteryColor(unit.batteryLevel!),
+            tooltip: unit.isCharging == true
+                ? 'Battery: ${unit.batteryLevel}% (charging)'
+                : 'Battery: ${unit.batteryLevel}%',
           ),
         if (unit.signalStrength != null)
           _TelemetryBadge(
@@ -202,12 +215,16 @@ class UnitListTile extends StatelessWidget {
                 : Icons.settings_input_antenna,
             value: '${unit.signalStrength}',
             color: _getRssiColor(unit.signalStrength!),
+            tooltip: unit.wifiRssi != null
+                ? 'WiFi signal: ${unit.signalStrength} dBm'
+                : 'Thread/BLE signal: ${unit.signalStrength} dBm',
           ),
         if (unit.uptimeSec != null)
           _TelemetryBadge(
             icon: Icons.timer_outlined,
             value: _formatUptime(unit.uptimeSec!),
             color: SaturdayColors.info,
+            tooltip: 'Uptime since last boot: ${_formatUptime(unit.uptimeSec!)}',
           ),
       ],
     );
@@ -249,16 +266,18 @@ class _TelemetryBadge extends StatelessWidget {
   final IconData icon;
   final String value;
   final Color color;
+  final String? tooltip;
 
   const _TelemetryBadge({
     required this.icon,
     required this.value,
     required this.color,
+    this.tooltip,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    final badge = Container(
       margin: const EdgeInsets.only(left: 4),
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
       decoration: BoxDecoration(
@@ -281,5 +300,8 @@ class _TelemetryBadge extends StatelessWidget {
         ],
       ),
     );
+
+    if (tooltip == null) return badge;
+    return Tooltip(message: tooltip!, child: badge);
   }
 }

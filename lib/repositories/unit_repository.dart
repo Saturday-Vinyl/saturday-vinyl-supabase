@@ -90,7 +90,7 @@ class UnitRepository {
         'variant_id': variantId,
         'order_id': orderId,
         'qr_code_url': qrCodeUrl,
-        'status': UnitStatus.unprovisioned.databaseValue,
+        'status': UnitStatus.inProduction.databaseValue,
         'production_started_at': DateTime.now().toIso8601String(),
         'is_completed': false,
         'created_by': userId,
@@ -472,7 +472,7 @@ class UnitRepository {
       final response = await _supabase
           .from('units')
           .update({
-            'status': UnitStatus.factoryProvisioned.databaseValue,
+            'status': UnitStatus.inventory.databaseValue,
             'factory_provisioned_at': DateTime.now().toIso8601String(),
             'factory_provisioned_by': userId,
           })
@@ -507,7 +507,7 @@ class UnitRepository {
       AppLogger.info('Marking unit as user provisioned: $unitId');
 
       final updateData = {
-        'status': UnitStatus.userProvisioned.databaseValue,
+        'status': UnitStatus.claimed.databaseValue,
         'user_id': userId,
         'consumer_provisioned_at': DateTime.now().toIso8601String(),
         if (deviceName != null) 'device_name': deviceName,

@@ -391,9 +391,18 @@ class HeartbeatLineChart extends ConsumerWidget {
               }
             }
 
-            final valueStr = metric == HeartbeatMetric.freeHeap
-                ? '${spot.y.toStringAsFixed(1)} KB'
-                : '${spot.y.toInt()} ${metric?.unit ?? ''}';
+            final String valueStr;
+            switch (metric) {
+              case HeartbeatMetric.freeHeap:
+                valueStr = '${spot.y.toStringAsFixed(1)} KB';
+              case HeartbeatMetric.temperatureCelsius:
+              case HeartbeatMetric.humidityPercent:
+                valueStr = '${spot.y.toStringAsFixed(1)} ${metric!.unit}';
+              case null:
+                valueStr = spot.y.toStringAsFixed(1);
+              default:
+                valueStr = '${spot.y.toInt()} ${metric.unit}';
+            }
 
             return LineTooltipItem(
               '$timeStr\n${metric?.label ?? ''}: $valueStr',

@@ -169,8 +169,8 @@ class UnitManagement {
 
     // Invalidate providers
     ref.invalidate(unitByIdProvider(unitId));
-    ref.invalidate(unitsByStatusProvider(UnitStatus.unprovisioned));
-    ref.invalidate(unitsByStatusProvider(UnitStatus.factoryProvisioned));
+    ref.invalidate(unitsByStatusProvider(UnitStatus.inProduction));
+    ref.invalidate(unitsByStatusProvider(UnitStatus.inventory));
 
     return unit;
   }
@@ -192,8 +192,9 @@ class UnitManagement {
 
     // Invalidate providers
     ref.invalidate(unitByIdProvider(unitId));
-    ref.invalidate(unitsByStatusProvider(UnitStatus.factoryProvisioned));
-    ref.invalidate(unitsByStatusProvider(UnitStatus.userProvisioned));
+    ref.invalidate(unitsByStatusProvider(UnitStatus.inventory));
+    ref.invalidate(unitsByStatusProvider(UnitStatus.assigned));
+    ref.invalidate(unitsByStatusProvider(UnitStatus.claimed));
     ref.invalidate(unitsByUserProvider(userId));
 
     return unit;

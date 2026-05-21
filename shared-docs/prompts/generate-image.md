@@ -13,18 +13,46 @@ For projects with one SoC (e.g., a standalone ESP32-S3 or ESP32-C6):
    idf.py build
    ```
 
-2. **Locate the merged factory binary** at:
+2. **Generate the merged factory binary:**
+   `idf.py build` produces an app-only binary. You need a merged binary (bootloader + partition table + app) for factory flashing. Use `esptool.py merge_bin`:
+   ```bash
+   esptool.py --chip <chip> merge_bin \
+     -o build/<project-name>-merged.bin \
+     --flash_mode dio --flash_size <size> --flash_freq 80m \
+     0x0 build/bootloader/bootloader.bin \
+     0x8000 build/partition_table/partition-table.bin \
+     0xf000 build/ota_data_initial.bin \
+     0x20000 build/<project-name>.bin
    ```
-   build/<project-name>.bin
-   ```
-   This is a merged binary containing bootloader + partition table + application. It is the file to upload to the admin app.
+   Replace `<chip>` (e.g., `esp32s3`), `<size>` (e.g., `8MB`), and `<project-name>` with your project values.
 
 3. **Flash offset:** `0x0` (merged binaries always start at offset zero).
 
-4. **Upload to admin app:**
-   - SoC type: match the chip (e.g., `esp32s3`, `esp32c6`, `esp32h2`)
-   - Is master: `true` (only one SoC)
-   - Flash offset: `0`
+4. **Upload to admin app — TWO binaries per release:**
+
+   The merged binary and the app-only binary serve different purposes and **both** must be uploaded for a release that supports both factory flashing and remote OTA.
+
+   **Factory flash binary** (used by the admin app to flash a fresh device over USB):
+
+   | Field | Value |
+   |-------|-------|
+   | Binary file | `build/<project-name>-merged.bin` |
+   | SoC type | Match the chip (e.g., `esp32s3`, `esp32c6`, `esp32h2`) |
+   | Is master | `true` (only one SoC) |
+   | Flash offset | `0` |
+   | Purpose | Factory |
+
+   **OTA update binary** (URL sent to the device via the `ota_update` realtime command):
+
+   | Field | Value |
+   |-------|-------|
+   | Binary file | `build/<project-name>.bin` (app-only — **not** the merged file) |
+   | SoC type | Match the chip |
+   | Is master | `true` |
+   | Flash offset | `0` |
+   | Purpose | OTA |
+
+   > **Why two binaries:** the OTA partition on the device holds only the app slot — the bootloader does not change between OTA updates. If you upload the merged binary for OTA, `esp_https_ota` will parse the bootloader's header where it expects the app's, and validation fails with a misleading error like `Image requires efuse blk rev >= v292.95, but chip is v1.4`.
 
 ---
 
@@ -63,28 +91,71 @@ cd ../h2-thread-br
 idf.py build
 ```
 
-### Locate the Output Binaries
+### Generate Merged Binaries
 
-- **Master:** `s3-master/build/<project-name>.bin` (e.g., `sv-hub-s3-master.bin`)
-- **Secondary:** `h2-thread-br/build/<project-name>.bin` (e.g., `sv-hub-h2-thread-br.bin`)
+`idf.py build` produces app-only binaries. For factory flashing (and for the secondary SoC staging), you need merged binaries containing bootloader + partition table + app.
 
-Both are merged factory binaries.
+**Master SoC (ESP32-S3 example):**
+```bash
+cd s3-master
+esptool.py --chip esp32s3 merge_bin \
+  -o build/sv-hub-s3-master-merged.bin \
+  --flash_mode dio --flash_size 8MB --flash_freq 80m \
+  0x0 build/bootloader/bootloader.bin \
+  0x8000 build/partition_table/partition-table.bin \
+  0xf000 build/ota_data_initial.bin \
+  0x20000 build/sv-hub-s3-master.bin
+```
+
+**Secondary SoC (ESP32-H2 example):**
+```bash
+cd h2-thread-br
+esptool.py --chip esp32h2 merge_bin \
+  -o build/sv-hub-h2-thread-br-merged.bin \
+  --flash_mode dio --flash_size 4MB --flash_freq 48m \
+  0x0 build/bootloader/bootloader.bin \
+  0x8000 build/partition_table/partition-table.bin \
+  0x10000 build/sv-hub-h2-thread-br.bin
+```
+
+### Output Binaries
+
+After build + merge, each SoC directory contains two binaries:
+
+| File | Contents | Used for |
+|------|----------|----------|
+| `build/<name>.bin` | App only | OTA updates (master SoC only) |
+| `build/<name>-merged.bin` | Bootloader + partition table + app | Factory flashing, secondary SoC staging |
 
 ### Upload to Admin App
 
-**Master SoC binary:**
+**Master SoC needs TWO binary uploads per release** — one for factory flashing, one for OTA. They are not interchangeable.
+
+**Master SoC — factory flash binary:**
 - SoC type: `esp32s3` (or whichever chip the master uses)
 - Is master: `true`
 - Flash offset: `0`
+- Binary: the **merged** binary (`*-merged.bin`) — used by the admin app to flash a fresh device over USB
+- Purpose: Factory
 
-**Secondary SoC binary:**
+**Master SoC — OTA binary:**
+- SoC type: same as factory entry
+- Is master: `true`
+- Flash offset: `0`
+- Binary: the **app-only** binary (`*.bin`, NOT the `*-merged.bin`) — URL sent to the device via the `ota_update` realtime command
+- Purpose: OTA
+
+> **Why two binaries:** the OTA partition on the device holds only the app slot — the bootloader does not change between OTA updates. If you upload the merged binary for OTA, `esp_https_ota` parses the bootloader's header where it expects the app's, and validation fails with a misleading error like `Image requires efuse blk rev >= v292.95, but chip is v1.4`.
+
+**Secondary SoC binary** (one upload — same binary for both factory and OTA):
 - SoC type: `esp32h2` (or whichever chip the secondary uses)
 - Is master: `false`
 - Flash offset: the master's staging partition offset (see below)
+- Binary: the **merged** binary (`*-merged.bin`) — the secondary is always flashed from scratch by the master, including bootloader and partition table. The OTA flow stages the same merged binary into the master's staging partition, then the master flashes it on next boot.
 
 ### Finding the Secondary Flash Offset
 
-The secondary binary is NOT flashed directly to the secondary SoC. Instead, it is written to a **staging partition on the master SoC's flash**. On boot, the master firmware detects the staged binary and flashes it to the secondary SoC over UART.
+The secondary binary is NOT flashed directly to the secondary SoC by the admin app. Instead, it is written to a **staging partition on the master SoC's flash**. On boot, the master firmware detects the staged binary and flashes it to the secondary SoC over UART.
 
 To find the correct offset, look at the **master SoC's** `partitions.csv` for a custom data partition used for co-processor firmware staging:
 
@@ -105,34 +176,154 @@ Record this value as the `flash_offset` when uploading the secondary firmware fi
 The admin app uses esptool to write both binaries in a single flash operation:
 
 ```bash
-esptool.py --chip esp32s3 --port PORT --baud 460800 \
-  write_flash 0x0 s3_merged.bin 0x400000 h2_firmware.bin
+esptool.py --chip esp32s3 --port PORT -b 460800 \
+  --before default_reset --after no_reset \
+  write_flash --force \
+  0x0 s3-master-merged.bin \
+  0x400000 h2-thread-br-merged.bin
 ```
 
+Key flags:
+- `--after no_reset`: prevents reset between writing the two binaries
+- `--force`: required because the H2 staging partition at `0x400000` is outside the S3's normal partition table range
+
 This writes:
-1. The master binary at offset `0x0` (normal location)
-2. The secondary binary at offset `0x400000` (the staging partition on the master's flash)
+1. The master merged binary at offset `0x0` (bootloader + partition table + app)
+2. The secondary merged binary at offset `0x400000` (the staging partition on the master's flash)
 
 On first boot, the master firmware:
-1. Detects a pending co-processor update in the staging partition
+1. Detects valid firmware in the staging partition (magic byte check)
 2. Puts the secondary SoC into bootloader mode via GPIO
-3. Flashes the secondary binary over UART using `esp-serial-flasher`
+3. Flashes the secondary merged binary over UART using `esp-serial-flasher`
 4. Resets the secondary SoC to normal operation
+5. Erases the staging partition header to prevent re-flashing on next boot
+
+Subsequent OTA updates follow the same staging flow: the master downloads the new secondary firmware to the staging partition, then flashes it on the next boot.
 
 ---
 
 ## Summary Table
 
-| SoC Role | Binary Location | Upload as | Flash Offset |
-|----------|----------------|-----------|-------------|
-| Master (or single-SoC) | `<soc-dir>/build/<name>.bin` | `is_master: true` | `0` |
-| Secondary | `<soc-dir>/build/<name>.bin` | `is_master: false` | From master's `partitions.csv` staging partition offset |
+| SoC Role | Binary | Upload as | Flash Offset | Used for |
+|----------|--------|-----------|-------------|----------|
+| Master (or single-SoC) — factory | `*-merged.bin` | `is_master: true`, purpose: factory | `0` | Admin app USB-flashes a fresh device |
+| Master (or single-SoC) — OTA | `*.bin` (app only) | `is_master: true`, purpose: OTA | `0` | Device receives `ota_update` realtime command |
+| Secondary | `*-merged.bin` | `is_master: false` | From master's `partitions.csv` (e.g. `0x400000`) | Factory flash + OTA staging (one binary covers both) |
+
+> A release for a multi-SoC device therefore uploads **three** files: master-merged, master-app-only, and secondary-merged. A single-SoC release uploads **two**: merged and app-only.
+
+---
+
+## Versioning and Releases
+
+Firmware uses a single version number for the entire package (all SoCs ship together as one unit). The admin app uses this version to determine when devices need OTA updates.
+
+### Version Sources
+
+The version must match in all of these files:
+
+| File | Fields | Used by |
+|------|--------|---------|
+| `s3-master/components/app_config/include/app_config.h` | `FW_VERSION_MAJOR/MINOR/PATCH/STRING` | S3 firmware (heartbeats, `get_status`) |
+| `h2-thread-br/main/app_config.h` | `FW_VERSION_MAJOR/MINOR/PATCH/STRING` | H2 boot log |
+| `shared/include/h2_version.h` | `H2_FW_VERSION_MAJOR/MINOR/PATCH/STRING` | S3 querying H2 version over UART |
+| `s3-master/components/provisioning/firmware_schema.json` | `"version"` | Admin app firmware record |
+
+### Before You Start
+
+**Ask the user** whether this build is for:
+
+1. **Local testing** — build and flash only, no version change needed
+2. **Release** — bump the version, tag, build, create GitHub release, upload to admin app
+
+Do not assume a version bump is needed. Many builds are for local iteration and testing. Only follow the release workflow below if the user confirms they want to cut a release.
+
+### Release Workflow
+
+```bash
+# 1. Bump version in all 4 files above
+#    (update MAJOR.MINOR.PATCH and the string)
+
+# 2. Commit the version bump
+git add -A && git commit -m "Release v0.6.0"
+
+# 3. Tag the release
+git tag v0.6.0
+
+# 4. Build both SoCs
+cd s3-master && idf.py build && cd ..
+cd h2-thread-br && idf.py build && cd ..
+
+# 5. Generate merged binaries
+cd s3-master
+esptool.py --chip esp32s3 merge_bin \
+  -o build/sv-hub-s3-master-merged.bin \
+  --flash_mode dio --flash_size 8MB --flash_freq 80m \
+  0x0 build/bootloader/bootloader.bin \
+  0x8000 build/partition_table/partition-table.bin \
+  0xf000 build/ota_data_initial.bin \
+  0x20000 build/sv-hub-s3-master.bin
+cd ..
+
+cd h2-thread-br
+esptool.py --chip esp32h2 merge_bin \
+  -o build/sv-hub-h2-thread-br-merged.bin \
+  --flash_mode dio --flash_size 4MB --flash_freq 48m \
+  0x0 build/bootloader/bootloader.bin \
+  0x8000 build/partition_table/partition-table.bin \
+  0x10000 build/sv-hub-h2-thread-br.bin
+cd ..
+
+# 6. Generate release notes from commits since last tag
+#    Review the commit log between the previous tag and HEAD:
+git log $(git describe --tags --abbrev=0 HEAD~1 2>/dev/null || git rev-list --max-parents=0 HEAD)..HEAD --oneline
+
+#    Write release notes summarizing the changes. Group by category:
+#    - **Features**: new functionality
+#    - **Fixes**: bug fixes
+#    - **Hardware**: PCB workarounds, pin changes, wiring notes
+#    - **Breaking**: anything that changes behavior or requires migration
+#
+#    Keep it concise — one line per change, written for someone who uses
+#    the device, not someone reading the diff.
+
+# 7. Push tag and create GitHub release with binaries and notes
+#    Attach all three binaries: S3 merged (factory), S3 app-only (OTA), H2 merged.
+git push origin v0.6.0
+gh release create v0.6.0 \
+  s3-master/build/sv-hub-s3-master-merged.bin \
+  s3-master/build/sv-hub-s3-master.bin \
+  h2-thread-br/build/sv-hub-h2-thread-br-merged.bin \
+  --title "v0.6.0" \
+  --notes "$(cat <<'EOF'
+## Release Notes
+
+### Features
+- ...
+
+### Fixes
+- ...
+EOF
+)"
+
+# 8. Upload binaries to the Saturday Admin App (THREE files for multi-SoC):
+#    - S3 merged binary: is_master=true,  offset=0,         purpose=Factory
+#    - S3 app-only binary: is_master=true,  offset=0,         purpose=OTA
+#    - H2 merged binary:   is_master=false, offset=0x400000   (covers both factory + OTA)
+```
+
+### Version Bumping Rules
+
+- **PATCH** (0.5.0 → 0.5.1): Bug fixes, pin remapping, config changes
+- **MINOR** (0.5.1 → 0.6.0): New features, protocol changes, new capabilities
+- **MAJOR** (0.6.0 → 1.0.0): Breaking changes, production release
 
 ---
 
 ## Notes
 
-- Always use the **merged binary** (the one at `build/<name>.bin`), not individual partition binaries
-- The merged binary includes bootloader, partition table, and application -- flash offset is always `0x0` for the master
-- For the secondary, the flash offset is relative to the **master SoC's flash address space**, not the secondary's
-- The secondary SoC's own partition layout is irrelevant for the admin app upload -- the master firmware handles the internal flashing
+- The master SoC requires **two uploads per release**: merged binary for factory flashing, app-only binary for OTA. They are not interchangeable — uploading the merged binary as the OTA file causes `esp_https_ota` to misparse the bootloader header as the app header and fail validation with errors like `Image requires efuse blk rev >= v292.95`.
+- For secondary SoC updates (both factory and OTA), always use the merged binary — the master flashes bootloader + partition table + app to the secondary from scratch.
+- The merged binary is NOT generated automatically by `idf.py build` — you must run `esptool.py merge_bin` as a separate step.
+- The secondary flash offset is relative to the **master SoC's flash address space**, not the secondary's.
+- The secondary SoC's own partition layout is irrelevant for the admin app upload — the master firmware handles the internal flashing.

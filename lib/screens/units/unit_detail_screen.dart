@@ -3,8 +3,11 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:saturday_app/config/theme.dart';
 import 'package:saturday_app/models/device.dart';
+import 'package:saturday_app/models/product.dart';
+import 'package:saturday_app/models/product_variant.dart';
 import 'package:saturday_app/models/unit.dart';
 import 'package:saturday_app/providers/device_provider.dart';
+import 'package:saturday_app/providers/product_provider.dart';
 import 'package:saturday_app/providers/remote_monitor_provider.dart';
 import 'package:saturday_app/providers/unit_provider.dart';
 import 'package:saturday_app/widgets/heartbeat_chart/heartbeat_chart_section.dart';
@@ -43,7 +46,7 @@ class UnitDetailScreen extends ConsumerWidget {
                     contentPadding: EdgeInsets.zero,
                   ),
                 ),
-                if (unit.status == UnitStatus.unprovisioned)
+                if (unit.status == UnitStatus.inProduction)
                   const PopupMenuItem(
                     value: 'mark_factory',
                     child: ListTile(
@@ -79,7 +82,7 @@ class UnitDetailScreen extends ConsumerWidget {
               children: [
                 _buildUnitHeader(context, unit),
                 const SizedBox(height: 24),
-                _buildStatusSection(context, unit),
+                _buildProductSection(context, ref, unit),
                 const SizedBox(height: 24),
                 _buildProvisioningSection(context, unit),
                 const SizedBox(height: 24),
@@ -202,19 +205,24 @@ class UnitDetailScreen extends ConsumerWidget {
     IconData icon;
 
     switch (status) {
-      case UnitStatus.unprovisioned:
+      case UnitStatus.inProduction:
         color = SaturdayColors.secondaryGrey;
-        label = 'Unprovisioned';
-        icon = Icons.hourglass_empty;
+        label = 'In Production';
+        icon = Icons.build_circle_outlined;
         break;
-      case UnitStatus.factoryProvisioned:
+      case UnitStatus.inventory:
         color = SaturdayColors.info;
-        label = 'Factory Provisioned';
-        icon = Icons.factory;
+        label = 'Inventory';
+        icon = Icons.inventory_2_outlined;
         break;
-      case UnitStatus.userProvisioned:
+      case UnitStatus.assigned:
+        color = SaturdayColors.warning;
+        label = 'Assigned';
+        icon = Icons.assignment_outlined;
+        break;
+      case UnitStatus.claimed:
         color = SaturdayColors.success;
-        label = 'User Provisioned';
+        label = 'Claimed';
         icon = Icons.check_circle;
         break;
     }
@@ -227,7 +235,14 @@ class UnitDetailScreen extends ConsumerWidget {
     );
   }
 
-  Widget _buildStatusSection(BuildContext context, Unit unit) {
+  Widget _buildProductSection(BuildContext context, WidgetRef ref, Unit unit) {
+    final productAsync = unit.productId != null
+        ? ref.watch(productProvider(unit.productId!))
+        : const AsyncValue<Product?>.data(null);
+    final variantAsync = unit.variantId != null
+        ? ref.watch(variantProvider(unit.variantId!))
+        : const AsyncValue<ProductVariant?>.data(null);
+
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -235,100 +250,72 @@ class UnitDetailScreen extends ConsumerWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Timeline',
+              'Product',
               style: Theme.of(context).textTheme.titleMedium?.copyWith(
                     fontWeight: FontWeight.bold,
                   ),
             ),
             const SizedBox(height: 16),
-            _buildTimelineItem(
-              context,
-              'Created',
-              unit.createdAt,
-              Icons.add_circle_outline,
-              isFirst: true,
-            ),
-            if (unit.productionStartedAt != null)
-              _buildTimelineItem(
-                context,
-                'Production Started',
-                unit.productionStartedAt!,
-                Icons.play_circle_outline,
-              ),
-            if (unit.factoryProvisionedAt != null)
-              _buildTimelineItem(
-                context,
-                'Factory Provisioned',
-                unit.factoryProvisionedAt!,
-                Icons.factory,
-              ),
-            if (unit.consumerProvisionedAt != null)
-              _buildTimelineItem(
-                context,
-                'User Provisioned',
-                unit.consumerProvisionedAt!,
-                Icons.person,
-              ),
-            if (unit.productionCompletedAt != null)
-              _buildTimelineItem(
-                context,
-                'Production Completed',
-                unit.productionCompletedAt!,
-                Icons.check_circle,
-                isLast: true,
-              ),
+            _buildProductContent(context, unit, productAsync, variantAsync),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildTimelineItem(
+  Widget _buildProductContent(
     BuildContext context,
-    String label,
-    DateTime date,
-    IconData icon, {
-    bool isFirst = false,
-    bool isLast = false,
-  }) {
-    return Row(
+    Unit unit,
+    AsyncValue<Product?> productAsync,
+    AsyncValue<ProductVariant?> variantAsync,
+  ) {
+    if (unit.productId == null && unit.variantId == null) {
+      return Text(
+        'No product assigned',
+        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: SaturdayColors.secondaryGrey,
+              fontStyle: FontStyle.italic,
+            ),
+      );
+    }
+
+    if (productAsync.isLoading || variantAsync.isLoading) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 8),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    if (productAsync.hasError || variantAsync.hasError) {
+      return Text(
+        'Error loading product: ${productAsync.error ?? variantAsync.error}',
+        style: TextStyle(color: SaturdayColors.error),
+      );
+    }
+
+    final product = productAsync.value;
+    final variant = variantAsync.value;
+
+    return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Column(
-          children: [
-            if (!isFirst)
-              Container(
-                width: 2,
-                height: 12,
-                color: SaturdayColors.secondaryGrey.withValues(alpha: 0.3),
-              ),
-            Icon(icon, size: 20, color: SaturdayColors.info),
-            if (!isLast)
-              Container(
-                width: 2,
-                height: 12,
-                color: SaturdayColors.secondaryGrey.withValues(alpha: 0.3),
-              ),
-          ],
-        ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 4),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(label),
-                Text(
-                  _formatDateTime(date),
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: SaturdayColors.secondaryGrey,
-                      ),
-                ),
-              ],
-            ),
-          ),
-        ),
+        if (product != null) ...[
+          _buildInfoRow(context, 'Product', product.name),
+          _buildInfoRow(context, 'Product Code', product.productCode),
+        ] else if (unit.productId != null)
+          _buildInfoRow(context, 'Product ID', unit.productId!),
+        if (variant != null) ...[
+          _buildInfoRow(context, 'Variant', variant.getFormattedVariantName()),
+          _buildInfoRow(context, 'SKU', variant.sku),
+          if (variant.option1Name != null && variant.option1Value != null)
+            _buildInfoRow(context, variant.option1Name!, variant.option1Value!),
+          if (variant.option2Name != null && variant.option2Value != null)
+            _buildInfoRow(context, variant.option2Name!, variant.option2Value!),
+          if (variant.option3Name != null && variant.option3Value != null)
+            _buildInfoRow(context, variant.option3Name!, variant.option3Value!),
+          _buildInfoRow(context, 'Price', '\$${variant.price.toStringAsFixed(2)}'),
+        ] else if (unit.variantId != null)
+          _buildInfoRow(context, 'Variant ID', unit.variantId!),
       ],
     );
   }

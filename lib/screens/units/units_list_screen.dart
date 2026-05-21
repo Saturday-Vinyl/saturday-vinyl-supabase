@@ -331,12 +331,14 @@ class _UnitsListScreenState extends ConsumerState<UnitsListScreen> {
 
   String _getStatusLabel(UnitStatus status) {
     switch (status) {
-      case UnitStatus.unprovisioned:
-        return 'Unprovisioned';
-      case UnitStatus.factoryProvisioned:
-        return 'Factory Ready';
-      case UnitStatus.userProvisioned:
-        return 'User Claimed';
+      case UnitStatus.inProduction:
+        return 'In Production';
+      case UnitStatus.inventory:
+        return 'Inventory';
+      case UnitStatus.assigned:
+        return 'Assigned';
+      case UnitStatus.claimed:
+        return 'Claimed';
     }
   }
 

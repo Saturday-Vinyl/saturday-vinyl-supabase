@@ -12,6 +12,9 @@ const metricColors = {
   HeartbeatMetric.freeHeap: Color(0xFF6AC5F4), // blue
   HeartbeatMetric.wifiRssi: Color(0xFFF5A623), // orange
   HeartbeatMetric.threadRssi: Color(0xFFAB6FE8), // purple
+  HeartbeatMetric.temperatureCelsius: Color(0xFFE74C3C), // red
+  HeartbeatMetric.humidityPercent: Color(0xFF1ABC9C), // teal
+  HeartbeatMetric.threadNeighborCount: Color(0xFFD4A017), // amber/gold
 };
 
 /// Telemetry chart section for unit detail screen

@@ -444,7 +444,7 @@ class DeviceCommunicationNotifier
             factoryProvisionedAt: DateTime.now(),
             factoryProvisionedBy: currentUser?.id,
             provisionData: provisionData,
-            status: 'factory_provisioned',
+            status: 'provisioned',
           );
           _addLog('[INFO] Device record created/updated in database');
           _addLog('[INFO] Provision data stored: ${provisionData.keys.join(', ')}');

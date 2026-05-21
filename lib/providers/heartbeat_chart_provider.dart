@@ -36,6 +36,9 @@ class HeartbeatChartState extends Equatable {
       HeartbeatMetric.freeHeap,
       HeartbeatMetric.wifiRssi,
       HeartbeatMetric.threadRssi,
+      HeartbeatMetric.temperatureCelsius,
+      HeartbeatMetric.humidityPercent,
+      HeartbeatMetric.threadNeighborCount,
     },
     this.dataPoints = const {},
     this.segments = const {},
@@ -419,6 +422,15 @@ class HeartbeatChartNotifier extends StateNotifier<HeartbeatChartState> {
       if (point.freeHeap != null) available.add(HeartbeatMetric.freeHeap);
       if (point.wifiRssi != null) available.add(HeartbeatMetric.wifiRssi);
       if (point.threadRssi != null) available.add(HeartbeatMetric.threadRssi);
+      if (point.temperatureCelsius != null) {
+        available.add(HeartbeatMetric.temperatureCelsius);
+      }
+      if (point.humidityPercent != null) {
+        available.add(HeartbeatMetric.humidityPercent);
+      }
+      if (point.threadNeighborCount != null) {
+        available.add(HeartbeatMetric.threadNeighborCount);
+      }
       if (available.length == HeartbeatMetric.values.length) break;
     }
     return available;
