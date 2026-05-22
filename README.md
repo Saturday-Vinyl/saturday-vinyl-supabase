@@ -1,118 +1,121 @@
-# Saturday Vinyl Shared Documentation
+# Saturday Vinyl Supabase
 
-Central repository for Saturday Vinyl technical documentation shared across all projects.
+Centralized Supabase migrations and edge functions for all Saturday Vinyl projects.
 
-## Contents
+## Overview
 
-### Concepts
-- **[Data Model](concepts/data_model.md)** - Core entity relationships (Units, Devices, Products, Device Types, Capabilities, Firmware)
+This repository is the **single source of truth** for the Saturday Vinyl database schema and edge functions. It is distributed to consuming projects via git subtree at `shared-supabase/`.
 
-### Protocols
-- **[BLE Provisioning Protocol](protocols/ble_provisioning_protocol.md)** - BLE GATT interface for mobile app device provisioning
-- **[CoAP Mesh Protocol](protocols/coap_mesh_protocol.md)** - CoAP communication over Thread mesh (Hub ↔ Node)
-- **[Device Command Protocol](protocols/device_command_protocol.md)** - Unified command interface for device communication
-- **[Playback Event Protocol](protocols/playback_event_protocol.md)** - Canonical playback state and event model across all Saturday devices
-- **[Service Mode Protocol](protocols/service_mode_protocol.md)** - USB serial interface for factory provisioning and diagnostics
+### Consuming Projects
 
-### Schemas
-- **[Capability Schema](schemas/capability_schema.md)** - Capability definition and attribute schema specification
+| Project | Prefix | Description |
+|---------|--------|-------------|
+| `saturday-admin-app` | `admin` | Factory/technician desktop app (Flutter) |
+| `saturday-mobile-app` | `mobile` | Consumer mobile app (Flutter) |
+| `sv-hub-firmware` | `firmware` | ESP32 device firmware |
+| `saturday-apple-tv` | `tv` | Apple TV dashboard app (SwiftUI/tvOS) |
 
-### Templates
-- **[Claude Command Templates](templates/claude-commands/)** - Slash command wrappers for Claude Code integration
+## Quick Start
 
-## Usage
-
-### Adding to a New Project
-
-**Step 1:** Clone this repo locally (one-time, anywhere on your machine):
-```bash
-git clone https://github.com/Saturday-Vinyl/saturday-vinyl-shared-docs.git ~/saturday-vinyl-shared-docs
-chmod +x ~/saturday-vinyl-shared-docs/scripts/setup-shared-docs.sh
-```
-
-**Step 2:** Run the setup script from your project root:
-```bash
-# From your project directory (e.g., ~/projects/my-saturday-app)
-~/saturday-vinyl-shared-docs/scripts/setup-shared-docs.sh
-```
-
-**Alternative: Manual setup**
-```bash
-git remote add shared-docs https://github.com/Saturday-Vinyl/saturday-vinyl-shared-docs.git
-git subtree add --prefix=shared-docs shared-docs main --squash
-mkdir -p ./.claude/commands
-cp ./shared-docs/templates/claude-commands/*.md ./.claude/commands/
-```
-
-### Pulling Updates
-
-When the central docs are updated, pull changes into your project:
+### First-time setup (add to a new project)
 
 ```bash
-git subtree pull --prefix=shared-docs shared-docs main --squash -m "Merge shared-docs updates"
+# From your project root:
+~/saturday-vinyl-supabase/scripts/setup-supabase-subtree.sh
 ```
 
-### Contributing Changes
-
-Edit docs locally in the `./shared-docs/` directory, commit as usual, then push upstream:
+Or manually:
 
 ```bash
-# 1. Edit the doc
-vim ./shared-docs/protocols/ble_provisioning_protocol.md
-
-# 2. Commit locally
-git add ./shared-docs/
-git commit -m "Update BLE protocol: add new characteristic"
-
-# 3. Push to central repo
-git subtree push --prefix=shared-docs shared-docs main
+git remote add shared-supabase https://github.com/Saturday-Vinyl/saturday-vinyl-supabase.git
+git subtree add --prefix=shared-supabase shared-supabase main --squash
 ```
 
-## Claude Code Integration
+### Pull latest changes
 
-After setup, these slash commands are available:
-
-| Command | Description |
-|---------|-------------|
-| `/ble-provisioning` | Load BLE Provisioning Protocol into context |
-| `/service-mode` | Load Service Mode Protocol into context |
-
-You can also reference docs directly in prompts:
+```bash
+git subtree pull --prefix=shared-supabase shared-supabase main --squash -m "Merge shared-supabase updates"
 ```
-Read @./shared-docs/protocols/ble_provisioning_protocol.md and implement the Status characteristic handler.
+
+### Push changes back to central repo
+
+```bash
+git subtree push --prefix=shared-supabase shared-supabase main
+```
+
+## Supabase CLI Usage
+
+All Supabase CLI commands use `--workdir shared-supabase` when run from a consuming project:
+
+```bash
+# List migration status
+supabase migration list --workdir shared-supabase
+
+# Dry-run pending migrations
+supabase db push --workdir shared-supabase --dry-run
+
+# Check for schema drift
+supabase db diff --workdir shared-supabase
+
+# Deploy an edge function
+supabase functions deploy <function-name> --workdir shared-supabase
+
+# Dump current remote schema
+supabase db dump --workdir shared-supabase
+```
+
+When working directly in this repo (not via subtree), omit `--workdir`:
+
+```bash
+supabase migration list
+supabase db push --dry-run
+```
+
+## Creating a New Migration
+
+1. Create the migration file:
+   ```bash
+   supabase migration new {project}_description --workdir shared-supabase
+   ```
+
+2. Edit the generated SQL file. Follow the conventions in `CLAUDE.md`.
+
+3. Validate against the remote database:
+   ```bash
+   supabase db push --workdir shared-supabase --dry-run
+   ```
+
+4. Commit, then push to the central repo:
+   ```bash
+   git subtree push --prefix=shared-supabase shared-supabase main
+   ```
+
+## Schema Documentation
+
+- **`schema/SCHEMA.md`** - Human-readable schema reference (auto-generated)
+- **`schema/schema_dump.sql`** - Raw pg_dump of the current schema
+
+Regenerate after applying migrations:
+
+```bash
+./scripts/generate-schema-docs.sh
 ```
 
 ## Directory Structure
 
 ```
-saturday-vinyl-shared-docs/
-├── README.md                    # This file
-├── concepts/                    # Architectural concepts
-│   └── data_model.md            # Core entity relationships
-├── protocols/                   # Protocol specifications
-│   ├── ble_provisioning_protocol.md
-│   ├── coap_mesh_protocol.md
-│   ├── device_command_protocol.md
-│   ├── led_status_protocol.md
-│   ├── playback_event_protocol.md
-│   └── service_mode_protocol.md
-├── schemas/                     # Schema specifications
-│   └── capability_schema.md
-├── templates/
-│   └── claude-commands/         # Claude Code command templates
-│       ├── ble-provisioning.md
-│       └── service-mode.md
-└── scripts/
-    └── setup-shared-docs.sh     # Project setup script
+├── CLAUDE.md                          # Migration guidelines for AI agents
+├── README.md                          # This file
+├── supabase/
+│   ├── config.toml                    # Supabase project configuration
+│   ├── migrations/                    # ALL migrations from ALL projects
+│   └── functions/                     # ALL edge functions
+├── schema/
+│   ├── SCHEMA.md                      # Generated schema documentation
+│   └── schema_dump.sql                # Generated schema dump
+├── scripts/
+│   ├── setup-supabase-subtree.sh      # First-time setup for consuming projects
+│   └── generate-schema-docs.sh        # Schema doc generation
+└── templates/
+    └── claude-commands/               # Claude Code slash command templates
 ```
-
-## Projects Using This
-
-- **sv-hub-firmware** - Saturday Vinyl Hub (ESP32-S3 + ESP32-H2)
-- **saturday-mobile-app** - Consumer mobile app (Flutter)
-- **saturday-admin-app** - Factory/technician desktop app (Flutter)
-- (Future firmware projects)
-
----
-
-*This repository is proprietary to Saturday Vinyl. Do not distribute externally.*
