@@ -15,6 +15,9 @@ import 'package:saturday_app/screens/device_types/device_type_list_screen.dart';
 import 'package:saturday_app/screens/files/files_screen.dart';
 import 'package:saturday_app/screens/products/product_list_screen.dart';
 import 'package:saturday_app/screens/production/production_units_screen.dart';
+import 'package:saturday_app/screens/push_observability/push_activity_log_screen.dart';
+import 'package:saturday_app/screens/push_observability/push_dashboard_screen.dart';
+import 'package:saturday_app/screens/push_observability/push_devices_screen.dart';
 import 'package:saturday_app/screens/production/qr_scan_screen.dart';
 import 'package:saturday_app/screens/production/unit_detail_screen.dart';
 import 'package:saturday_app/screens/units/units_list_screen.dart';
@@ -214,6 +217,12 @@ class _MainScaffoldState extends ConsumerState<MainScaffold> {
         return const RollListScreen();
       case '/parts-inventory':
         return const PartsInventoryShell();
+      case '/push-dashboard':
+        return const PushDashboardScreen();
+      case '/push-devices':
+        return const PushDevicesScreen();
+      case '/push-activity':
+        return const PushActivityLogScreen();
       case '/settings':
         return const SettingsScreen();
       default:

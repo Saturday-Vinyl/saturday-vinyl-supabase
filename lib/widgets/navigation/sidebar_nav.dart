@@ -140,6 +140,27 @@ class SidebarNav extends ConsumerWidget {
                       isSelected: currentRoute == '/users',
                       isAdminOnly: true,
                     ),
+                    _buildNavItem(
+                      icon: Icons.notifications_active,
+                      label: 'Push Dashboard',
+                      route: '/push-dashboard',
+                      isSelected: currentRoute == '/push-dashboard',
+                      isAdminOnly: true,
+                    ),
+                    _buildNavItem(
+                      icon: Icons.phone_iphone,
+                      label: 'Push Devices',
+                      route: '/push-devices',
+                      isSelected: currentRoute == '/push-devices',
+                      isAdminOnly: true,
+                    ),
+                    _buildNavItem(
+                      icon: Icons.history,
+                      label: 'Push Activity',
+                      route: '/push-activity',
+                      isSelected: currentRoute == '/push-activity',
+                      isAdminOnly: true,
+                    ),
                   ],
                   const Divider(
                     color: SaturdayColors.secondaryGrey,

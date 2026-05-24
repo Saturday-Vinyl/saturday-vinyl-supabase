@@ -264,6 +264,41 @@ class RealtimeService {
     return channel;
   }
 
+  /// Subscribe to notification_delivery_log inserts.
+  ///
+  /// Used by the admin push observability dashboard for the live activity tail.
+  /// Admin RLS on the table gates which rows reach the client.
+  RealtimeChannel subscribeToDeliveryLog({
+    required void Function(PostgresChangePayload payload) onInsert,
+  }) {
+    AppLogger.info('Subscribing to notification_delivery_log realtime channel');
+
+    final channel = _client.channel('notification-delivery-log-realtime');
+
+    channel.onPostgresChanges(
+      event: PostgresChangeEvent.insert,
+      schema: 'public',
+      table: 'notification_delivery_log',
+      callback: (payload) {
+        final record = payload.newRecord;
+        AppLogger.debug(
+            'Realtime: delivery_log INSERT - type=${record['notification_type']}, status=${record['status']}');
+        onInsert(payload);
+      },
+    );
+
+    channel.subscribe((status, error) {
+      if (error != null) {
+        AppLogger.error(
+            'delivery_log realtime channel error', error, StackTrace.current);
+      } else {
+        AppLogger.info('delivery_log realtime channel status: $status');
+      }
+    });
+
+    return channel;
+  }
+
   /// Unsubscribe from a channel and remove it
   Future<void> unsubscribe(RealtimeChannel channel) async {
     try {
