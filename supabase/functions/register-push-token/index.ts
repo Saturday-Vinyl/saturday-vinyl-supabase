@@ -138,20 +138,38 @@ async function handleRegisterToken(
 
   console.log(`Registering token for user ${userId}, device ${device_identifier}, platform ${platform}`)
 
-  // Upsert the token - this handles both new registrations and token refreshes
-  // The unique constraint on (user_id, device_identifier) ensures one token per device
+  // Look up the existing row so we can tell whether the app is presenting
+  // a genuinely new FCM string, or re-registering the same string the server
+  // may already have flagged as dead.
+  const { data: existing } = await supabase
+    .from('push_notification_tokens')
+    .select('id, token, is_active')
+    .eq('user_id', userId)
+    .eq('device_identifier', device_identifier)
+    .maybeSingle() as { data: { id: string; token: string; is_active: boolean } | null }
+
+  const isFreshToken = !existing || existing.token !== token
+
+  // Build upsert payload. Only flip is_active back to true when the token
+  // string genuinely changed — re-registering the same dead string should
+  // NOT silently un-deactivate, otherwise we get a flap loop where every
+  // push attempt re-deactivates the same token forever.
+  const upsertData: Record<string, unknown> = {
+    user_id: userId,
+    token,
+    platform,
+    device_identifier,
+    app_version: app_version || null,
+    updated_at: new Date().toISOString(),
+    last_used_at: new Date().toISOString(),
+  }
+  if (isFreshToken) {
+    upsertData.is_active = true
+  }
+
   const { data, error } = await supabase
     .from('push_notification_tokens')
-    .upsert({
-      user_id: userId,
-      token,
-      platform,
-      device_identifier,
-      app_version: app_version || null,
-      is_active: true,
-      updated_at: new Date().toISOString(),
-      last_used_at: new Date().toISOString(),
-    }, {
+    .upsert(upsertData, {
       onConflict: 'user_id,device_identifier',
     })
     .select('id')
@@ -165,19 +183,48 @@ async function handleRegisterToken(
     )
   }
 
-  // If the token changed (refresh), mark the old token as inactive
-  // This happens automatically via upsert, but we should also deactivate
-  // any other tokens with the same FCM token (in case of device sharing)
+  // Cross-device dedup: if the same FCM string somehow shows up on another
+  // device row, deactivate it. Unchanged from original behavior.
   await supabase
     .from('push_notification_tokens')
     .update({ is_active: false })
     .eq('token', token)
     .neq('id', data.id)
 
-  console.log(`Token registered successfully: ${data.id}`)
+  // If the just-registered token is the same string the server has already
+  // marked inactive, tell the client to rotate it. The client should call
+  // FirebaseMessaging.deleteToken() + getToken() and re-register, breaking
+  // the cycle.
+  const shouldRefresh = !isFreshToken && existing !== null && existing.is_active === false
+  let refreshReason: string | null = null
+  if (shouldRefresh && existing) {
+    const { data: lastFailure } = await supabase
+      .from('notification_delivery_log')
+      .select('error_message')
+      .eq('token_id', existing.id)
+      .eq('status', 'failed')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle() as { data: { error_message: string | null } | null }
+
+    const msg = (lastFailure?.error_message ?? '').toLowerCase()
+    if (msg.includes('badenvironmentkeyintoken')) refreshReason = 'apns_env_mismatch'
+    else if (msg.includes('unregistered')) refreshReason = 'token_unregistered'
+    else if (msg.includes('invalidregistration')) refreshReason = 'token_invalid'
+    else refreshReason = 'deactivated'
+  }
+
+  console.log(
+    `Token registered: ${data.id}, fresh=${isFreshToken}, should_refresh=${shouldRefresh}`,
+  )
 
   return new Response(
-    JSON.stringify({ success: true, token_id: data.id }),
+    JSON.stringify({
+      success: true,
+      token_id: data.id,
+      should_refresh: shouldRefresh,
+      refresh_reason: refreshReason,
+    }),
     { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
   )
 }
