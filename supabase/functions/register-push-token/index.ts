@@ -27,6 +27,12 @@ interface RegisterTokenRequest {
   app_version?: string
 }
 
+interface RegisterActivityTokenRequest {
+  action: 'register_activity_token'
+  push_token: string
+  session_id: string
+}
+
 interface UpdatePresenceRequest {
   device_identifier: string
 }
@@ -117,9 +123,19 @@ serve(async (req) => {
 async function handleRegisterToken(
   supabase: ReturnType<typeof createClient>,
   userId: string,
-  body: RegisterTokenRequest
+  body: RegisterTokenRequest | RegisterActivityTokenRequest
 ): Promise<Response> {
-  const { token, platform, device_identifier, app_version } = body
+  // Dispatch ActivityKit push tokens to a separate handler — different table,
+  // different lifecycle, different keying. The body shape is the discriminator.
+  if ((body as RegisterActivityTokenRequest).action === 'register_activity_token') {
+    return await handleRegisterActivityToken(
+      supabase,
+      userId,
+      body as RegisterActivityTokenRequest,
+    )
+  }
+
+  const { token, platform, device_identifier, app_version } = body as RegisterTokenRequest
 
   // Validate required fields
   if (!token || !platform || !device_identifier) {
@@ -226,6 +242,90 @@ async function handleRegisterToken(
       refresh_reason: refreshReason,
     }),
     { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+  )
+}
+
+/**
+ * Register an ActivityKit push token tied to a specific Live Activity instance.
+ *
+ * ActivityKit tokens differ from FCM tokens in three important ways:
+ *   - One token per Live Activity instance, not per device.
+ *   - Tokens are minted by iOS at Activity start and become invalid when the
+ *     Activity ends. We never "rotate" them; we deactivate and replace.
+ *   - Delivery bypasses Firebase entirely (direct APNs in update-track-progression).
+ *
+ * Verifies the session belongs to the calling user before persisting, so an
+ * attacker with another user's session_id can't attach a token to it.
+ */
+async function handleRegisterActivityToken(
+  supabase: ReturnType<typeof createClient>,
+  userId: string,
+  body: RegisterActivityTokenRequest,
+): Promise<Response> {
+  const { push_token, session_id } = body
+
+  if (!push_token || !session_id) {
+    return new Response(
+      JSON.stringify({ error: 'Missing required fields: push_token, session_id' }),
+      { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+    )
+  }
+
+  // Defensive: confirm the session is the caller's. Activity tokens stay
+  // bound to a single session — pointing one at someone else's session would
+  // both leak Live Activity state and pollute analytics.
+  const { data: session, error: sessionErr } = await supabase
+    .from('playback_sessions')
+    .select('id, user_id')
+    .eq('id', session_id)
+    .maybeSingle() as { data: { id: string; user_id: string } | null; error: unknown }
+
+  if (sessionErr) {
+    console.error('Error looking up session for activity token:', sessionErr)
+    return new Response(
+      JSON.stringify({ error: 'Failed to validate session' }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+    )
+  }
+
+  if (!session || session.user_id !== userId) {
+    return new Response(
+      JSON.stringify({ error: 'Session not found or not owned by caller' }),
+      { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+    )
+  }
+
+  // Upsert on (user_id, push_token). If iOS hands us a token we've seen before
+  // for this user, refresh the session linkage and last-updated; otherwise
+  // insert. The unique constraint is enforced at the DB level.
+  const { data, error } = await supabase
+    .from('activity_push_tokens')
+    .upsert(
+      {
+        user_id: userId,
+        session_id,
+        push_token,
+        is_active: true,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'user_id,push_token' },
+    )
+    .select('id')
+    .single()
+
+  if (error) {
+    console.error('Error upserting activity push token:', error)
+    return new Response(
+      JSON.stringify({ error: 'Failed to register activity push token' }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+    )
+  }
+
+  console.log(`Activity push token registered: id=${data.id}, session=${session_id}`)
+
+  return new Response(
+    JSON.stringify({ success: true, id: data.id }),
+    { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
   )
 }
 
