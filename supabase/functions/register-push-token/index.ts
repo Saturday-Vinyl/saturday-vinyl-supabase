@@ -321,6 +321,26 @@ async function handleRegisterActivityToken(
     )
   }
 
+  // Deactivate older activity tokens for this user whose sessions have
+  // since stopped or been cancelled. ActivityKit tokens become invalid
+  // once their activity ends, so leaving these as is_active=true is
+  // misleading even though nothing actively pushes to them (the cron
+  // only iterates over playing sessions).
+  const { data: terminatedSessions } = await supabase
+    .from('playback_sessions')
+    .select('id')
+    .eq('user_id', userId)
+    .in('status', ['stopped', 'cancelled']) as { data: { id: string }[] | null }
+
+  if (terminatedSessions && terminatedSessions.length > 0) {
+    await supabase
+      .from('activity_push_tokens')
+      .update({ is_active: false, updated_at: new Date().toISOString() })
+      .eq('user_id', userId)
+      .eq('is_active', true)
+      .in('session_id', terminatedSessions.map((s) => s.id))
+  }
+
   console.log(`Activity push token registered: id=${data.id}, session=${session_id}`)
 
   return new Response(
