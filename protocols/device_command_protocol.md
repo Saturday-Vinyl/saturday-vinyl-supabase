@@ -1,7 +1,7 @@
 # Saturday Device Command Protocol
 
-**Version:** 1.4.1
-**Last Updated:** 2026-05-13
+**Version:** 1.4.2
+**Last Updated:** 2026-05-20
 **Audience:** Saturday Admin App developers, Firmware engineers, Consumer App developers
 
 ---
@@ -606,6 +606,7 @@ All telemetry fields are at the top level (not nested):
   "free_heap": 245760,
   "min_free_heap": 180224,
   "largest_free_block": 114688,
+  "reset_reason": 1,
   "wifi_rssi": -55,
   "rfid_tag_count": 3,
   "temperature_c": 22.5
@@ -626,8 +627,31 @@ All devices must include these fields in every heartbeat, regardless of capabili
 | `free_heap` | integer | Current free heap memory in bytes | `esp_get_free_heap_size()` |
 | `min_free_heap` | integer | Minimum free heap since boot (detects memory leaks) | `esp_get_minimum_free_heap_size()` |
 | `largest_free_block` | integer | Largest contiguous free block in bytes (detects fragmentation) | `heap_caps_get_largest_free_block(MALLOC_CAP_8BIT)` |
+| `reset_reason` | integer | Cause of the most recent boot (see [Reset Reason Codes](#reset-reason-codes)) | `esp_reset_reason()` |
 
 Additional capability-specific fields are added based on device capabilities. Field names should be descriptive and avoid conflicts with standard fields.
+
+### Reset Reason Codes
+
+The `reset_reason` field is an integer captured at boot via ESP-IDF's `esp_reset_reason()` and reported on every heartbeat. The value reflects the cause of the **most recent** boot — it does not change at runtime. Non-ESP firmware must map its native reset reason to this enum.
+
+| Code | Name | ESP-IDF Constant | Severity | Description |
+|------|------|------------------|----------|-------------|
+| 0 | Unknown | `ESP_RST_UNKNOWN` | warning | Reset reason could not be determined |
+| 1 | Power On | `ESP_RST_POWERON` | normal | Power-on event (cold boot) |
+| 2 | External | `ESP_RST_EXT` | warning | Reset via external pin (not applicable on ESP32) |
+| 3 | Software | `ESP_RST_SW` | normal | Software-triggered reset via `esp_restart()` |
+| 4 | Panic | `ESP_RST_PANIC` | alert | Exception or panic — firmware crashed |
+| 5 | Interrupt WDT | `ESP_RST_INT_WDT` | alert | Interrupt watchdog timeout |
+| 6 | Task WDT | `ESP_RST_TASK_WDT` | alert | Task watchdog timeout |
+| 7 | WDT | `ESP_RST_WDT` | alert | Other watchdog reset |
+| 8 | Deep Sleep | `ESP_RST_DEEPSLEEP` | normal | Wake from deep sleep |
+| 9 | Brownout | `ESP_RST_BROWNOUT` | alert | Brownout reset — supply voltage dropped below threshold |
+| 10 | SDIO | `ESP_RST_SDIO` | warning | Reset over SDIO |
+
+**Severity** is a convention used by Saturday admin tools to color-code reset events. Codes 4–7 and 9 indicate firmware or hardware faults that should be investigated; codes 1, 3, and 8 are expected operational boots.
+
+**Implementation:** Call `esp_reset_reason()` once during startup, cache the result, and include it as a top-level integer in every heartbeat payload.
 
 ### Known Device-Specific Heartbeat Fields
 
@@ -1803,6 +1827,7 @@ Key components:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.4.2 | 2026-05-20 | Added `reset_reason` as a required standard heartbeat field; documented the integer code mapping (matches ESP-IDF `esp_reset_reason_t`, codes 0–10) and severity conventions used by Saturday tooling |
 | 1.4.1 | 2026-05-13 | **Multi-Hub command relay.** Added [Mesh Relay Routing](#mesh-relay-routing-crate-and-other-hub-relayed-devices) under Supabase Realtime: relay-required commands are now fanned out by the cloud trigger to every Hub on the owning user account; each Hub relays only if it has the target Crate cached, and silently drops otherwise. Relay-eligible commands must be idempotent. Firmware: cache-miss for `target_mac` no longer falls through to local execution. |
 | 1.4.0 | 2026-05-11 | **Cloud-canonical Thread credentials.** Removed `thread_*` input fields and `thread_credentials` output from `factory_provision`. Added [Device Adoption Lifecycle](#device-adoption-lifecycle) section covering the new cloud edge functions (`adopt_device`, `get_thread_credentials`, `refresh_device_session`, `unadopt_device`), the new S3↔H2 UART commands `CMD_SET_CREDENTIALS` and `CMD_CLEAR_CREDENTIALS`, the new `THREAD_STATE_UNPROVISIONED` state, and the boot-reconciliation + consumer-reset behavior. See [BLE Provisioning Protocol](ble_provisioning_protocol.md) v1.4.0 for the corresponding BLE-side changes. |
 | 1.3.1 | 2026-03-09 | Added Heartbeat POST Format section documenting the two supported POST formats (telemetry-wrapped and flat) and the BEFORE INSERT trigger that normalizes both; listed typed columns available for extraction |
