@@ -140,7 +140,12 @@ class PushTokenService {
   }
 
   /// Register the FCM token with the backend.
-  Future<void> _registerToken(String token) async {
+  ///
+  /// [fromForceRefresh] guards the auto-rotation path: if the server reports
+  /// `should_refresh` on a token we *just* minted via [forceRefresh], we accept
+  /// it as final rather than loop. This protects against the edge case where
+  /// FCM hands back the same dead string after a deleteToken() call.
+  Future<void> _registerToken(String token, {bool fromForceRefresh = false}) async {
     _currentToken = token;
 
     final supabase = Supabase.instance.client;
@@ -163,10 +168,27 @@ class PushTokenService {
         },
       );
 
-      if (response.status == 200) {
-        debugPrint('[PushTokenService] Token registered successfully');
-      } else {
+      if (response.status != 200) {
         debugPrint('[PushTokenService] Failed to register token: ${response.data}');
+        return;
+      }
+
+      debugPrint('[PushTokenService] Token registered successfully');
+
+      // Server signals via `should_refresh` when the token we just sent is
+      // already known-dead (deactivated by a prior push failure). Rotate
+      // immediately so the same dead string isn't kept in service.
+      final data = response.data;
+      final shouldRefresh = data is Map && data['should_refresh'] == true;
+      if (shouldRefresh && !fromForceRefresh) {
+        final reason = data['refresh_reason'] ?? 'unknown';
+        debugPrint('[PushTokenService] Server requested refresh (reason=$reason)');
+        await forceRefresh();
+      } else if (shouldRefresh && fromForceRefresh) {
+        debugPrint(
+          '[PushTokenService] Server still reports refresh needed after rotation. '
+          'FCM may be returning a cached token; reinstall may be required.',
+        );
       }
     } catch (e) {
       debugPrint('[PushTokenService] Error registering token: $e');
@@ -177,6 +199,27 @@ class PushTokenService {
   Future<void> _handleTokenRefresh(String newToken) async {
     if (_currentToken != newToken) {
       await _registerToken(newToken);
+    }
+  }
+
+  /// Force the FCM token to rotate and re-register with the backend.
+  ///
+  /// Use when the server believes the current token is dead (e.g. an FCM
+  /// `UNREGISTERED` response) but the app still holds it cached. Deletes
+  /// the token at the Firebase end, requests a fresh one, and pushes the
+  /// new value to `register-push-token`. Returns the new token, or null
+  /// if the rotation failed.
+  Future<String?> forceRefresh() async {
+    try {
+      await _messaging.deleteToken();
+      final fresh = await _messaging.getToken();
+      if (fresh != null) {
+        await _registerToken(fresh, fromForceRefresh: true);
+      }
+      return fresh;
+    } catch (e) {
+      debugPrint('[PushTokenService] forceRefresh failed: $e');
+      return null;
     }
   }
 

@@ -59,6 +59,15 @@ class LiveActivityNotifier extends StateNotifier<bool> {
     NowPlayingState? previous,
     NowPlayingState next,
   ) {
+    // Cloud session_id became known after activity already started.
+    // Attach it to the service so the buffered ActivityKit token can
+    // register. Independent of the other transition checks below.
+    if (next.isPlaying &&
+        next.cloudSessionId != null &&
+        previous?.cloudSessionId != next.cloudSessionId) {
+      LiveActivityService.instance.attachSessionId(next.cloudSessionId!);
+    }
+
     // Started playing
     if (next.isPlaying && (previous == null || !previous.isPlaying)) {
       _startActivity(next);

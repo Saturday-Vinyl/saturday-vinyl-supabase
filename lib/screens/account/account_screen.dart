@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:saturday_consumer_app/config/routes.dart';
@@ -10,6 +11,7 @@ import 'package:saturday_consumer_app/providers/auth_provider.dart';
 import 'package:saturday_consumer_app/providers/device_provider.dart';
 import 'package:saturday_consumer_app/providers/intro_splash_provider.dart';
 import 'package:saturday_consumer_app/providers/library_provider.dart';
+import 'package:saturday_consumer_app/services/push_token_service.dart';
 import 'package:saturday_consumer_app/widgets/common/saturday_app_bar.dart';
 import 'package:saturday_consumer_app/widgets/devices/devices.dart';
 
@@ -162,6 +164,20 @@ class AccountScreen extends ConsumerWidget {
                 },
               ),
             ],
+
+            // Admin section — visible in release builds for @saturdayvinyl.com users
+            if (_isAdmin(user)) ...[
+              Spacing.sectionGap,
+              _buildSectionHeader(context, 'Admin'),
+              Spacing.itemGap,
+              _buildSettingsTile(
+                context,
+                icon: Icons.vpn_key,
+                title: 'Push Token',
+                subtitle: 'View and copy the current FCM token',
+                onTap: () => _showPushTokenDialog(context),
+              ),
+            ],
           ],
         ),
       ),
@@ -294,6 +310,18 @@ class AccountScreen extends ConsumerWidget {
     );
   }
 
+  bool _isAdmin(dynamic user) {
+    final email = user?.email as String?;
+    return email != null && email.endsWith('@saturdayvinyl.com');
+  }
+
+  Future<void> _showPushTokenDialog(BuildContext context) async {
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => const _PushTokenDialog(),
+    );
+  }
+
   Widget _buildDevicesSection(BuildContext context, WidgetRef ref) {
     final devicesAsync = ref.watch(userDevicesProvider);
 
@@ -414,6 +442,99 @@ class AccountScreen extends ConsumerWidget {
         subtitle: 'Tap to retry',
         onTap: () => ref.invalidate(userLibrariesProvider),
       ),
+    );
+  }
+}
+
+class _PushTokenDialog extends StatefulWidget {
+  const _PushTokenDialog();
+
+  @override
+  State<_PushTokenDialog> createState() => _PushTokenDialogState();
+}
+
+class _PushTokenDialogState extends State<_PushTokenDialog> {
+  bool _refreshing = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final token = PushTokenService.instance.currentToken;
+    return AlertDialog(
+      title: const Text('Push Token'),
+      content: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (token == null)
+              const Text('No token registered yet.')
+            else
+              SelectableText(
+                token,
+                style: const TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 12,
+                ),
+              ),
+            const SizedBox(height: 12),
+            Text(
+              'Compare against push_notification_tokens.token in Supabase. '
+              'If they differ, tap Refresh to rotate.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: token == null
+              ? null
+              : () async {
+                  await Clipboard.setData(ClipboardData(text: token));
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context)
+                      ..clearSnackBars()
+                      ..showSnackBar(
+                        const SnackBar(content: Text('Token copied')),
+                      );
+                  }
+                },
+          child: const Text('Copy'),
+        ),
+        TextButton(
+          onPressed: _refreshing
+              ? null
+              : () async {
+                  setState(() => _refreshing = true);
+                  final fresh =
+                      await PushTokenService.instance.forceRefresh();
+                  if (!context.mounted) return;
+                  setState(() => _refreshing = false);
+                  ScaffoldMessenger.of(context)
+                    ..clearSnackBars()
+                    ..showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          fresh != null
+                              ? 'Token refreshed'
+                              : 'Refresh failed — check logs',
+                        ),
+                      ),
+                    );
+                },
+          child: _refreshing
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Refresh'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Close'),
+        ),
+      ],
     );
   }
 }

@@ -43,6 +43,12 @@ class LiveActivityService {
   /// The current session ID associated with the Live Activity.
   String? _currentSessionId;
 
+  /// Holds the most recent ActivityKit push token if it arrives before
+  /// [_currentSessionId] is known. Registered as soon as both the token
+  /// and the session id are available, and cleared after registration so
+  /// we don't double-register the same value.
+  String? _pendingActivityToken;
+
   /// Callback for registering push tokens with the server.
   ActivityPushTokenCallback? _onPushTokenReceived;
 
@@ -101,22 +107,14 @@ class LiveActivityService {
     update.mapOrNull(
       active: (activeState) {
         _hasActiveActivity = true;
-        // Register push token when activity becomes active
-        final token = activeState.activityToken;
-        if (token != null &&
-            _currentSessionId != null &&
-            _onPushTokenReceived != null) {
-          if (kDebugMode) {
-            print(
-                'LiveActivityService: Got activity push token: ${token.substring(0, 20)}...');
-          }
-          _onPushTokenReceived!(token, _currentSessionId!);
-        }
+        _pendingActivityToken = activeState.activityToken;
+        _tryRegisterPendingToken();
       },
       ended: (endedState) {
         if (endedState.activityId == _flipTimerActivityId) {
           _hasActiveActivity = false;
           _currentSessionId = null;
+          _pendingActivityToken = null;
         }
       },
       stale: (staleState) {
@@ -134,6 +132,20 @@ class LiveActivityService {
   /// Set the callback for when an ActivityKit push token is received.
   void setOnPushTokenReceived(ActivityPushTokenCallback? callback) {
     _onPushTokenReceived = callback;
+    // If the token + session arrived before the provider wired up the
+    // callback, register now.
+    _tryRegisterPendingToken();
+  }
+
+  /// Attach a cloud session id to the currently-running activity. Called when
+  /// the cloud session is confirmed *after* the activity has already started
+  /// — common for the local-first startup path where the Live Activity is
+  /// created before Supabase round-trips the session_queued event back.
+  void attachSessionId(String sessionId) {
+    if (!_hasActiveActivity) return;
+    if (_currentSessionId == sessionId) return;
+    _currentSessionId = sessionId;
+    _tryRegisterPendingToken();
   }
 
   Future<void> startFlipTimerActivity({
@@ -203,7 +215,14 @@ class LiveActivityService {
         print('LiveActivityService: Started flip timer activity, id: $activityId');
       }
 
-      // Try to get the push token for server-side updates
+      // If iOS already delivered the activity token while sessionId was
+      // unknown (common race when starting playback before the cloud
+      // session is confirmed), register it now.
+      _tryRegisterPendingToken();
+
+      // Also try the explicit pull — covers the case where the activity
+      // is started AFTER sessionId is known and the update stream hasn't
+      // fired yet.
       if (activityId != null && sessionId != null) {
         _retrieveAndRegisterPushToken(activityId, sessionId);
       }
@@ -315,6 +334,25 @@ class LiveActivityService {
         print('LiveActivityService: Failed to end all activities: $e');
       }
     }
+  }
+
+  /// Register the buffered ActivityKit token with the server, if both the
+  /// token and the session id are known. iOS often delivers the token via
+  /// the update stream a few hundred ms after the activity is created —
+  /// sometimes before the cloud session_id is back from Supabase, sometimes
+  /// after. Either order resolves here.
+  void _tryRegisterPendingToken() {
+    final token = _pendingActivityToken;
+    final sessionId = _currentSessionId;
+    final callback = _onPushTokenReceived;
+    if (token == null || sessionId == null || callback == null) return;
+
+    if (kDebugMode) {
+      print(
+          'LiveActivityService: Registering activity push token: ${token.substring(0, 20)}... session=$sessionId');
+    }
+    callback(token, sessionId);
+    _pendingActivityToken = null;
   }
 
   /// Attempt to get the ActivityKit push token and register it.

@@ -14,6 +14,8 @@
 
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { sendFcmPush } from '../_shared/send-fcm-push.ts'
+import { buildNowPlayingPushArgs } from '../_shared/now-playing-push.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -365,12 +367,17 @@ async function sendPushNotifications(
     // Always send push notifications - the app handles foreground notifications gracefully
     // (Firebase delivers to onMessage handler without showing system notification when app is open)
 
-    // Send push to all tokens for this user
+    // Send push to all tokens for this user via the shared FCM primitive.
     for (const token of tokens) {
-      try {
-        await sendFirebasePush(token, albumInfo, device.name)
+      const result = await sendFcmPush(
+        buildNowPlayingPushArgs({
+          tokenString: token.token,
+          albumInfo,
+          deviceName: device.name,
+        }),
+      )
 
-        // Log success
+      if (result.success) {
         await supabase.from('notification_delivery_log').insert({
           user_id: userId,
           notification_type: 'now_playing',
@@ -379,24 +386,23 @@ async function sendPushNotifications(
           status: 'sent',
           sent_at: new Date().toISOString(),
         })
-
         results.push({ user_id: userId, success: true })
-      } catch (error) {
-        console.error('Push failed for token:', token.id, error)
+      } else {
+        console.error(
+          `Push failed for token ${token.id} (${result.errorCategory}):`,
+          result.error,
+        )
 
-        // Log failure
         await supabase.from('notification_delivery_log').insert({
           user_id: userId,
           notification_type: 'now_playing',
           source_id: event.id,
           token_id: token.id,
           status: 'failed',
-          error_message: (error as Error).message,
+          error_message: result.error,
         })
 
-        // Mark token as inactive if it's invalid
-        const errorMsg = (error as Error).message.toLowerCase()
-        if (errorMsg.includes('invalid') || errorMsg.includes('unregistered')) {
+        if (result.tokenShouldDeactivate) {
           await supabase
             .from('push_notification_tokens')
             .update({ is_active: false })
@@ -460,158 +466,4 @@ async function fulfillPendingAssociation(
     // Don't let pending association failures block normal now-playing processing
     console.error('Pending association check failed:', error)
   }
-}
-
-async function sendFirebasePush(
-  token: PushToken,
-  albumInfo: AlbumInfo | null,
-  deviceName: string
-): Promise<void> {
-  const projectId = Deno.env.get('FIREBASE_PROJECT_ID')
-  const rawPrivateKey = Deno.env.get('FIREBASE_PRIVATE_KEY')
-  const privateKey = rawPrivateKey?.replace(/\\n/g, '\n')
-  const clientEmail = Deno.env.get('FIREBASE_CLIENT_EMAIL')
-
-  if (!projectId || !privateKey || !clientEmail) {
-    console.log('Firebase not configured, skipping push')
-    return
-  }
-
-  // Build notification content
-  const title = albumInfo?.title
-    ? `Now Playing: ${albumInfo.title}`
-    : 'Record Detected'
-
-  const body = albumInfo?.artist
-    ? `${albumInfo.artist} on ${deviceName}`
-    : `A record was placed on ${deviceName}`
-
-  // Get OAuth2 access token for Firebase
-  const accessToken = await getFirebaseAccessToken(privateKey, clientEmail)
-
-  // Send via Firebase Cloud Messaging v1 API
-  const fcmUrl = `https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`
-
-  const response = await fetch(
-    fcmUrl,
-    {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        message: {
-          token: token.token,
-          notification: {
-            title,
-            body,
-          },
-          data: {
-            type: 'now_playing',
-            library_album_id: albumInfo?.library_album_id || '',
-            click_action: 'FLUTTER_NOTIFICATION_CLICK',
-          },
-          android: {
-            priority: 'high',
-            notification: {
-              channel_id: 'now_playing',
-              sound: 'default',
-            },
-          },
-          apns: {
-            payload: {
-              aps: {
-                sound: 'default',
-                badge: 1,
-              },
-            },
-          },
-        },
-      }),
-    }
-  )
-
-  if (!response.ok) {
-    const errorBody = await response.text()
-    throw new Error(`Firebase push failed: ${response.status} - ${errorBody}`)
-  }
-}
-
-async function getFirebaseAccessToken(
-  privateKey: string,
-  clientEmail: string
-): Promise<string> {
-  // Create JWT for service account authentication
-  const now = Math.floor(Date.now() / 1000)
-  const header = { alg: 'RS256', typ: 'JWT' }
-  const payload = {
-    iss: clientEmail,
-    sub: clientEmail,
-    aud: 'https://oauth2.googleapis.com/token',
-    iat: now,
-    exp: now + 3600,
-    scope: 'https://www.googleapis.com/auth/firebase.messaging',
-  }
-
-  // Encode header and payload
-  const encodedHeader = btoa(JSON.stringify(header))
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '')
-  const encodedPayload = btoa(JSON.stringify(payload))
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '')
-
-  // Sign with private key
-  const signatureInput = `${encodedHeader}.${encodedPayload}`
-  const encoder = new TextEncoder()
-  const data = encoder.encode(signatureInput)
-
-  // Import private key and sign
-  const key = await crypto.subtle.importKey(
-    'pkcs8',
-    pemToArrayBuffer(privateKey),
-    { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
-    false,
-    ['sign']
-  )
-
-  const signature = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', key, data)
-  const encodedSignature = btoa(String.fromCharCode(...new Uint8Array(signature)))
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '')
-
-  const jwt = `${signatureInput}.${encodedSignature}`
-
-  // Exchange JWT for access token
-  const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=${jwt}`,
-  })
-
-  if (!tokenResponse.ok) {
-    const errorText = await tokenResponse.text()
-    throw new Error(`Failed to get Firebase access token: ${tokenResponse.status} - ${errorText}`)
-  }
-
-  const tokenData = await tokenResponse.json()
-  return tokenData.access_token
-}
-
-function pemToArrayBuffer(pem: string): ArrayBuffer {
-  const base64 = pem
-    .replace('-----BEGIN PRIVATE KEY-----', '')
-    .replace('-----END PRIVATE KEY-----', '')
-    .replace(/\s/g, '')
-
-  const binary = atob(base64)
-  const bytes = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i)
-  }
-  return bytes.buffer
 }

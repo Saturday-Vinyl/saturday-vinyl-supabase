@@ -17,6 +17,9 @@ Central repository for Saturday Vinyl technical documentation shared across all 
 ### Schemas
 - **[Capability Schema](schemas/capability_schema.md)** - Capability definition and attribute schema specification
 
+### Playbooks
+- **[Push Notification Firefighting](playbooks/push_notification_firefighting.md)** - Diagnosing FCM delivery failures, APNs Auth Key creation, service account rotation
+
 ### Templates
 - **[Claude Command Templates](templates/claude-commands/)** - Slash command wrappers for Claude Code integration
 
