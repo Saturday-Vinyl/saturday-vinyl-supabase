@@ -39,6 +39,11 @@ supabase/.temp/
 /build/
 /coverage/
 
+# macOS release artifacts (distribute via GitHub Releases, not git)
+/*.dmg
+/*.zip
+/rw.*.dmg
+
 # Symbolication related
 app.*.symbols
 

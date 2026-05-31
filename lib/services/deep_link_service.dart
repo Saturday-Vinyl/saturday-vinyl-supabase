@@ -1,11 +1,13 @@
 import 'dart:async';
 
 import 'package:app_links/app_links.dart';
+import 'package:saturday_app/services/supabase_service.dart';
 import 'package:saturday_app/utils/app_logger.dart';
 
 /// Handles incoming deep links for the saturday:// URI scheme.
 ///
 /// Routes:
+///   saturday://login-callback?…     — Supabase auth callback (forwarded to Supabase)
 ///   saturday://part/{partNumber}    — navigate to part detail
 ///   saturday://oauth/digikey?code=… — DigiKey OAuth callback
 class DeepLinkService {
@@ -55,7 +57,18 @@ class DeepLinkService {
   }
 
   void _handleUri(Uri uri) {
-    // Check if this is an OAuth callback
+    // Supabase auth callback — hand off to Supabase to resolve the session.
+    if (uri.host == 'login-callback') {
+      AppLogger.info('DeepLinkService: forwarding auth callback to Supabase');
+      SupabaseService.instance.client.auth.getSessionFromUrl(uri).then(
+        (_) => AppLogger.info('DeepLinkService: Supabase session resolved'),
+        onError: (e, st) =>
+            AppLogger.error('DeepLinkService: Supabase session error', e, st),
+      );
+      return;
+    }
+
+    // DigiKey OAuth callback
     if (uri.host == 'oauth' && _oauthCompleter != null && !_oauthCompleter!.isCompleted) {
       AppLogger.info('DeepLinkService: completing OAuth callback');
       _oauthCompleter!.complete(uri);

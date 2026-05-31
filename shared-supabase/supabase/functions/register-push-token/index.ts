@@ -27,6 +27,12 @@ interface RegisterTokenRequest {
   app_version?: string
 }
 
+interface RegisterActivityTokenRequest {
+  action: 'register_activity_token'
+  push_token: string
+  session_id: string
+}
+
 interface UpdatePresenceRequest {
   device_identifier: string
 }
@@ -117,9 +123,19 @@ serve(async (req) => {
 async function handleRegisterToken(
   supabase: ReturnType<typeof createClient>,
   userId: string,
-  body: RegisterTokenRequest
+  body: RegisterTokenRequest | RegisterActivityTokenRequest
 ): Promise<Response> {
-  const { token, platform, device_identifier, app_version } = body
+  // Dispatch ActivityKit push tokens to a separate handler — different table,
+  // different lifecycle, different keying. The body shape is the discriminator.
+  if ((body as RegisterActivityTokenRequest).action === 'register_activity_token') {
+    return await handleRegisterActivityToken(
+      supabase,
+      userId,
+      body as RegisterActivityTokenRequest,
+    )
+  }
+
+  const { token, platform, device_identifier, app_version } = body as RegisterTokenRequest
 
   // Validate required fields
   if (!token || !platform || !device_identifier) {
@@ -138,20 +154,38 @@ async function handleRegisterToken(
 
   console.log(`Registering token for user ${userId}, device ${device_identifier}, platform ${platform}`)
 
-  // Upsert the token - this handles both new registrations and token refreshes
-  // The unique constraint on (user_id, device_identifier) ensures one token per device
+  // Look up the existing row so we can tell whether the app is presenting
+  // a genuinely new FCM string, or re-registering the same string the server
+  // may already have flagged as dead.
+  const { data: existing } = await supabase
+    .from('push_notification_tokens')
+    .select('id, token, is_active')
+    .eq('user_id', userId)
+    .eq('device_identifier', device_identifier)
+    .maybeSingle() as { data: { id: string; token: string; is_active: boolean } | null }
+
+  const isFreshToken = !existing || existing.token !== token
+
+  // Build upsert payload. Only flip is_active back to true when the token
+  // string genuinely changed — re-registering the same dead string should
+  // NOT silently un-deactivate, otherwise we get a flap loop where every
+  // push attempt re-deactivates the same token forever.
+  const upsertData: Record<string, unknown> = {
+    user_id: userId,
+    token,
+    platform,
+    device_identifier,
+    app_version: app_version || null,
+    updated_at: new Date().toISOString(),
+    last_used_at: new Date().toISOString(),
+  }
+  if (isFreshToken) {
+    upsertData.is_active = true
+  }
+
   const { data, error } = await supabase
     .from('push_notification_tokens')
-    .upsert({
-      user_id: userId,
-      token,
-      platform,
-      device_identifier,
-      app_version: app_version || null,
-      is_active: true,
-      updated_at: new Date().toISOString(),
-      last_used_at: new Date().toISOString(),
-    }, {
+    .upsert(upsertData, {
       onConflict: 'user_id,device_identifier',
     })
     .select('id')
@@ -165,20 +199,153 @@ async function handleRegisterToken(
     )
   }
 
-  // If the token changed (refresh), mark the old token as inactive
-  // This happens automatically via upsert, but we should also deactivate
-  // any other tokens with the same FCM token (in case of device sharing)
+  // Cross-device dedup: if the same FCM string somehow shows up on another
+  // device row, deactivate it. Unchanged from original behavior.
   await supabase
     .from('push_notification_tokens')
     .update({ is_active: false })
     .eq('token', token)
     .neq('id', data.id)
 
-  console.log(`Token registered successfully: ${data.id}`)
+  // If the just-registered token is the same string the server has already
+  // marked inactive, tell the client to rotate it. The client should call
+  // FirebaseMessaging.deleteToken() + getToken() and re-register, breaking
+  // the cycle.
+  const shouldRefresh = !isFreshToken && existing !== null && existing.is_active === false
+  let refreshReason: string | null = null
+  if (shouldRefresh && existing) {
+    const { data: lastFailure } = await supabase
+      .from('notification_delivery_log')
+      .select('error_message')
+      .eq('token_id', existing.id)
+      .eq('status', 'failed')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle() as { data: { error_message: string | null } | null }
+
+    const msg = (lastFailure?.error_message ?? '').toLowerCase()
+    if (msg.includes('badenvironmentkeyintoken')) refreshReason = 'apns_env_mismatch'
+    else if (msg.includes('unregistered')) refreshReason = 'token_unregistered'
+    else if (msg.includes('invalidregistration')) refreshReason = 'token_invalid'
+    else refreshReason = 'deactivated'
+  }
+
+  console.log(
+    `Token registered: ${data.id}, fresh=${isFreshToken}, should_refresh=${shouldRefresh}`,
+  )
 
   return new Response(
-    JSON.stringify({ success: true, token_id: data.id }),
+    JSON.stringify({
+      success: true,
+      token_id: data.id,
+      should_refresh: shouldRefresh,
+      refresh_reason: refreshReason,
+    }),
     { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+  )
+}
+
+/**
+ * Register an ActivityKit push token tied to a specific Live Activity instance.
+ *
+ * ActivityKit tokens differ from FCM tokens in three important ways:
+ *   - One token per Live Activity instance, not per device.
+ *   - Tokens are minted by iOS at Activity start and become invalid when the
+ *     Activity ends. We never "rotate" them; we deactivate and replace.
+ *   - Delivery bypasses Firebase entirely (direct APNs in update-track-progression).
+ *
+ * Verifies the session belongs to the calling user before persisting, so an
+ * attacker with another user's session_id can't attach a token to it.
+ */
+async function handleRegisterActivityToken(
+  supabase: ReturnType<typeof createClient>,
+  userId: string,
+  body: RegisterActivityTokenRequest,
+): Promise<Response> {
+  const { push_token, session_id } = body
+
+  if (!push_token || !session_id) {
+    return new Response(
+      JSON.stringify({ error: 'Missing required fields: push_token, session_id' }),
+      { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+    )
+  }
+
+  // Defensive: confirm the session is the caller's. Activity tokens stay
+  // bound to a single session — pointing one at someone else's session would
+  // both leak Live Activity state and pollute analytics.
+  const { data: session, error: sessionErr } = await supabase
+    .from('playback_sessions')
+    .select('id, user_id')
+    .eq('id', session_id)
+    .maybeSingle() as { data: { id: string; user_id: string } | null; error: unknown }
+
+  if (sessionErr) {
+    console.error('Error looking up session for activity token:', sessionErr)
+    return new Response(
+      JSON.stringify({ error: 'Failed to validate session' }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+    )
+  }
+
+  if (!session || session.user_id !== userId) {
+    return new Response(
+      JSON.stringify({ error: 'Session not found or not owned by caller' }),
+      { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+    )
+  }
+
+  // Upsert on (user_id, push_token). If iOS hands us a token we've seen before
+  // for this user, refresh the session linkage and last-updated; otherwise
+  // insert. The unique constraint is enforced at the DB level.
+  const { data, error } = await supabase
+    .from('activity_push_tokens')
+    .upsert(
+      {
+        user_id: userId,
+        session_id,
+        push_token,
+        is_active: true,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'user_id,push_token' },
+    )
+    .select('id')
+    .single()
+
+  if (error) {
+    console.error('Error upserting activity push token:', error)
+    return new Response(
+      JSON.stringify({ error: 'Failed to register activity push token' }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+    )
+  }
+
+  // Deactivate older activity tokens for this user whose sessions have
+  // since stopped or been cancelled. ActivityKit tokens become invalid
+  // once their activity ends, so leaving these as is_active=true is
+  // misleading even though nothing actively pushes to them (the cron
+  // only iterates over playing sessions).
+  const { data: terminatedSessions } = await supabase
+    .from('playback_sessions')
+    .select('id')
+    .eq('user_id', userId)
+    .in('status', ['stopped', 'cancelled']) as { data: { id: string }[] | null }
+
+  if (terminatedSessions && terminatedSessions.length > 0) {
+    await supabase
+      .from('activity_push_tokens')
+      .update({ is_active: false, updated_at: new Date().toISOString() })
+      .eq('user_id', userId)
+      .eq('is_active', true)
+      .in('session_id', terminatedSessions.map((s) => s.id))
+  }
+
+  console.log(`Activity push token registered: id=${data.id}, session=${session_id}`)
+
+  return new Response(
+    JSON.stringify({ success: true, id: data.id }),
+    { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
   )
 }
 

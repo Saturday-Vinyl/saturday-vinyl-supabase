@@ -1,96 +1,62 @@
-import 'package:google_sign_in/google_sign_in.dart';
 import 'package:saturday_app/config/constants.dart';
-import 'package:saturday_app/config/env_config.dart';
 import 'package:saturday_app/services/supabase_service.dart';
 import 'package:saturday_app/utils/app_logger.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' as supabase;
 
-/// Authentication service for Google OAuth
+/// Authentication service for Google OAuth via Supabase.
+///
+/// Uses Supabase's `signInWithOAuth` which opens the user's default browser,
+/// handles the Google handshake server-side, and redirects back to
+/// `saturday://login-callback`. The deep link is routed to Supabase via
+/// `DeepLinkService`, which resolves the session.
 class AuthService {
-  AuthService._(); // Private constructor for singleton
+  AuthService._();
 
   static AuthService? _instance;
-  static GoogleSignIn? _googleSignIn;
+  static AuthService get instance => _instance ??= AuthService._();
 
-  /// Get the singleton instance
-  static AuthService get instance {
-    _instance ??= AuthService._();
-    return _instance!;
-  }
-
-  /// Initialize Google Sign In
-  static void initialize() {
-    _googleSignIn = GoogleSignIn(
-      clientId: EnvConfig.googleClientId,
-      scopes: [
-        'email',
-        'profile',
-      ],
-    );
-    AppLogger.info('Google Sign In initialized');
-  }
-
-  /// Get GoogleSignIn instance
-  GoogleSignIn get _googleSignInInstance {
-    if (_googleSignIn == null) {
-      throw Exception(
-        'Google Sign In has not been initialized. Call AuthService.initialize() first.',
-      );
-    }
-    return _googleSignIn!;
-  }
-
-  /// Sign in with Google
-  /// Returns the authenticated Supabase user
-  /// Throws exception if sign in fails or user domain is not allowed
+  /// Sign in with Google via Supabase OAuth.
+  ///
+  /// Opens the browser for the OAuth handshake, then awaits the session that
+  /// arrives via the `saturday://login-callback` deep link. Enforces the
+  /// `@saturdayvinyl.com` email domain — signs the user out and throws if the
+  /// returned account doesn't qualify.
   Future<supabase.User> signInWithGoogle() async {
+    final client = SupabaseService.instance.client;
+
     try {
-      AppLogger.info('Starting Google Sign In...');
+      AppLogger.info('Starting Google Sign In via Supabase OAuth...');
 
-      // Sign in with Google
-      final googleUser = await _googleSignInInstance.signIn();
+      // Begin watching for the next signed-in state BEFORE launching the
+      // browser, so we don't miss the event if the redirect is very fast.
+      final sessionFuture = client.auth.onAuthStateChange
+          .where((state) =>
+              state.event == supabase.AuthChangeEvent.signedIn &&
+              state.session != null)
+          .map((state) => state.session!)
+          .first
+          .timeout(const Duration(minutes: 5));
 
-      if (googleUser == null) {
-        throw Exception('Google Sign In was cancelled by user');
-      }
+      await client.auth.signInWithOAuth(
+        supabase.OAuthProvider.google,
+        redirectTo: 'saturday://login-callback',
+        authScreenLaunchMode: supabase.LaunchMode.externalApplication,
+      );
 
-      AppLogger.info('Google Sign In successful for: ${googleUser.email}');
+      final session = await sessionFuture;
+      final user = session.user;
+      final email = user.email ?? '';
 
-      // Validate email domain
-      if (!googleUser.email.endsWith(AppConstants.allowedEmailDomain)) {
-        await _googleSignInInstance.signOut();
+      if (!email.endsWith(AppConstants.allowedEmailDomain)) {
+        AppLogger.warning('Rejecting non-${AppConstants.allowedEmailDomain} account: $email');
+        await client.auth.signOut();
         throw Exception(
           'Only ${AppConstants.allowedEmailDomain} accounts are allowed. '
           'Please sign in with your company email.',
         );
       }
 
-      AppLogger.info('Email domain validated: ${googleUser.email}');
-
-      // Get Google authentication tokens
-      final googleAuth = await googleUser.authentication;
-      final idToken = googleAuth.idToken;
-      final accessToken = googleAuth.accessToken;
-
-      if (idToken == null || accessToken == null) {
-        throw Exception('Failed to get Google authentication tokens');
-      }
-
-      // Sign in to Supabase with Google credentials
-      final supabaseClient = SupabaseService.instance.client;
-      final response = await supabaseClient.auth.signInWithIdToken(
-        provider: supabase.OAuthProvider.google,
-        idToken: idToken,
-        accessToken: accessToken,
-      );
-
-      final user = response.user;
-      if (user == null) {
-        throw Exception('Failed to authenticate with Supabase');
-      }
-
       AppLogger.info('Supabase authentication successful for user: ${user.id}');
-
       return user;
     } catch (error, stackTrace) {
       AppLogger.error('Google Sign In failed', error, stackTrace);
@@ -98,17 +64,10 @@ class AuthService {
     }
   }
 
-  /// Sign out current user
   Future<void> signOut() async {
     try {
       AppLogger.info('Signing out user...');
-
-      // Sign out from Google
-      await _googleSignInInstance.signOut();
-
-      // Sign out from Supabase
       await SupabaseService.instance.signOut();
-
       AppLogger.info('User signed out successfully');
     } catch (error, stackTrace) {
       AppLogger.error('Sign out failed', error, stackTrace);
@@ -116,63 +75,42 @@ class AuthService {
     }
   }
 
-  /// Get current authenticated user from Supabase
-  supabase.User? getCurrentUser() {
-    return SupabaseService.instance.currentUser;
-  }
+  supabase.User? getCurrentUser() => SupabaseService.instance.currentUser;
 
-  /// Get auth state changes stream
-  Stream<supabase.AuthState> get authStateChanges {
-    return SupabaseService.instance.authStateChanges;
-  }
+  Stream<supabase.AuthState> get authStateChanges =>
+      SupabaseService.instance.authStateChanges;
 
-  /// Check if user is currently signed in
-  bool get isSignedIn {
-    return getCurrentUser() != null;
-  }
+  bool get isSignedIn => getCurrentUser() != null;
 
-  /// Check if the session is valid and not expired
   bool isSessionValid() {
     final session = SupabaseService.instance.client.auth.currentSession;
     if (session == null) return false;
-
-    // Check if session is expired
     final expiresAt = DateTime.fromMillisecondsSinceEpoch(
       session.expiresAt! * 1000,
     );
     return DateTime.now().isBefore(expiresAt);
   }
 
-  /// Get session expiry time
   DateTime? getSessionExpiry() {
     final session = SupabaseService.instance.client.auth.currentSession;
     if (session == null || session.expiresAt == null) return null;
-
-    return DateTime.fromMillisecondsSinceEpoch(
-      session.expiresAt! * 1000,
-    );
+    return DateTime.fromMillisecondsSinceEpoch(session.expiresAt! * 1000);
   }
 
-  /// Get time until session expires
   Duration? getTimeUntilExpiry() {
     final expiry = getSessionExpiry();
     if (expiry == null) return null;
-
     return expiry.difference(DateTime.now());
   }
 
-  /// Refresh the current session
   Future<bool> refreshSession() async {
     try {
       AppLogger.info('Refreshing session...');
-
       final session = await SupabaseService.instance.client.auth.refreshSession();
-
       if (session.session == null) {
         AppLogger.warning('Session refresh returned null');
         return false;
       }
-
       AppLogger.info('Session refreshed successfully');
       return true;
     } catch (error, stackTrace) {
@@ -181,12 +119,9 @@ class AuthService {
     }
   }
 
-  /// Check if session needs refresh (less than 10 minutes until expiry)
   bool shouldRefreshSession() {
     final timeUntilExpiry = getTimeUntilExpiry();
     if (timeUntilExpiry == null) return false;
-
-    // Refresh if less than 10 minutes remaining
     return timeUntilExpiry.inMinutes < 10;
   }
 }

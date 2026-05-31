@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -32,11 +34,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     } catch (error, stackTrace) {
       AppLogger.error('Sign in failed', error, stackTrace);
 
-      String errorMsg = 'Sign in failed. Please try again.';
+      String errorMsg;
       if (error.toString().contains('saturdayvinyl.com')) {
         errorMsg = 'Only @saturdayvinyl.com accounts are allowed.';
-      } else if (error.toString().contains('popup_closed_by_user')) {
-        errorMsg = 'Sign in cancelled.';
+      } else if (error is TimeoutException) {
+        errorMsg = 'Sign in timed out. Please try again.';
+      } else {
+        errorMsg = 'Sign in failed: $error';
       }
 
       setState(() {

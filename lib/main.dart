@@ -7,7 +7,6 @@ import 'package:saturday_app/providers/auth_provider.dart';
 import 'package:saturday_app/providers/rfid_settings_provider.dart';
 import 'package:saturday_app/screens/auth/login_screen.dart';
 import 'package:saturday_app/screens/main_scaffold.dart';
-import 'package:saturday_app/services/auth_service.dart';
 import 'package:saturday_app/services/deep_link_service.dart';
 import 'package:saturday_app/services/shopify_service.dart';
 import 'package:saturday_app/services/supabase_service.dart';
@@ -27,9 +26,6 @@ void main() async {
 
     // Initialize Supabase
     await SupabaseService.initialize();
-
-    // Initialize Auth Service
-    AuthService.initialize();
 
     // Initialize Shopify Service
     ShopifyService().initialize();
