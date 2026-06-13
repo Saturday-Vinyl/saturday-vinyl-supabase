@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:saturday_consumer_app/config/styles.dart';
-import 'package:saturday_consumer_app/config/theme.dart';
+import 'package:saturday_consumer_app/config/tokens/tokens.dart';
 import 'package:saturday_consumer_app/models/collection_item.dart';
 import 'package:saturday_consumer_app/models/library_album.dart';
 import 'package:saturday_consumer_app/repositories/cratelist_repository.dart';
@@ -9,7 +8,7 @@ import 'package:saturday_consumer_app/widgets/library/cratelist_cover.dart';
 
 /// Unified list that renders [CollectionItem]s vertically. Album rows reuse
 /// [AlbumListTile]; cratelist rows render a thumbnail composite with name
-/// and item count, plus a small type-indicator icon.
+/// and item count.
 class CollectionList extends StatelessWidget {
   const CollectionList({
     super.key,
@@ -29,9 +28,11 @@ class CollectionList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListView.separated(
-      padding: padding ?? const EdgeInsets.symmetric(vertical: Spacing.md),
+      padding: padding ??
+          const EdgeInsets.symmetric(vertical: SaturdaySpace.space3),
       itemCount: items.length,
-      separatorBuilder: (_, __) => const SizedBox(height: Spacing.xs),
+      separatorBuilder: (_, __) =>
+          const SizedBox(height: SaturdaySpace.space1),
       itemBuilder: (context, index) {
         final item = items[index];
         return switch (item) {
@@ -70,10 +71,12 @@ class SliverCollectionList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SliverPadding(
-      padding: padding ?? const EdgeInsets.symmetric(vertical: Spacing.md),
+      padding: padding ??
+          const EdgeInsets.symmetric(vertical: SaturdaySpace.space3),
       sliver: SliverList.separated(
         itemCount: items.length,
-        separatorBuilder: (_, __) => const SizedBox(height: Spacing.xs),
+        separatorBuilder: (_, __) =>
+            const SizedBox(height: SaturdaySpace.space1),
         itemBuilder: (context, index) {
           final item = items[index];
           return switch (item) {
@@ -101,26 +104,27 @@ class _CratelistListTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = SaturdayColorTokens.of(context);
     final cratelist = preview.cratelist;
 
     return InkWell(
       onTap: onTap,
-      borderRadius: AppRadius.mediumRadius,
+      borderRadius: BorderRadius.circular(12),
       child: Padding(
         padding: const EdgeInsets.symmetric(
-          horizontal: Spacing.lg,
-          vertical: Spacing.sm,
+          horizontal: SaturdaySpace.space4,
+          vertical: SaturdaySpace.space2,
         ),
         child: Row(
           children: [
             SizedBox(
-              width: AlbumArtSizes.small,
-              height: AlbumArtSizes.small,
+              width: 80,
+              height: 80,
               child: Stack(
                 children: [
                   CratelistCover(
                     coverUrls: preview.coverUrls,
-                    borderRadius: AppRadius.mediumRadius,
+                    borderRadius: BorderRadius.circular(6),
                   ),
                   Positioned(
                     top: 4,
@@ -128,20 +132,20 @@ class _CratelistListTile extends StatelessWidget {
                     child: Container(
                       padding: const EdgeInsets.all(3),
                       decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.55),
+                        color: colors.ink.withValues(alpha: 0.55),
                         shape: BoxShape.circle,
                       ),
-                      child: const Icon(
+                      child: Icon(
                         Icons.library_music,
                         size: 11,
-                        color: Colors.white,
+                        color: colors.paper,
                       ),
                     ),
                   ),
                 ],
               ),
             ),
-            const SizedBox(width: Spacing.md),
+            const SizedBox(width: SaturdaySpace.space3),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -149,16 +153,19 @@ class _CratelistListTile extends StatelessWidget {
                 children: [
                   Text(
                     cratelist.name,
-                    style: Theme.of(context).textTheme.titleSmall,
+                    style: SaturdayType.body.copyWith(
+                      fontWeight: SaturdayType.medium,
+                      color: colors.ink,
+                    ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
                   const SizedBox(height: 2),
                   Text(
                     _countLabel(preview.itemCount),
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: SaturdayColors.secondary,
-                        ),
+                    style: SaturdayType.meta.copyWith(
+                      color: colors.inkSecondary,
+                    ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -173,7 +180,7 @@ class _CratelistListTile extends StatelessWidget {
 
   String _countLabel(int count) {
     if (count == 0) return 'Empty cratelist';
-    if (count == 1) return 'Cratelist • 1 album';
-    return 'Cratelist • $count albums';
+    if (count == 1) return 'Cratelist · 1 album';
+    return 'Cratelist · $count albums';
   }
 }

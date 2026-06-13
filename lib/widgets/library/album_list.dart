@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:saturday_consumer_app/config/styles.dart';
+import 'package:saturday_consumer_app/config/tokens/tokens.dart';
 import 'package:saturday_consumer_app/models/library_album.dart';
 import 'package:saturday_consumer_app/widgets/library/album_card.dart';
 
@@ -16,24 +16,19 @@ class AlbumList extends StatelessWidget {
     this.padding,
   });
 
-  /// The list of library albums to display.
   final List<LibraryAlbum> albums;
-
-  /// Callback when an album is tapped.
   final void Function(LibraryAlbum album)? onAlbumTap;
-
-  /// Callback when an album is long-pressed.
   final void Function(LibraryAlbum album)? onAlbumLongPress;
-
-  /// Optional padding around the list.
   final EdgeInsets? padding;
 
   @override
   Widget build(BuildContext context) {
     return ListView.separated(
-      padding: padding ?? const EdgeInsets.symmetric(vertical: Spacing.md),
+      padding: padding ??
+          const EdgeInsets.symmetric(vertical: SaturdaySpace.space3),
       itemCount: albums.length,
-      separatorBuilder: (context, index) => const SizedBox(height: Spacing.xs),
+      separatorBuilder: (context, index) =>
+          const SizedBox(height: SaturdaySpace.space1),
       itemBuilder: (context, index) {
         final album = albums[index];
         return AlbumListTile(
@@ -58,25 +53,20 @@ class SliverAlbumList extends StatelessWidget {
     this.padding,
   });
 
-  /// The list of library albums to display.
   final List<LibraryAlbum> albums;
-
-  /// Callback when an album is tapped.
   final void Function(LibraryAlbum album)? onAlbumTap;
-
-  /// Callback when an album is long-pressed.
   final void Function(LibraryAlbum album)? onAlbumLongPress;
-
-  /// Optional padding around the list.
   final EdgeInsets? padding;
 
   @override
   Widget build(BuildContext context) {
     return SliverPadding(
-      padding: padding ?? const EdgeInsets.symmetric(vertical: Spacing.md),
+      padding: padding ??
+          const EdgeInsets.symmetric(vertical: SaturdaySpace.space3),
       sliver: SliverList.separated(
         itemCount: albums.length,
-        separatorBuilder: (context, index) => const SizedBox(height: Spacing.xs),
+        separatorBuilder: (context, index) =>
+            const SizedBox(height: SaturdaySpace.space1),
         itemBuilder: (context, index) {
           final album = albums[index];
           return AlbumListTile(

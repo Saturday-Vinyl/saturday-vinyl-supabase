@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:saturday_consumer_app/config/styles.dart';
-import 'package:saturday_consumer_app/config/theme.dart';
+import 'package:saturday_consumer_app/config/tokens/tokens.dart';
 import 'package:saturday_consumer_app/models/device.dart';
 import 'package:saturday_consumer_app/widgets/common/product_image.dart';
 import 'package:saturday_consumer_app/widgets/devices/battery_indicator.dart';
@@ -54,28 +54,22 @@ class DeviceCard extends StatelessWidget {
     return null;
   }
 
-  Color get _iconBackgroundColor {
-    switch (device.connectivityStatus) {
-      case ConnectivityStatus.online:
-        return SaturdayColors.success.withValues(alpha: 0.1);
-      case ConnectivityStatus.offline:
-      case ConnectivityStatus.setupRequired:
-        return SaturdayColors.secondary.withValues(alpha: 0.1);
-    }
-  }
+  Color _iconBackgroundColor(SaturdayColorTokens colors) => colors.borderQuiet;
 
-  Color get _iconColor {
+  Color _iconColor(SaturdayColorTokens colors) {
     switch (device.connectivityStatus) {
       case ConnectivityStatus.online:
-        return SaturdayColors.success;
-      case ConnectivityStatus.offline:
       case ConnectivityStatus.setupRequired:
-        return SaturdayColors.secondary;
+        return colors.ink;
+      case ConnectivityStatus.offline:
+        return colors.inkTertiary;
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final colors = SaturdayColorTokens.of(context);
+    final iconColor = _iconColor(colors);
     return Card(
       margin: EdgeInsets.zero,
       child: InkWell(
@@ -92,7 +86,7 @@ class DeviceCard extends StatelessWidget {
                   size: 48,
                   fallback: Icon(
                     _deviceIcon,
-                    color: _iconColor,
+                    color: iconColor,
                     size: 24,
                   ),
                 )
@@ -101,12 +95,12 @@ class DeviceCard extends StatelessWidget {
                   width: 48,
                   height: 48,
                   decoration: BoxDecoration(
-                    color: _iconBackgroundColor,
+                    color: _iconBackgroundColor(colors),
                     borderRadius: AppRadius.mediumRadius,
                   ),
                   child: Icon(
                     _deviceIcon,
-                    color: _iconColor,
+                    color: iconColor,
                     size: 24,
                   ),
                 ),
@@ -142,7 +136,7 @@ class DeviceCard extends StatelessWidget {
                       Text(
                         _telemetrySummary,
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                              color: SaturdayColors.secondary,
+                              color: colors.inkSecondary,
                             ),
                       ),
                     ],
@@ -167,7 +161,7 @@ class DeviceCard extends StatelessWidget {
               Spacing.horizontalGapSm,
               Icon(
                 Icons.chevron_right,
-                color: SaturdayColors.secondary,
+                color: colors.inkTertiary,
               ),
             ],
           ),
@@ -189,28 +183,23 @@ class DeviceListTile extends StatelessWidget {
     this.onTap,
   });
 
-  Color get _avatarBackgroundColor {
-    switch (device.connectivityStatus) {
-      case ConnectivityStatus.online:
-        return SaturdayColors.success.withValues(alpha: 0.1);
-      case ConnectivityStatus.offline:
-      case ConnectivityStatus.setupRequired:
-        return SaturdayColors.secondary.withValues(alpha: 0.1);
-    }
-  }
+  Color _avatarBackgroundColor(SaturdayColorTokens colors) =>
+      colors.borderQuiet;
 
-  Color get _avatarIconColor {
+  Color _avatarIconColor(SaturdayColorTokens colors) {
     switch (device.connectivityStatus) {
       case ConnectivityStatus.online:
-        return SaturdayColors.success;
-      case ConnectivityStatus.offline:
       case ConnectivityStatus.setupRequired:
-        return SaturdayColors.secondary;
+        return colors.ink;
+      case ConnectivityStatus.offline:
+        return colors.inkTertiary;
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final colors = SaturdayColorTokens.of(context);
+    final iconColor = _avatarIconColor(colors);
     return ListTile(
       leading: device.hasProductImageData
           ? ProductImageWidget(
@@ -218,15 +207,15 @@ class DeviceListTile extends StatelessWidget {
               size: 40,
               fallback: Icon(
                 device.isHub ? Icons.router : Icons.inventory_2_outlined,
-                color: _avatarIconColor,
+                color: iconColor,
                 size: 20,
               ),
             )
           : CircleAvatar(
-              backgroundColor: _avatarBackgroundColor,
+              backgroundColor: _avatarBackgroundColor(colors),
               child: Icon(
                 device.isHub ? Icons.router : Icons.inventory_2_outlined,
-                color: _avatarIconColor,
+                color: iconColor,
                 size: 20,
               ),
             ),
@@ -270,6 +259,7 @@ class DeviceMiniCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = SaturdayColorTokens.of(context);
     final totalCount = hubCount + crateCount;
 
     return Card(
@@ -285,12 +275,12 @@ class DeviceMiniCard extends StatelessWidget {
                 width: 48,
                 height: 48,
                 decoration: BoxDecoration(
-                  color: SaturdayColors.primaryDark.withValues(alpha: 0.1),
+                  color: colors.borderQuiet,
                   borderRadius: AppRadius.mediumRadius,
                 ),
-                child: const Icon(
+                child: Icon(
                   Icons.devices,
-                  color: SaturdayColors.primaryDark,
+                  color: colors.ink,
                   size: 24,
                 ),
               ),
@@ -313,7 +303,7 @@ class DeviceMiniCard extends StatelessWidget {
               ),
               Icon(
                 Icons.chevron_right,
-                color: SaturdayColors.secondary,
+                color: colors.inkTertiary,
               ),
             ],
           ),

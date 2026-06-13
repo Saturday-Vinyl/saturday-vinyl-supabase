@@ -176,19 +176,13 @@ class LiveActivityService {
       await stopFlipTimerActivity();
 
       final elapsedSeconds = DateTime.now().difference(startedAt).inSeconds;
-      final remainingSeconds = (sideDurationSeconds - elapsedSeconds).clamp(0, sideDurationSeconds);
-      final isNearFlip = remainingSeconds < 120; // Less than 2 minutes
       final isOvertime = elapsedSeconds > sideDurationSeconds;
 
       final data = <String, dynamic>{
         'albumTitle': album.title,
         'artist': album.artist,
-        'albumArtUrl': album.coverImageUrl ?? '',
         'currentSide': currentSide,
         'totalDurationSeconds': sideDurationSeconds,
-        'elapsedSeconds': elapsedSeconds,
-        'remainingSeconds': remainingSeconds,
-        'isNearFlip': isNearFlip,
         'isOvertime': isOvertime,
         'startedAtTimestamp': startedAt.millisecondsSinceEpoch,
         'currentTrackTitle': currentTrackTitle ?? '',
@@ -255,16 +249,10 @@ class LiveActivityService {
 
     try {
       final elapsedSeconds = DateTime.now().difference(startedAt).inSeconds;
-      final remainingSeconds =
-          (sideDurationSeconds - elapsedSeconds).clamp(0, sideDurationSeconds);
-      final isNearFlip = remainingSeconds < 120 && remainingSeconds > 0;
       final isOvertime = elapsedSeconds > sideDurationSeconds;
 
       final data = <String, dynamic>{
         'currentSide': currentSide,
-        'elapsedSeconds': elapsedSeconds,
-        'remainingSeconds': remainingSeconds,
-        'isNearFlip': isNearFlip,
         'isOvertime': isOvertime,
         'currentTrackTitle': currentTrackTitle ?? '',
         'currentTrackPosition': currentTrackPosition ?? '',
@@ -275,8 +263,7 @@ class LiveActivityService {
       await _liveActivities.updateActivity(_currentActivityId!, data);
 
       if (kDebugMode) {
-        print(
-            'LiveActivityService: Updated flip timer, remaining: ${remainingSeconds}s');
+        print('LiveActivityService: Updated flip timer');
       }
     } catch (e) {
       if (kDebugMode) {

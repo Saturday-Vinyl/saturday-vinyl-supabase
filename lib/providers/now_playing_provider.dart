@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:equatable/equatable.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -204,10 +206,20 @@ class NowPlayingState extends Equatable {
 class NowPlayingNotifier extends StateNotifier<NowPlayingState> {
   NowPlayingNotifier(this._ref, this._prefs) : super(const NowPlayingState()) {
     _restoreState();
+    // Whenever state changes, recompute when (if ever) the current side
+    // should end on its own. The listener fires synchronously after the
+    // state assignment, so reading `state` here returns the new value.
+    addListener((_) => _scheduleSideEnd());
   }
 
   final Ref _ref;
   final SharedPreferences _prefs;
+
+  /// One-shot timer that fires when the current side's elapsed time
+  /// reaches its total duration. Cancelled and re-scheduled whenever
+  /// state changes; null when the side has no known duration, when
+  /// not playing, or when the side has already ended.
+  Timer? _sideEndTimer;
 
   /// Restore persisted state on initialization.
   Future<void> _restoreState() async {
@@ -369,13 +381,13 @@ class NowPlayingNotifier extends StateNotifier<NowPlayingState> {
           sideBDurationSeconds: _calculateSideDuration(album, 'B'),
         );
 
-        final started = await repo.startSession(
+        await repo.startSession(
           sessionId: session.id,
           userId: userId,
         );
 
         if (mounted) {
-          state = state.copyWith(cloudSessionId: started.id);
+          state = state.copyWith(cloudSessionId: session.id);
           await _persistState();
         }
       });
@@ -387,10 +399,65 @@ class NowPlayingNotifier extends StateNotifier<NowPlayingState> {
     }
   }
 
+  /// Place an album on the stand in queued state, without starting playback.
+  ///
+  /// Mirrors the physical ritual: placing a record on the stand doesn't
+  /// start it — the listener still has to drop the needle. The room
+  /// transitions to playing when [startPlaying] is called from the stand.
+  Future<void> queueOnStand(LibraryAlbum album) async {
+    state = state.copyWith(isLoading: true, error: null);
+
+    try {
+      state = state.copyWith(
+        isLoading: false,
+        currentAlbum: album,
+        currentSide: 'A',
+        status: NowPlayingStatus.queued,
+        source: NowPlayingSource.manual,
+        clearStartedAt: true,
+        clearDetectedByDevice: true,
+      );
+
+      await _persistState();
+
+      _syncToCloud(() async {
+        final userId = _ref.read(currentUserIdProvider);
+        if (userId == null) return;
+        final repo = _ref.read(playbackSessionRepositoryProvider);
+
+        final session = await repo.queueSession(
+          userId: userId,
+          libraryAlbumId: album.id,
+          albumTitle: album.album?.title,
+          albumArtist: album.album?.artist,
+          coverImageUrl: album.album?.coverImageUrl,
+          tracks: _buildTracksSnapshot(album),
+          sideADurationSeconds: _calculateSideDuration(album, 'A'),
+          sideBDurationSeconds: _calculateSideDuration(album, 'B'),
+        );
+
+        if (mounted) {
+          state = state.copyWith(cloudSessionId: session.id);
+          await _persistState();
+        }
+      });
+    } catch (e) {
+      state = state.copyWith(
+        isLoading: false,
+        error: 'Failed to queue on stand: $e',
+      );
+    }
+  }
+
   /// Clear the now playing state.
+  ///
+  /// Emits `session_cancelled` regardless of prior local status. Under
+  /// the v2 protocol this is the only terminal event; the trigger
+  /// gracefully accumulates any open play window into
+  /// `play_seconds_total` before terminating, so the producer doesn't
+  /// need to chain a `playback_stopped` first.
   Future<void> clearNowPlaying() async {
     final sessionId = state.cloudSessionId;
-    final wasPlaying = state.isPlaying;
 
     state = state.copyWith(clearAlbum: true);
     await _clearPersistedState();
@@ -400,55 +467,39 @@ class NowPlayingNotifier extends StateNotifier<NowPlayingState> {
         final userId = _ref.read(currentUserIdProvider);
         if (userId == null) return;
         final repo = _ref.read(playbackSessionRepositoryProvider);
-
-        if (wasPlaying) {
-          await repo.stopSession(sessionId: sessionId, userId: userId);
-        } else {
-          await repo.cancelSession(sessionId: sessionId, userId: userId);
-        }
+        await repo.cancelSession(sessionId: sessionId, userId: userId);
       });
     }
   }
 
   /// Advance to the next side in the album's side sequence.
   ///
-  /// Cycles through all available sides (A → B → C → ... → A).
+  /// Cycles through all available sides (A → B → C → ... → A). Under
+  /// the v2 protocol a `side_changed` always lands the session in
+  /// `queued` — the listener resumes via [startPlaying].
   Future<void> toggleSide() async {
     final sides = state.availableSides;
     if (sides.length < 2) return;
     final currentIndex = sides.indexOf(state.currentSide);
     final newSide = sides[(currentIndex + 1) % sides.length];
-    state = state.copyWith(
-      currentSide: newSide,
-      // Only reset timer if currently playing
-      startedAt: state.isPlaying ? DateTime.now() : state.startedAt,
-    );
-    await _persistState();
-
-    final sessionId = state.cloudSessionId;
-    if (sessionId != null) {
-      _syncToCloud(() async {
-        final userId = _ref.read(currentUserIdProvider);
-        if (userId == null) return;
-        final repo = _ref.read(playbackSessionRepositoryProvider);
-        await repo.changeSide(
-          sessionId: sessionId,
-          userId: userId,
-          side: newSide,
-        );
-      });
-    }
+    await setSide(newSide);
   }
 
   /// Set the current side explicitly.
+  ///
+  /// Always lands locally in [NowPlayingStatus.queued]; if the session
+  /// was playing, `startedAt` is cleared. Emits `side_changed` to the
+  /// cloud — the v2 trigger accumulates the open play window into
+  /// `play_seconds_total` and transitions the session to queued.
   Future<void> setSide(String side) async {
     final sides = state.availableSides;
     if (sides.isNotEmpty && !sides.contains(side.toUpperCase())) return;
+    if (state.currentAlbum == null) return;
 
     state = state.copyWith(
       currentSide: side,
-      // Only reset timer if currently playing
-      startedAt: state.isPlaying ? DateTime.now() : state.startedAt,
+      status: NowPlayingStatus.queued,
+      clearStartedAt: true,
     );
     await _persistState();
 
@@ -541,6 +592,38 @@ class NowPlayingNotifier extends StateNotifier<NowPlayingState> {
     }
   }
 
+  /// Stop active playback without lifting the record off the stand.
+  ///
+  /// Transitions from [NowPlayingStatus.playing] back to
+  /// [NowPlayingStatus.queued]: the album, current side, and cloud
+  /// session id are preserved so the listener can drop the needle again
+  /// (on the same side or a different one) without having to re-queue
+  /// the record. To actually clear the stand, use [clearNowPlaying].
+  ///
+  /// Emits the canonical `playback_stopped` event under the v2
+  /// playback-event protocol — non-terminal: the trigger transitions
+  /// the cloud session to `queued`, clears `side_started_at`, and
+  /// accumulates the open play window into `play_seconds_total`.
+  Future<void> stopPlaying() async {
+    if (state.status != NowPlayingStatus.playing) return;
+
+    state = state.copyWith(
+      status: NowPlayingStatus.queued,
+      clearStartedAt: true,
+    );
+    await _persistState();
+
+    final sessionId = state.cloudSessionId;
+    if (sessionId != null) {
+      _syncToCloud(() async {
+        final userId = _ref.read(currentUserIdProvider);
+        if (userId == null) return;
+        final repo = _ref.read(playbackSessionRepositoryProvider);
+        await repo.stopPlayback(sessionId: sessionId, userId: userId);
+      });
+    }
+  }
+
   /// Start playback on a queued album.
   ///
   /// Transitions from [NowPlayingStatus.queued] to [NowPlayingStatus.playing].
@@ -611,12 +694,29 @@ class NowPlayingNotifier extends StateNotifier<NowPlayingState> {
     await _clearPersistedState();
   }
 
-  /// Apply a side change from cloud.
-  Future<void> applyCloudSideChange(
-      String side, DateTime? sideStartedAt) async {
+  /// Apply a `side_changed` event from cloud.
+  ///
+  /// Under the v2 protocol this always lands the session in
+  /// [NowPlayingStatus.queued] with the new side selected. Local
+  /// `startedAt` is cleared so the side-end timer doesn't fire stale.
+  Future<void> applyCloudSideChange(String side) async {
     state = state.copyWith(
       currentSide: side,
-      startedAt: sideStartedAt,
+      status: NowPlayingStatus.queued,
+      clearStartedAt: true,
+    );
+    await _persistState();
+  }
+
+  /// Apply a `playback_stopped` event from cloud.
+  ///
+  /// Under the v2 protocol this is the no-side-change pause — session
+  /// goes to [NowPlayingStatus.queued], same side, `startedAt` cleared.
+  /// The album stays on the local stand.
+  Future<void> applyCloudPlaybackStopped() async {
+    state = state.copyWith(
+      status: NowPlayingStatus.queued,
+      clearStartedAt: true,
     );
     await _persistState();
   }
@@ -629,6 +729,92 @@ class NowPlayingNotifier extends StateNotifier<NowPlayingState> {
     );
     await _persistState();
   }
+
+  // ---------------------------------------------------------------------------
+  // Side-end auto-transition
+  // ---------------------------------------------------------------------------
+
+  /// Recompute the side-end timer based on the current state.
+  ///
+  /// Cancels any pending timer and, if the current state is playing with a
+  /// known side duration, schedules a one-shot fire at the moment elapsed
+  /// reaches the side's total. If the side has already ended (e.g. timer
+  /// missed while the app was backgrounded), fires synchronously on the
+  /// next event loop turn.
+  void _scheduleSideEnd() {
+    _sideEndTimer?.cancel();
+    _sideEndTimer = null;
+
+    if (state.status != NowPlayingStatus.playing) return;
+    final startedAt = state.startedAt;
+    final durationSeconds = state.currentSideDurationSeconds;
+    if (startedAt == null || durationSeconds <= 0) return;
+
+    final endsAt = startedAt.add(Duration(seconds: durationSeconds));
+    final remaining = endsAt.difference(DateTime.now());
+
+    if (remaining.isNegative || remaining == Duration.zero) {
+      // Already past — fire on the next tick to avoid mutating state
+      // mid-listener.
+      _sideEndTimer = Timer(Duration.zero, _onSideEnded);
+    } else {
+      _sideEndTimer = Timer(remaining, _onSideEnded);
+    }
+  }
+
+  void _onSideEnded() {
+    // Re-check at fire time: state may have changed since scheduling.
+    if (state.status != NowPlayingStatus.playing) return;
+    endCurrentSide();
+  }
+
+  /// Called when the current side has finished playing.
+  ///
+  /// Always transitions the session to [NowPlayingStatus.queued]. If
+  /// there's another iterable side, the next side is pre-selected and
+  /// `side_changed` is emitted; otherwise the current side stays
+  /// selected and `playback_stopped` is emitted. Either way the record
+  /// stays on the stand, awaiting another drop of the needle or a
+  /// manual clear.
+  ///
+  /// The cloud session is preserved across this transition under the v2
+  /// protocol — both events are non-terminal and accumulate the open
+  /// play window into `play_seconds_total`.
+  Future<void> endCurrentSide() async {
+    if (state.status != NowPlayingStatus.playing) return;
+
+    final sides = state.availableSides;
+    final currentIndex = sides.indexOf(state.currentSide);
+    final hasNextSide = sides.length > 1 && currentIndex < sides.length - 1;
+    final nextSide = hasNextSide ? sides[currentIndex + 1] : state.currentSide;
+
+    state = state.copyWith(
+      status: NowPlayingStatus.queued,
+      currentSide: nextSide,
+      clearStartedAt: true,
+    );
+    await _persistState();
+
+    final sessionId = state.cloudSessionId;
+    if (sessionId == null) return;
+
+    _syncToCloud(() async {
+      final userId = _ref.read(currentUserIdProvider);
+      if (userId == null) return;
+      final repo = _ref.read(playbackSessionRepositoryProvider);
+      if (hasNextSide) {
+        await repo.changeSide(
+          sessionId: sessionId,
+          userId: userId,
+          side: nextSide,
+        );
+      } else {
+        await repo.stopPlayback(sessionId: sessionId, userId: userId);
+      }
+    });
+  }
+
+  // ---------------------------------------------------------------------------
 
   /// Clear the now playing state from auto-detection.
   ///
@@ -651,6 +837,12 @@ class NowPlayingNotifier extends StateNotifier<NowPlayingState> {
         await repo.cancelSession(sessionId: sessionId, userId: userId);
       });
     }
+  }
+
+  @override
+  void dispose() {
+    _sideEndTimer?.cancel();
+    super.dispose();
   }
 }
 

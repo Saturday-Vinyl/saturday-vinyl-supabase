@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:saturday_consumer_app/config/routes.dart';
 import 'package:saturday_consumer_app/config/styles.dart';
-import 'package:saturday_consumer_app/config/theme.dart';
+import 'package:saturday_consumer_app/config/tokens/tokens.dart';
 import 'package:saturday_consumer_app/models/device.dart';
 import 'package:saturday_consumer_app/providers/device_provider.dart';
 import 'package:saturday_consumer_app/widgets/common/empty_state.dart';
@@ -118,43 +118,45 @@ class DeviceListScreen extends ConsumerWidget {
     final lowBatteryCount = devices.where((d) => d.isLowBattery).length;
     final setupRequiredCount = devices.where((d) => d.needsSetup).length;
 
+    final colors = SaturdayColorTokens.of(context);
     return Container(
       padding: Spacing.cardPadding,
       decoration: BoxDecoration(
-        color: SaturdayColors.white,
+        color: colors.paperElevated,
         borderRadius: AppRadius.largeRadius,
-        boxShadow: AppShadows.card,
+        border: Border.all(color: colors.borderQuiet),
       ),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
           _buildStatusItem(
             context,
+            colors: colors,
             icon: Icons.check_circle,
-            color: SaturdayColors.success,
             count: onlineCount,
             label: 'Online',
           ),
           _buildStatusItem(
             context,
+            colors: colors,
             icon: Icons.cloud_off,
-            color: SaturdayColors.secondary,
             count: offlineCount,
             label: 'Offline',
+            muted: true,
           ),
           if (lowBatteryCount > 0)
             _buildStatusItem(
               context,
+              colors: colors,
               icon: Icons.battery_alert,
-              color: SaturdayColors.warning,
               count: lowBatteryCount,
-              label: 'Low Battery',
+              label: 'Low battery',
             ),
           if (setupRequiredCount > 0)
             _buildStatusItem(
               context,
+              colors: colors,
               icon: Icons.settings,
-              color: SaturdayColors.warning,
               count: setupRequiredCount,
               label: 'Setup',
             ),
@@ -165,19 +167,21 @@ class DeviceListScreen extends ConsumerWidget {
 
   Widget _buildStatusItem(
     BuildContext context, {
+    required SaturdayColorTokens colors,
     required IconData icon,
-    required Color color,
     required int count,
     required String label,
+    bool muted = false,
   }) {
+    final tone = muted ? colors.inkTertiary : colors.ink;
     return Column(
       children: [
-        Icon(icon, color: color, size: 24),
+        Icon(icon, color: tone, size: 24),
         const SizedBox(height: 4),
         Text(
           count.toString(),
           style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                color: color,
+                color: tone,
                 fontWeight: FontWeight.bold,
               ),
         ),
@@ -190,6 +194,7 @@ class DeviceListScreen extends ConsumerWidget {
   }
 
   Widget _buildSectionHeader(BuildContext context, String title, int count) {
+    final colors = SaturdayColorTokens.of(context);
     return Row(
       children: [
         Text(
@@ -200,7 +205,7 @@ class DeviceListScreen extends ConsumerWidget {
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
           decoration: BoxDecoration(
-            color: SaturdayColors.secondary.withValues(alpha: 0.2),
+            color: colors.borderQuiet,
             borderRadius: BorderRadius.circular(12),
           ),
           child: Text(

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:saturday_consumer_app/config/routes.dart';
-import 'package:saturday_consumer_app/config/theme.dart';
+import 'package:saturday_consumer_app/config/tokens/tokens.dart';
 import 'package:saturday_consumer_app/widgets/common/adaptive_layout.dart';
 
 /// Main scaffold with bottom navigation bar.
@@ -64,6 +64,7 @@ class _TabletScaffold extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final selectedIndex = _calculateSelectedIndex(context);
+    final colors = SaturdayColorTokens.of(context);
 
     return Scaffold(
       body: Row(
@@ -73,8 +74,8 @@ class _TabletScaffold extends StatelessWidget {
             onDestinationSelected: (index) =>
                 _onDestinationSelected(context, index),
             labelType: NavigationRailLabelType.all,
-            backgroundColor: SaturdayColors.white,
-            indicatorColor: SaturdayColors.light,
+            backgroundColor: colors.paperElevated,
+            indicatorColor: colors.borderQuiet,
             destinations: const [
               NavigationRailDestination(
                 icon: Icon(Icons.home_outlined),
@@ -130,17 +131,14 @@ class SaturdayBottomNav extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final selectedIndex = _calculateSelectedIndex(context);
+    final colors = SaturdayColorTokens.of(context);
 
     return Container(
       decoration: BoxDecoration(
-        color: SaturdayColors.white,
-        boxShadow: [
-          BoxShadow(
-            color: SaturdayColors.primaryDark.withValues(alpha: 0.1),
-            blurRadius: 8,
-            offset: const Offset(0, -2),
-          ),
-        ],
+        color: colors.paperElevated,
+        border: Border(
+          top: BorderSide(color: colors.borderQuiet),
+        ),
       ),
       child: SafeArea(
         child: NavigationBar(

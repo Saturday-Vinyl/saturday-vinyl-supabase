@@ -3,8 +3,14 @@ import 'package:saturday_consumer_app/repositories/base_repository.dart';
 
 /// Repository for cloud playback session operations.
 ///
-/// Each mutation writes to `playback_sessions` AND inserts
-/// a corresponding `playback_event` for the event log.
+/// Under the v2 playback event protocol, producers do NOT UPDATE
+/// `playback_sessions` for state transitions — they insert canonical
+/// events into `playback_events` and the `apply_playback_event` trigger
+/// derives status, side_started_at, started_at, ended_at, current_side,
+/// and play_seconds_total from those events.
+///
+/// The one exception is [queueSession], which still INSERTs the session
+/// row directly (the row must exist before any event can reference it).
 class PlaybackSessionRepository extends BaseRepository {
   static const _sessionsTable = 'playback_sessions';
   static const _eventsTable = 'playback_events';
@@ -49,7 +55,12 @@ class PlaybackSessionRepository extends BaseRepository {
 
   /// Queue an album for playback.
   ///
-  /// Auto-cancels any existing queued session for this user.
+  /// INSERTs the session row in `queued` status, then emits
+  /// `session_queued`. Auto-cancels any same-user session that would
+  /// violate the unique queued/playing partial indexes — the v2 trigger
+  /// gracefully handles a cancel that arrives while a session is
+  /// playing (it accumulates the open play window into
+  /// `play_seconds_total` before terminating).
   Future<PlaybackSession> queueSession({
     required String userId,
     required String libraryAlbumId,
@@ -63,8 +74,7 @@ class PlaybackSessionRepository extends BaseRepository {
     String sourceType = 'app',
     String? sourceDeviceId,
   }) async {
-    // Cancel any existing queued session
-    await _cancelExistingQueued(userId, sourceType, sourceDeviceId);
+    await _cancelExistingActive(userId, sourceType, sourceDeviceId);
 
     final sessionData = {
       'user_id': userId,
@@ -106,34 +116,17 @@ class PlaybackSessionRepository extends BaseRepository {
     return session;
   }
 
-  /// Start playback on a queued session.
+  /// Drop the needle on a queued session.
   ///
-  /// Auto-stops any existing playing session for this user.
-  Future<PlaybackSession> startSession({
+  /// Emits `playback_started`. The trigger sets `status: playing`,
+  /// preserves any existing `started_at` (so total session age is stable
+  /// across resumes), and sets `side_started_at: now()`.
+  Future<void> startSession({
     required String sessionId,
     required String userId,
     String sourceType = 'app',
     String? sourceDeviceId,
   }) async {
-    // Stop any existing playing session
-    await _stopExistingPlaying(userId, sourceType, sourceDeviceId);
-
-    final now = DateTime.now().toUtc().toIso8601String();
-    final response = await client
-        .from(_sessionsTable)
-        .update({
-          'status': 'playing',
-          'side_started_at': now,
-          'started_at': now,
-          'started_by_source': sourceType,
-          'started_by_device_id': sourceDeviceId,
-        })
-        .eq('id', sessionId)
-        .select()
-        .single();
-
-    final session = PlaybackSession.fromJson(response);
-
     await _insertEvent(
       sessionId: sessionId,
       userId: userId,
@@ -141,25 +134,23 @@ class PlaybackSessionRepository extends BaseRepository {
       sourceType: sourceType,
       sourceDeviceId: sourceDeviceId,
     );
-
-    return session;
   }
 
-  /// Stop a playing session.
-  Future<void> stopSession({
+  /// Pause playback on a playing session without ending it.
+  ///
+  /// Emits `playback_stopped`. Despite the legacy event name this is
+  /// NOT a terminal action under v2: the trigger transitions
+  /// `status: playing → queued`, clears `side_started_at`, accumulates
+  /// the open play window into `play_seconds_total`, and leaves the
+  /// session ready to resume on the same side via [startSession].
+  ///
+  /// To actually terminate a session, use [cancelSession].
+  Future<void> stopPlayback({
     required String sessionId,
     required String userId,
     String sourceType = 'app',
     String? sourceDeviceId,
   }) async {
-    await client
-        .from(_sessionsTable)
-        .update({
-          'status': 'stopped',
-          'ended_at': DateTime.now().toUtc().toIso8601String(),
-        })
-        .eq('id', sessionId);
-
     await _insertEvent(
       sessionId: sessionId,
       userId: userId,
@@ -169,21 +160,19 @@ class PlaybackSessionRepository extends BaseRepository {
     );
   }
 
-  /// Cancel a queued session.
+  /// Terminate a session — works from any non-terminal state.
+  ///
+  /// Emits `session_cancelled`. The trigger handles the cleanup in one
+  /// pass: if the session was `playing`, the open window is accumulated
+  /// into `play_seconds_total` first. Final play duration and
+  /// `completed_side` are written into the matching `listening_history`
+  /// row by the listening-history trigger.
   Future<void> cancelSession({
     required String sessionId,
     required String userId,
     String sourceType = 'app',
     String? sourceDeviceId,
   }) async {
-    await client
-        .from(_sessionsTable)
-        .update({
-          'status': 'cancelled',
-          'ended_at': DateTime.now().toUtc().toIso8601String(),
-        })
-        .eq('id', sessionId);
-
     await _insertEvent(
       sessionId: sessionId,
       userId: userId,
@@ -193,9 +182,14 @@ class PlaybackSessionRepository extends BaseRepository {
     );
   }
 
-  /// Change the current side on a playing session.
+  /// Set the current side on a session.
   ///
-  /// Only sets [sideStartedAt] if the session is currently playing.
+  /// Emits `side_changed` with the target side in payload. The trigger
+  /// always lands the session in `queued` regardless of prior status
+  /// (auto-advance after a side ended, listener flipping the record, or
+  /// listener picking a different side while still queued). The
+  /// just-elapsed play window — if any — is accumulated into
+  /// `play_seconds_total` before the side flip.
   Future<void> changeSide({
     required String sessionId,
     required String userId,
@@ -203,26 +197,6 @@ class PlaybackSessionRepository extends BaseRepository {
     String sourceType = 'app',
     String? sourceDeviceId,
   }) async {
-    // Query current status to decide whether to set side_started_at
-    final current = await client
-        .from(_sessionsTable)
-        .select('status')
-        .eq('id', sessionId)
-        .single();
-
-    final updateData = <String, dynamic>{
-      'current_side': side,
-    };
-
-    if (current['status'] == 'playing') {
-      updateData['side_started_at'] = DateTime.now().toUtc().toIso8601String();
-    }
-
-    await client
-        .from(_sessionsTable)
-        .update(updateData)
-        .eq('id', sessionId);
-
     await _insertEvent(
       sessionId: sessionId,
       userId: userId,
@@ -248,30 +222,18 @@ class PlaybackSessionRepository extends BaseRepository {
   // Private helpers
   // ---------------------------------------------------------------------------
 
-  Future<void> _cancelExistingQueued(
+  /// Cancel every non-terminal session this user owns. Used before
+  /// queueing a fresh session so the queued/playing unique indexes are
+  /// satisfied. Under v2 the trigger handles the open-window
+  /// accumulation regardless of whether the existing session is queued
+  /// or playing.
+  Future<void> _cancelExistingActive(
     String userId,
     String sourceType,
     String? sourceDeviceId,
   ) async {
-    final existing = await getQueuedSession(userId);
-    if (existing != null) {
+    for (final existing in await getActiveSessions(userId)) {
       await cancelSession(
-        sessionId: existing.id,
-        userId: userId,
-        sourceType: sourceType,
-        sourceDeviceId: sourceDeviceId,
-      );
-    }
-  }
-
-  Future<void> _stopExistingPlaying(
-    String userId,
-    String sourceType,
-    String? sourceDeviceId,
-  ) async {
-    final existing = await getPlayingSession(userId);
-    if (existing != null) {
-      await stopSession(
         sessionId: existing.id,
         userId: userId,
         sourceType: sourceType,

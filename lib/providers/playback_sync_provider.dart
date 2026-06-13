@@ -277,35 +277,35 @@ class PlaybackSyncNotifier extends StateNotifier<PlaybackSyncState> {
 
     if (side == null) return;
 
-    // Self-echo: local already on this side for this session
-    if (localState.cloudSessionId == event.sessionId &&
-        localState.currentSide == side) {
-      return;
-    }
+    // Only react to events for our current session.
+    if (localState.cloudSessionId != event.sessionId) return;
 
-    // Fetch session for sideStartedAt
-    final repo = _ref.read(playbackSessionRepositoryProvider);
-    final session = await repo.getSessionById(event.sessionId);
-    if (session == null) return;
+    // Self-echo: under the v2 protocol side_changed lands the session
+    // in queued — if we're already queued on the target side there's
+    // nothing to apply.
+    if (localState.currentSide == side && localState.isQueued) return;
 
     if (mounted) {
       await _ref
           .read(nowPlayingProvider.notifier)
-          .applyCloudSideChange(side, session.sideStartedAt);
+          .applyCloudSideChange(side);
     }
   }
 
   Future<void> _handlePlaybackStopped(PlaybackEvent event) async {
     final localState = _ref.read(nowPlayingProvider);
 
-    // Self-echo: already idle
-    if (!localState.isActive) return;
+    // Only react to events for our current session.
+    if (localState.cloudSessionId != event.sessionId) return;
 
-    // Only clear if this event is for our current session
-    if (localState.cloudSessionId == event.sessionId) {
-      if (mounted) {
-        await _ref.read(nowPlayingProvider.notifier).applyCloudClear();
-      }
+    // Self-echo: already queued (a prior local stopPlaying already
+    // applied the same transition).
+    if (localState.isQueued) return;
+
+    if (mounted) {
+      await _ref
+          .read(nowPlayingProvider.notifier)
+          .applyCloudPlaybackStopped();
     }
   }
 

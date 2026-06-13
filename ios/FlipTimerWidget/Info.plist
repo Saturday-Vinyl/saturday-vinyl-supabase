@@ -9,5 +9,11 @@
 	</dict>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
+	<key>UIAppFonts</key>
+	<array>
+		<string>InterTight[wght].ttf</string>
+		<string>JetBrainsMono[wght].ttf</string>
+		<string>SourceSerif4-Italic[opsz,wght].ttf</string>
+	</array>
 </dict>
 </plist>

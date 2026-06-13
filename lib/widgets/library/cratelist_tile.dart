@@ -1,13 +1,12 @@
 import 'package:flutter/material.dart';
-import 'package:saturday_consumer_app/config/styles.dart';
-import 'package:saturday_consumer_app/config/theme.dart';
+import 'package:saturday_consumer_app/config/tokens/tokens.dart';
 import 'package:saturday_consumer_app/repositories/cratelist_repository.dart';
 import 'package:saturday_consumer_app/widgets/library/cratelist_cover.dart';
 
 /// A tile representing a single cratelist: 2x2 cover composite, name, and
 /// item count. Used in the unified library grid (with [showTypeIndicator]
-/// to surface a small "stack" badge that distinguishes cratelist tiles from
-/// album tiles), and in the dedicated cratelists screen.
+/// to surface a small badge that distinguishes cratelist tiles from album
+/// tiles), and in the dedicated cratelists screen.
 class CratelistTile extends StatelessWidget {
   const CratelistTile({
     super.key,
@@ -20,12 +19,13 @@ class CratelistTile extends StatelessWidget {
   final VoidCallback? onTap;
 
   /// Adds a small stack-of-records badge on the cover. Use when this tile
-  /// is rendered alongside album tiles so users can tell them apart at a
+  /// is rendered alongside album tiles so they're distinguishable at a
   /// glance.
   final bool showTypeIndicator;
 
   @override
   Widget build(BuildContext context) {
+    final colors = SaturdayColorTokens.of(context);
     final cratelist = preview.cratelist;
 
     return GestureDetector(
@@ -38,24 +38,25 @@ class CratelistTile extends StatelessWidget {
               CratelistCover(coverUrls: preview.coverUrls),
               if (showTypeIndicator)
                 const Positioned(
-                  top: Spacing.sm,
-                  right: Spacing.sm,
+                  top: SaturdaySpace.space2,
+                  right: SaturdaySpace.space2,
                   child: _CratelistBadge(),
                 ),
             ],
           ),
-          const SizedBox(height: Spacing.sm),
+          const SizedBox(height: SaturdaySpace.space2),
           Text(
             cratelist.name,
-            style: Theme.of(context).textTheme.titleSmall,
+            style: SaturdayType.body.copyWith(
+              fontWeight: SaturdayType.medium,
+              color: colors.ink,
+            ),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
           Text(
             _countLabel(preview.itemCount),
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: SaturdayColors.secondary,
-                ),
+            style: SaturdayType.meta.copyWith(color: colors.inkSecondary),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
@@ -71,8 +72,8 @@ class CratelistTile extends StatelessWidget {
   }
 }
 
-/// "Create your first cratelist" tile. Visually matches CratelistTile so the
-/// horizontal section reads consistently when empty.
+/// "Create your first cratelist" tile. Visually matches CratelistTile so
+/// the section reads consistently when empty.
 class CreateCratelistTile extends StatelessWidget {
   const CreateCratelistTile({super.key, this.onTap});
 
@@ -80,6 +81,8 @@ class CreateCratelistTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = SaturdayColorTokens.of(context);
+
     return GestureDetector(
       onTap: onTap,
       child: Column(
@@ -89,26 +92,23 @@ class CreateCratelistTile extends StatelessWidget {
             aspectRatio: 1,
             child: DottedBorderBox(
               child: Center(
-                child: Icon(
-                  Icons.add,
-                  size: AppIconSizes.feature,
-                  color: SaturdayColors.secondary,
-                ),
+                child: Icon(Icons.add, size: 32, color: colors.inkSecondary),
               ),
             ),
           ),
-          const SizedBox(height: Spacing.sm),
+          const SizedBox(height: SaturdaySpace.space2),
           Text(
             'New cratelist',
-            style: Theme.of(context).textTheme.titleSmall,
+            style: SaturdayType.body.copyWith(
+              fontWeight: SaturdayType.medium,
+              color: colors.ink,
+            ),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
           Text(
             'Group albums to play',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: SaturdayColors.secondary,
-                ),
+            style: SaturdayType.meta.copyWith(color: colors.inkSecondary),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
@@ -118,30 +118,26 @@ class CreateCratelistTile extends StatelessWidget {
   }
 }
 
-/// Small "stack of records" badge laid over a cratelist cover composite
-/// to signal that the tile is a cratelist (not a single album) when
-/// rendered in the unified library grid.
+/// Small badge laid over a cratelist cover composite to signal that the
+/// tile is a cratelist (not a single album) in the unified library grid.
 class _CratelistBadge extends StatelessWidget {
   const _CratelistBadge();
 
   @override
   Widget build(BuildContext context) {
+    final colors = SaturdayColorTokens.of(context);
     return Container(
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.55),
+        color: colors.ink.withValues(alpha: 0.55),
         shape: BoxShape.circle,
       ),
-      child: const Icon(
-        Icons.library_music,
-        size: 14,
-        color: Colors.white,
-      ),
+      child: Icon(Icons.library_music, size: 14, color: colors.paper),
     );
   }
 }
 
-/// Simple bordered placeholder used by CreateCratelistTile.
+/// Bordered placeholder used by CreateCratelistTile.
 class DottedBorderBox extends StatelessWidget {
   const DottedBorderBox({super.key, required this.child});
 
@@ -149,14 +145,12 @@ class DottedBorderBox extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = SaturdayColorTokens.of(context);
     return Container(
       decoration: BoxDecoration(
-        borderRadius: AppRadius.largeRadius,
-        border: Border.all(
-          color: SaturdayColors.secondary.withValues(alpha: 0.4),
-          width: 1.5,
-        ),
-        color: SaturdayColors.secondary.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: colors.borderQuiet, width: 1),
+        color: colors.paperElevated,
       ),
       child: child,
     );

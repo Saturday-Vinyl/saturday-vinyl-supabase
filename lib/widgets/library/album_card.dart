@@ -1,13 +1,14 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
-import 'package:saturday_consumer_app/config/styles.dart';
-import 'package:saturday_consumer_app/config/theme.dart';
+import 'package:saturday_consumer_app/config/tokens/tokens.dart';
 import 'package:saturday_consumer_app/models/library_album.dart';
 
 /// A card widget displaying album information.
 ///
 /// Used in both grid and list views to show album art, title, and artist.
-/// Supports tapping to navigate to album detail and long-press for quick actions.
+/// Supports tapping to navigate to album detail and long-press for quick
+/// actions. The album title renders in serif italic per the Saturday
+/// constitution; the artist renders in sans.
 class AlbumCard extends StatelessWidget {
   const AlbumCard({
     super.key,
@@ -17,23 +18,17 @@ class AlbumCard extends StatelessWidget {
     this.showYear = false,
   });
 
-  /// The library album to display.
   final LibraryAlbum libraryAlbum;
-
-  /// Callback when the card is tapped.
   final VoidCallback? onTap;
-
-  /// Callback when the card is long-pressed.
   final VoidCallback? onLongPress;
-
-  /// Whether to show the year below the artist.
   final bool showYear;
 
   @override
   Widget build(BuildContext context) {
+    final colors = SaturdayColorTokens.of(context);
     final album = libraryAlbum.album;
-    final title = album?.title ?? 'Unknown Album';
-    final artist = album?.artist ?? 'Unknown Artist';
+    final title = album?.title ?? 'Unknown album';
+    final artist = album?.artist ?? 'Unknown artist';
     final year = album?.year;
     final coverUrl = album?.coverImageUrl;
 
@@ -43,87 +38,36 @@ class AlbumCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Album art
           AspectRatio(
             aspectRatio: 1,
-            child: Container(
-              decoration: BoxDecoration(
-                borderRadius: AppRadius.largeRadius,
-                boxShadow: AppShadows.card,
-              ),
-              child: ClipRRect(
-                borderRadius: AppRadius.largeRadius,
-                child: _buildAlbumArt(coverUrl),
-              ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: _AlbumArt(coverUrl: coverUrl, colors: colors),
             ),
           ),
-          const SizedBox(height: Spacing.sm),
-
-          // Title
+          const SizedBox(height: SaturdaySpace.space2),
           Text(
             title,
-            style: Theme.of(context).textTheme.titleSmall,
+            style: SaturdayType.body.copyWith(
+              fontFamily: SaturdayType.fontSerif,
+              fontStyle: FontStyle.italic,
+              color: colors.ink,
+            ),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
-
-          // Artist
           Text(
             artist,
-            style: Theme.of(context).textTheme.bodySmall,
+            style: SaturdayType.meta.copyWith(color: colors.inkSecondary),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
-
-          // Year (optional)
           if (showYear && year != null)
             Text(
               year.toString(),
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: SaturdayColors.secondary,
-                  ),
+              style: SaturdayType.meta.copyWith(color: colors.inkTertiary),
             ),
         ],
-      ),
-    );
-  }
-
-  Widget _buildAlbumArt(String? coverUrl) {
-    if (coverUrl == null || coverUrl.isEmpty) {
-      return _buildPlaceholder();
-    }
-
-    return CachedNetworkImage(
-      imageUrl: coverUrl,
-      fit: BoxFit.cover,
-      placeholder: (context, url) => _buildShimmer(),
-      errorWidget: (context, url, error) => _buildPlaceholder(),
-    );
-  }
-
-  Widget _buildPlaceholder() {
-    return Container(
-      color: SaturdayColors.secondary.withValues(alpha: 0.2),
-      child: Center(
-        child: Icon(
-          Icons.album_outlined,
-          size: AppIconSizes.feature,
-          color: SaturdayColors.secondary,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildShimmer() {
-    return Container(
-      color: SaturdayColors.secondary.withValues(alpha: 0.1),
-      child: Center(
-        child: CircularProgressIndicator(
-          strokeWidth: 2,
-          valueColor: AlwaysStoppedAnimation(
-            SaturdayColors.secondary.withValues(alpha: 0.5),
-          ),
-        ),
       ),
     );
   }
@@ -131,8 +75,8 @@ class AlbumCard extends StatelessWidget {
 
 /// A list tile variant of the album card for list view display.
 ///
-/// Shows album art as a thumbnail with title, artist, and year on the right.
-/// Supports long-press for quick actions.
+/// Shows album art as a thumbnail with title (serif italic) and artist
+/// (sans) on the right. Supports long-press for quick actions.
 class AlbumListTile extends StatelessWidget {
   const AlbumListTile({
     super.key,
@@ -142,53 +86,40 @@ class AlbumListTile extends StatelessWidget {
     this.trailing,
   });
 
-  /// The library album to display.
   final LibraryAlbum libraryAlbum;
-
-  /// Callback when the tile is tapped.
   final VoidCallback? onTap;
-
-  /// Callback when the tile is long-pressed.
   final VoidCallback? onLongPress;
-
-  /// Optional trailing widget (e.g., favorite indicator, menu).
   final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
+    final colors = SaturdayColorTokens.of(context);
     final album = libraryAlbum.album;
-    final title = album?.title ?? 'Unknown Album';
-    final artist = album?.artist ?? 'Unknown Artist';
+    final title = album?.title ?? 'Unknown album';
+    final artist = album?.artist ?? 'Unknown artist';
     final year = album?.year;
     final coverUrl = album?.coverImageUrl;
 
     return InkWell(
       onTap: onTap,
       onLongPress: onLongPress,
-      borderRadius: AppRadius.mediumRadius,
+      borderRadius: BorderRadius.circular(12),
       child: Padding(
         padding: const EdgeInsets.symmetric(
-          horizontal: Spacing.lg,
-          vertical: Spacing.sm,
+          horizontal: SaturdaySpace.space4,
+          vertical: SaturdaySpace.space2,
         ),
         child: Row(
           children: [
-            // Album art thumbnail
-            Container(
-              width: AlbumArtSizes.small,
-              height: AlbumArtSizes.small,
-              decoration: BoxDecoration(
-                borderRadius: AppRadius.mediumRadius,
-                boxShadow: AppShadows.card,
-              ),
+            SizedBox(
+              width: 80,
+              height: 80,
               child: ClipRRect(
-                borderRadius: AppRadius.mediumRadius,
-                child: _buildAlbumArt(coverUrl),
+                borderRadius: BorderRadius.circular(6),
+                child: _AlbumArt(coverUrl: coverUrl, colors: colors),
               ),
             ),
-            const SizedBox(width: Spacing.md),
-
-            // Text content
+            const SizedBox(width: SaturdaySpace.space3),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -196,16 +127,20 @@ class AlbumListTile extends StatelessWidget {
                 children: [
                   Text(
                     title,
-                    style: Theme.of(context).textTheme.titleSmall,
+                    style: SaturdayType.body.copyWith(
+                      fontFamily: SaturdayType.fontSerif,
+                      fontStyle: FontStyle.italic,
+                      color: colors.ink,
+                    ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
                   const SizedBox(height: 2),
                   Text(
                     artist,
-                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: SaturdayColors.secondary,
-                        ),
+                    style: SaturdayType.body.copyWith(
+                      color: colors.inkSecondary,
+                    ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -213,28 +148,23 @@ class AlbumListTile extends StatelessWidget {
                     const SizedBox(height: 2),
                     Text(
                       year.toString(),
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: SaturdayColors.secondary,
-                          ),
+                      style: SaturdayType.meta.copyWith(
+                        color: colors.inkTertiary,
+                      ),
                     ),
                   ],
                 ],
               ),
             ),
-
-            // Favorite indicator
+            // The Saturday constitution bans like/favorite/star affordances.
+            // Until the favorites model is removed at the data layer, render
+            // the marker in ink (not red) and treat it as a visual placeholder.
             if (libraryAlbum.isFavorite) ...[
-              const SizedBox(width: Spacing.sm),
-              Icon(
-                Icons.favorite,
-                size: AppIconSizes.md,
-                color: SaturdayColors.error,
-              ),
+              const SizedBox(width: SaturdaySpace.space2),
+              Icon(Icons.favorite, size: 20, color: colors.ink),
             ],
-
-            // Trailing widget
             if (trailing != null) ...[
-              const SizedBox(width: Spacing.sm),
+              const SizedBox(width: SaturdaySpace.space2),
               trailing!,
             ],
           ],
@@ -242,39 +172,40 @@ class AlbumListTile extends StatelessWidget {
       ),
     );
   }
+}
 
-  Widget _buildAlbumArt(String? coverUrl) {
-    if (coverUrl == null || coverUrl.isEmpty) {
-      return _buildPlaceholder();
+/// Cover art surface — image, paper-tone held space, or paper-tone empty.
+class _AlbumArt extends StatelessWidget {
+  const _AlbumArt({required this.coverUrl, required this.colors});
+
+  final String? coverUrl;
+  final SaturdayColorTokens colors;
+
+  @override
+  Widget build(BuildContext context) {
+    if (coverUrl == null || coverUrl!.isEmpty) {
+      return _placeholder(colors);
     }
-
     return CachedNetworkImage(
-      imageUrl: coverUrl,
+      imageUrl: coverUrl!,
       fit: BoxFit.cover,
-      placeholder: (context, url) => _buildShimmer(),
-      errorWidget: (context, url, error) => _buildPlaceholder(),
+      placeholder: (context, _) => _held(colors),
+      errorWidget: (context, _, __) => _placeholder(colors),
     );
   }
 
-  Widget _buildPlaceholder() {
+  static Widget _placeholder(SaturdayColorTokens colors) {
     return Container(
-      color: SaturdayColors.secondary.withValues(alpha: 0.2),
+      color: colors.paperElevated,
       child: Center(
-        child: Icon(
-          Icons.album_outlined,
-          size: AppIconSizes.lg,
-          color: SaturdayColors.secondary,
-        ),
+        child: Icon(Icons.album_outlined, size: 32, color: colors.inkTertiary),
       ),
     );
   }
 
-  Widget _buildShimmer() {
-    return Container(
-      color: SaturdayColors.secondary.withValues(alpha: 0.1),
-      child: const Center(
-        child: CircularProgressIndicator(strokeWidth: 2),
-      ),
-    );
+  static Widget _held(SaturdayColorTokens colors) {
+    // Held space while the cover loads — static, no shimmer per the
+    // constitution.
+    return Container(color: colors.paperElevated);
   }
 }

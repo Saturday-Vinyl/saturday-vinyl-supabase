@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:saturday_consumer_app/config/styles.dart';
+import 'package:saturday_consumer_app/config/tokens/tokens.dart';
 import 'package:saturday_consumer_app/models/library_album.dart';
 import 'package:saturday_consumer_app/widgets/library/album_card.dart';
 
@@ -17,34 +17,27 @@ class AlbumGrid extends StatelessWidget {
     this.padding,
   });
 
-  /// The list of library albums to display.
   final List<LibraryAlbum> albums;
-
-  /// Callback when an album is tapped.
   final void Function(LibraryAlbum album)? onAlbumTap;
-
-  /// Callback when an album is long-pressed.
   final void Function(LibraryAlbum album)? onAlbumLongPress;
-
-  /// Optional padding around the grid.
   final EdgeInsets? padding;
 
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        // Determine number of columns based on screen width
-        final crossAxisCount = _calculateCrossAxisCount(constraints.maxWidth);
+        final crossAxisCount = _crossAxisCount(constraints.maxWidth);
 
         return GridView.builder(
-          padding: padding ?? Spacing.pagePadding,
+          padding: padding ?? const EdgeInsets.all(SaturdaySpace.space4),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: crossAxisCount,
-            mainAxisSpacing: Spacing.lg,
-            crossAxisSpacing: Spacing.lg,
-            // Aspect ratio accounts for text below the square album art
-            // Album art is 1:1, plus ~60px for text
-            childAspectRatio: _calculateChildAspectRatio(constraints.maxWidth, crossAxisCount),
+            mainAxisSpacing: SaturdaySpace.space4,
+            crossAxisSpacing: SaturdaySpace.space4,
+            childAspectRatio: _childAspectRatio(
+              constraints.maxWidth,
+              crossAxisCount,
+            ),
           ),
           itemCount: albums.length,
           itemBuilder: (context, index) {
@@ -60,29 +53,18 @@ class AlbumGrid extends StatelessWidget {
     );
   }
 
-  /// Calculate the number of columns based on available width.
-  int _calculateCrossAxisCount(double width) {
-    if (width < 400) {
-      return 2; // Phone portrait
-    } else if (width < 600) {
-      return 3; // Phone landscape / small tablet
-    } else if (width < 900) {
-      return 4; // Tablet portrait
-    } else {
-      return 5; // Tablet landscape / large screen
-    }
+  int _crossAxisCount(double width) {
+    if (width < 400) return 2;
+    if (width < 600) return 3;
+    if (width < 900) return 4;
+    return 5;
   }
 
-  /// Calculate child aspect ratio based on width and column count.
-  ///
-  /// We need to account for the text below the album art.
-  /// Album art is square (1:1), plus about 60px for 2-3 lines of text.
-  double _calculateChildAspectRatio(double width, int crossAxisCount) {
-    final spacing = Spacing.lg * (crossAxisCount + 1); // Including outer padding
+  double _childAspectRatio(double width, int crossAxisCount) {
+    final spacing = SaturdaySpace.space4 * (crossAxisCount + 1);
     final availableWidth = width - spacing;
     final itemWidth = availableWidth / crossAxisCount;
-    // Item height = square album art + text area
-    final textHeight = 60.0;
+    const textHeight = 60.0;
     final itemHeight = itemWidth + textHeight;
     return itemWidth / itemHeight;
   }
@@ -98,32 +80,25 @@ class SliverAlbumGrid extends StatelessWidget {
     this.padding,
   });
 
-  /// The list of library albums to display.
   final List<LibraryAlbum> albums;
-
-  /// Callback when an album is tapped.
   final void Function(LibraryAlbum album)? onAlbumTap;
-
-  /// Callback when an album is long-pressed.
   final void Function(LibraryAlbum album)? onAlbumLongPress;
-
-  /// Optional padding around the grid.
   final EdgeInsets? padding;
 
   @override
   Widget build(BuildContext context) {
     return SliverLayoutBuilder(
       builder: (context, constraints) {
-        final crossAxisCount = _calculateCrossAxisCount(constraints.crossAxisExtent);
+        final crossAxisCount = _crossAxisCount(constraints.crossAxisExtent);
 
         return SliverPadding(
-          padding: padding ?? Spacing.pagePadding,
+          padding: padding ?? const EdgeInsets.all(SaturdaySpace.space4),
           sliver: SliverGrid(
             gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: crossAxisCount,
-              mainAxisSpacing: Spacing.lg,
-              crossAxisSpacing: Spacing.lg,
-              childAspectRatio: _calculateChildAspectRatio(
+              mainAxisSpacing: SaturdaySpace.space4,
+              crossAxisSpacing: SaturdaySpace.space4,
+              childAspectRatio: _childAspectRatio(
                 constraints.crossAxisExtent,
                 crossAxisCount,
               ),
@@ -145,20 +120,15 @@ class SliverAlbumGrid extends StatelessWidget {
     );
   }
 
-  int _calculateCrossAxisCount(double width) {
-    if (width < 400) {
-      return 2;
-    } else if (width < 600) {
-      return 3;
-    } else if (width < 900) {
-      return 4;
-    } else {
-      return 5;
-    }
+  int _crossAxisCount(double width) {
+    if (width < 400) return 2;
+    if (width < 600) return 3;
+    if (width < 900) return 4;
+    return 5;
   }
 
-  double _calculateChildAspectRatio(double width, int crossAxisCount) {
-    final spacing = Spacing.lg * (crossAxisCount + 1);
+  double _childAspectRatio(double width, int crossAxisCount) {
+    final spacing = SaturdaySpace.space4 * (crossAxisCount + 1);
     final availableWidth = width - spacing;
     final itemWidth = availableWidth / crossAxisCount;
     const textHeight = 60.0;

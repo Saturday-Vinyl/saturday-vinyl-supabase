@@ -6,8 +6,10 @@
 //
 
 import ActivityKit
+import CoreText
 import WidgetKit
 import SwiftUI
+import UIKit
 
 /// Attributes for the Live Activity.
 /// IMPORTANT: This struct MUST be named exactly "LiveActivitiesAppAttributes"
@@ -15,7 +17,6 @@ import SwiftUI
 struct LiveActivitiesAppAttributes: ActivityAttributes, Identifiable {
     public typealias LiveDeliveryData = ContentState
 
-    // ContentState must have appGroupId to match the plugin's internal structure
     public struct ContentState: Codable, Hashable {
         var appGroupId: String
     }
@@ -23,277 +24,258 @@ struct LiveActivitiesAppAttributes: ActivityAttributes, Identifiable {
     var id = UUID()
 }
 
-/// Extension to handle prefixed keys for the live_activities plugin
 extension LiveActivitiesAppAttributes {
     func prefixedKey(_ key: String) -> String {
         return "\(id)_\(key)"
     }
 }
 
-/// Shared UserDefaults for accessing data from Flutter
 let sharedDefault = UserDefaults(suiteName: "group.com.saturdayvinyl.consumer")!
 
-/// Live Activity for displaying flip timer on Lock Screen and Dynamic Island.
+// MARK: - Saturday tokens
+
+/// Mirrors `lib/config/tokens/colors.dart`. Hex values are duplicated here
+/// because widget extensions can't read Dart tokens at runtime.
+///
+/// The light tones (`paper`, `ink`, …) are for surfaces we own — the lock
+/// screen tint and any rendering on a paper background. The Dynamic Island
+/// is always painted on the system's black pill, so its foreground must
+/// use the dark-mode tones (`onDarkInk`, `onDarkInkSecondary`, …) which
+/// are bright enough to read against black. These mirror
+/// `SaturdayColorTokens.dark` in `lib/config/tokens/colors.dart`.
+enum SaturdayPalette {
+    static let paper = Color(red: 0xF6 / 255, green: 0xF5 / 255, blue: 0xF2 / 255)
+    static let ink = Color(red: 0x1A / 255, green: 0x18 / 255, blue: 0x17 / 255)
+    static let inkSecondary = Color(red: 0x5A / 255, green: 0x58 / 255, blue: 0x54 / 255)
+    static let inkTertiary = Color(red: 0x8A / 255, green: 0x88 / 255, blue: 0x84 / 255)
+    static let borderQuiet = Color(red: 0xE8 / 255, green: 0xE6 / 255, blue: 0xE0 / 255)
+
+    static let onDarkInk = Color(red: 0xF4 / 255, green: 0xF2 / 255, blue: 0xEC / 255)
+    static let onDarkInkSecondary = Color(red: 0xB4 / 255, green: 0xB2 / 255, blue: 0xAC / 255)
+    static let onDarkInkTertiary = Color(red: 0x7A / 255, green: 0x78 / 255, blue: 0x74 / 255)
+}
+
+/// Saturday brand fonts. Bundled into the widget target via UIAppFonts
+/// in Info.plist (see `ios/FlipTimerWidget/Fonts/`).
+///
+/// Inter Tight and JetBrains Mono are weight-variable; Source Serif 4
+/// Italic is opsz+wght variable. The PostScript names below address the
+/// fonts' default instance — we vary `wght` via the variation axis on
+/// the eyebrow (which needs medium 500) and otherwise let the regular
+/// instance carry.
+enum SaturdayType {
+    static let eyebrow = sans(size: 11, weight: 500)
+    static let body = sans(size: 14)
+    static let artist = sans(size: 13)
+    static let trackTitle = sans(size: 13)
+    static let mono = Font.custom("JetBrainsMono-Regular", size: 13)
+    static let trackPosition = Font.custom("JetBrainsMono-Regular", size: 13)
+    static let countdownLockScreen = Font.custom("JetBrainsMono-Regular", size: 32)
+    static let countdownExpanded = Font.custom("JetBrainsMono-Regular", size: 20)
+    static let countdownCompact = Font.custom("JetBrainsMono-Regular", size: 14)
+    static let titleListeningLockScreen = Font.custom("SourceSerif4Italic-Italic", size: 22)
+    static let titleListeningExpanded = Font.custom("SourceSerif4Italic-Italic", size: 14)
+    static let flipMoment = Font.custom("SourceSerif4Italic-Italic", size: 32)
+    static let flipMomentExpanded = Font.custom("SourceSerif4Italic-Italic", size: 20)
+    static let flipMomentCompact = Font.custom("SourceSerif4Italic-Italic", size: 14)
+
+    /// 'wght' OpenType axis tag, packed as FourCharCode for CoreText.
+    private static let wghtAxisTag = 0x77676874  // 'w' 'g' 'h' 't'
+
+    /// Build an Inter Tight font at the given size and variable weight.
+    /// Goes through UIFontDescriptor so the wght axis is set explicitly
+    /// — `Font.custom(...).weight(...)` doesn't reliably drive the
+    /// variable axis on variable fonts.
+    private static func sans(size: CGFloat, weight: CGFloat = 400) -> Font {
+        let descriptor = UIFontDescriptor(fontAttributes: [
+            .name: "InterTight-Regular",
+            UIFontDescriptor.AttributeName(rawValue: kCTFontVariationAttribute as String): [
+                wghtAxisTag: weight
+            ],
+        ])
+        return Font(UIFont(descriptor: descriptor, size: size))
+    }
+}
+
+// MARK: - Live Activity
+
 @available(iOSApplicationExtension 16.1, *)
 struct FlipTimerWidgetLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: LiveActivitiesAppAttributes.self) { context in
-            // Read data from UserDefaults
-            let albumTitle = sharedDefault.string(forKey: context.attributes.prefixedKey("albumTitle")) ?? "Unknown Album"
-            let artist = sharedDefault.string(forKey: context.attributes.prefixedKey("artist")) ?? "Unknown Artist"
-            let currentSide = sharedDefault.string(forKey: context.attributes.prefixedKey("currentSide")) ?? "A"
-            let totalDurationSeconds = sharedDefault.integer(forKey: context.attributes.prefixedKey("totalDurationSeconds"))
-            let startedAtTimestamp = sharedDefault.integer(forKey: context.attributes.prefixedKey("startedAtTimestamp"))
-            let isNearFlip = sharedDefault.bool(forKey: context.attributes.prefixedKey("isNearFlip"))
-            let isOvertime = sharedDefault.bool(forKey: context.attributes.prefixedKey("isOvertime"))
-            let currentTrackTitle = sharedDefault.string(forKey: context.attributes.prefixedKey("currentTrackTitle")) ?? ""
-            let currentTrackPosition = sharedDefault.string(forKey: context.attributes.prefixedKey("currentTrackPosition")) ?? ""
-
-            // Calculate the end time for the countdown
-            let startDate = Date(timeIntervalSince1970: Double(startedAtTimestamp) / 1000.0)
-            let endDate = startDate.addingTimeInterval(Double(totalDurationSeconds))
-
-            // Lock Screen / Banner UI
-            LockScreenView(
-                albumTitle: albumTitle,
-                artist: artist,
-                currentSide: currentSide,
-                totalDurationSeconds: totalDurationSeconds,
-                startDate: startDate,
-                endDate: endDate,
-                isNearFlip: isNearFlip,
-                isOvertime: isOvertime,
-                currentTrackTitle: currentTrackTitle,
-                currentTrackPosition: currentTrackPosition
-            )
-            .activityBackgroundTint(Color(red: 0.886, green: 0.855, blue: 0.816)) // Saturday cream
-            .activitySystemActionForegroundColor(Color(red: 0.247, green: 0.227, blue: 0.204)) // Saturday brown
+            let data = LiveData(context: context)
+            LockScreenView(data: data)
+                .activityBackgroundTint(SaturdayPalette.paper)
+                .activitySystemActionForegroundColor(SaturdayPalette.ink)
         } dynamicIsland: { context in
-            // Read data from UserDefaults
-            let albumTitle = sharedDefault.string(forKey: context.attributes.prefixedKey("albumTitle")) ?? "Unknown Album"
-            let artist = sharedDefault.string(forKey: context.attributes.prefixedKey("artist")) ?? "Unknown Artist"
-            let currentSide = sharedDefault.string(forKey: context.attributes.prefixedKey("currentSide")) ?? "A"
-            let totalDurationSeconds = sharedDefault.integer(forKey: context.attributes.prefixedKey("totalDurationSeconds"))
-            let startedAtTimestamp = sharedDefault.integer(forKey: context.attributes.prefixedKey("startedAtTimestamp"))
-            let isNearFlip = sharedDefault.bool(forKey: context.attributes.prefixedKey("isNearFlip"))
-            let isOvertime = sharedDefault.bool(forKey: context.attributes.prefixedKey("isOvertime"))
-            let currentTrackTitle = sharedDefault.string(forKey: context.attributes.prefixedKey("currentTrackTitle")) ?? ""
-            let currentTrackPosition = sharedDefault.string(forKey: context.attributes.prefixedKey("currentTrackPosition")) ?? ""
-
-            // Calculate the end time for the countdown
-            let startDate = Date(timeIntervalSince1970: Double(startedAtTimestamp) / 1000.0)
-            let endDate = startDate.addingTimeInterval(Double(totalDurationSeconds))
-            let now = Date()
-            let timerRange = now...endDate
+            let data = LiveData(context: context)
 
             return DynamicIsland {
-                // Expanded UI (when long-pressed)
                 DynamicIslandExpandedRegion(.leading) {
-                    HStack(spacing: 8) {
-                        // Vinyl record icon
-                        Image(systemName: "record.circle")
-                            .font(.title2)
-                            .foregroundColor(isNearFlip ? .orange : .primary)
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Side \(currentSide)")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                            Text(albumTitle)
-                                .font(.caption)
-                                .fontWeight(.medium)
-                                .lineLimit(1)
-                        }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Side \(data.currentSide)")
+                            .font(SaturdayType.eyebrow)
+                            .foregroundColor(SaturdayPalette.onDarkInkTertiary)
+                        Text(data.albumTitle)
+                            .font(SaturdayType.titleListeningExpanded)
+                            .foregroundColor(SaturdayPalette.onDarkInk)
+                            .lineLimit(1)
                     }
                 }
 
                 DynamicIslandExpandedRegion(.trailing) {
-                    VStack(alignment: .trailing, spacing: 2) {
-                        if isOvertime || now > endDate {
-                            Text("FLIP!")
-                                .font(.caption)
-                                .fontWeight(.bold)
-                                .foregroundColor(.orange)
-                        } else {
-                            Text(timerInterval: timerRange, countsDown: true)
-                                .font(.title3)
-                                .fontWeight(.semibold)
-                                .monospacedDigit()
-                                .foregroundColor(isNearFlip ? .orange : .primary)
-                            Text("remaining")
-                                .font(.caption2)
-                                .foregroundColor(.secondary)
-                        }
+                    if data.isAtFlipMoment {
+                        Text("flip")
+                            .font(SaturdayType.flipMomentExpanded)
+                            .foregroundColor(SaturdayPalette.onDarkInk)
+                    } else {
+                        Text(timerInterval: data.timerRange, countsDown: true)
+                            .font(SaturdayType.countdownExpanded)
+                            .monospacedDigit()
+                            .foregroundColor(SaturdayPalette.onDarkInk)
+                            .multilineTextAlignment(.trailing)
                     }
                 }
 
                 DynamicIslandExpandedRegion(.bottom) {
-                    HStack {
-                        if !currentTrackTitle.isEmpty {
-                            Text("\(currentTrackPosition) · \(currentTrackTitle)")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                    if !data.currentTrackTitle.isEmpty {
+                        HStack(spacing: 8) {
+                            Text(data.currentTrackPosition)
+                                .font(SaturdayType.trackPosition)
+                                .foregroundColor(SaturdayPalette.onDarkInkSecondary)
+                            Text(data.currentTrackTitle)
+                                .font(SaturdayType.trackTitle)
+                                .foregroundColor(SaturdayPalette.onDarkInkSecondary)
                                 .lineLimit(1)
-                        } else {
-                            Text(artist)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .lineLimit(1)
+                            Spacer()
                         }
-
-                        Spacer()
-
-                        // Progress indicator
-                        let elapsed = now.timeIntervalSince(startDate)
-                        let progress = totalDurationSeconds > 0 ? min(1.0, elapsed / Double(totalDurationSeconds)) : 0.0
-                        ProgressView(value: progress)
-                            .progressViewStyle(.linear)
-                            .tint(isNearFlip ? .orange : Color(red: 0.247, green: 0.227, blue: 0.204))
-                            .frame(width: 100)
+                        .padding(.top, 4)
+                    } else {
+                        HStack {
+                            Text(data.artist)
+                                .font(SaturdayType.artist)
+                                .foregroundColor(SaturdayPalette.onDarkInkSecondary)
+                                .lineLimit(1)
+                            Spacer()
+                        }
+                        .padding(.top, 4)
                     }
-                    .padding(.top, 4)
                 }
             } compactLeading: {
-                // Compact leading (pill left side)
-                HStack(spacing: 4) {
-                    Image(systemName: "record.circle")
-                        .font(.caption)
-                        .foregroundColor(isNearFlip ? .orange : .primary)
-                    Text("Side \(currentSide)")
-                        .font(.caption2)
-                        .fontWeight(.medium)
-                }
+                Text("Side \(data.currentSide)")
+                    .font(SaturdayType.eyebrow)
+                    .foregroundColor(SaturdayPalette.onDarkInkSecondary)
             } compactTrailing: {
-                // Compact trailing (pill right side)
-                if isOvertime || now > endDate {
-                    Text("FLIP!")
-                        .font(.caption2)
-                        .fontWeight(.bold)
-                        .foregroundColor(.orange)
+                if data.isAtFlipMoment {
+                    Text("flip")
+                        .font(SaturdayType.flipMomentCompact)
+                        .foregroundColor(SaturdayPalette.onDarkInk)
                 } else {
-                    Text(timerInterval: timerRange, countsDown: true)
-                        .font(.caption)
+                    Text(timerInterval: data.timerRange, countsDown: true)
+                        .font(SaturdayType.countdownCompact)
                         .monospacedDigit()
                         .multilineTextAlignment(.center)
-                        .frame(width: 40)
-                        .foregroundColor(isNearFlip ? .orange : .primary)
+                        .frame(width: 44)
+                        .foregroundColor(SaturdayPalette.onDarkInk)
                 }
             } minimal: {
-                // Minimal (when other activities are present)
-                if isOvertime || now > endDate || isNearFlip {
-                    Image(systemName: "arrow.triangle.2.circlepath")
-                        .font(.caption)
-                        .foregroundColor(.orange)
+                if data.isAtFlipMoment {
+                    Circle()
+                        .stroke(SaturdayPalette.onDarkInk, lineWidth: 1)
+                        .frame(width: 8, height: 8)
                 } else {
-                    Image(systemName: "record.circle")
-                        .font(.caption)
+                    Circle()
+                        .fill(SaturdayPalette.onDarkInk)
+                        .frame(width: 8, height: 8)
                 }
             }
         }
     }
 }
 
-/// Lock Screen Live Activity view.
+// MARK: - Lock screen
+
 struct LockScreenView: View {
+    let data: LiveData
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Side \(data.currentSide)")
+                .font(SaturdayType.eyebrow)
+                .foregroundColor(SaturdayPalette.inkTertiary)
+
+            if data.isAtFlipMoment {
+                Text("Flip the record.")
+                    .font(SaturdayType.flipMoment)
+                    .foregroundColor(SaturdayPalette.ink)
+            } else {
+                Text(timerInterval: data.timerRange, countsDown: true)
+                    .font(SaturdayType.countdownLockScreen)
+                    .monospacedDigit()
+                    .foregroundColor(SaturdayPalette.ink)
+            }
+
+            Text(data.albumTitle)
+                .font(SaturdayType.titleListeningLockScreen)
+                .foregroundColor(SaturdayPalette.ink)
+                .lineLimit(1)
+
+            Text(data.artist)
+                .font(SaturdayType.artist)
+                .foregroundColor(SaturdayPalette.inkSecondary)
+                .lineLimit(1)
+
+            if !data.currentTrackTitle.isEmpty {
+                HStack(spacing: 8) {
+                    Text(data.currentTrackPosition)
+                        .font(SaturdayType.trackPosition)
+                        .foregroundColor(SaturdayPalette.inkSecondary)
+                    Text(data.currentTrackTitle)
+                        .font(SaturdayType.trackTitle)
+                        .foregroundColor(SaturdayPalette.inkSecondary)
+                        .lineLimit(1)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+    }
+}
+
+// MARK: - Data
+
+/// One read of the shared-defaults state, computed once per widget render.
+struct LiveData {
     let albumTitle: String
     let artist: String
     let currentSide: String
-    let totalDurationSeconds: Int
-    let startDate: Date
-    let endDate: Date
-    let isNearFlip: Bool
-    let isOvertime: Bool
     let currentTrackTitle: String
     let currentTrackPosition: String
+    let startDate: Date
+    let endDate: Date
+    let isOvertime: Bool
 
-    var body: some View {
+    init(context: ActivityViewContext<LiveActivitiesAppAttributes>) {
+        let attrs = context.attributes
+        self.albumTitle = sharedDefault.string(forKey: attrs.prefixedKey("albumTitle")) ?? ""
+        self.artist = sharedDefault.string(forKey: attrs.prefixedKey("artist")) ?? ""
+        self.currentSide = sharedDefault.string(forKey: attrs.prefixedKey("currentSide")) ?? "A"
+        self.currentTrackTitle = sharedDefault.string(forKey: attrs.prefixedKey("currentTrackTitle")) ?? ""
+        self.currentTrackPosition = sharedDefault.string(forKey: attrs.prefixedKey("currentTrackPosition")) ?? ""
+        self.isOvertime = sharedDefault.bool(forKey: attrs.prefixedKey("isOvertime"))
+
+        let totalDurationSeconds = sharedDefault.integer(forKey: attrs.prefixedKey("totalDurationSeconds"))
+        let startedAtTimestamp = sharedDefault.integer(forKey: attrs.prefixedKey("startedAtTimestamp"))
+        self.startDate = Date(timeIntervalSince1970: Double(startedAtTimestamp) / 1000.0)
+        self.endDate = startDate.addingTimeInterval(Double(totalDurationSeconds))
+    }
+
+    var timerRange: ClosedRange<Date> {
         let now = Date()
-        let timerRange = now...endDate
-        let isExpired = now > endDate
+        return now...endDate
+    }
 
-        HStack(spacing: 12) {
-            // Vinyl record icon
-            ZStack {
-                Circle()
-                    .fill(Color(red: 0.247, green: 0.227, blue: 0.204))
-                    .frame(width: 50, height: 50)
-
-                Circle()
-                    .fill(Color(red: 0.886, green: 0.855, blue: 0.816))
-                    .frame(width: 16, height: 16)
-
-                // Spinning indicator when playing
-                Circle()
-                    .stroke(Color(red: 0.886, green: 0.855, blue: 0.816).opacity(0.5), lineWidth: 1)
-                    .frame(width: 30, height: 30)
-            }
-
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text("Side \(currentSide)")
-                        .font(.caption)
-                        .fontWeight(.semibold)
-                        .foregroundColor(Color(red: 0.247, green: 0.227, blue: 0.204))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 2)
-                        .background(
-                            Capsule()
-                                .fill(Color(red: 0.247, green: 0.227, blue: 0.204).opacity(0.15))
-                        )
-
-                    Spacer()
-
-                    if isOvertime || isExpired {
-                        Text("Time to flip!")
-                            .font(.caption)
-                            .fontWeight(.bold)
-                            .foregroundColor(.orange)
-                    } else {
-                        // Real-time countdown using SwiftUI's built-in timer
-                        Text(timerInterval: timerRange, countsDown: true)
-                            .font(.title2)
-                            .fontWeight(.bold)
-                            .monospacedDigit()
-                            .foregroundColor(isNearFlip ? .orange : Color(red: 0.247, green: 0.227, blue: 0.204))
-                    }
-                }
-
-                Text(albumTitle)
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                    .foregroundColor(Color(red: 0.247, green: 0.227, blue: 0.204))
-                    .lineLimit(1)
-
-                if !currentTrackTitle.isEmpty {
-                    Text("\(currentTrackPosition) · \(currentTrackTitle)")
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .foregroundColor(Color(red: 0.247, green: 0.227, blue: 0.204).opacity(0.85))
-                        .lineLimit(1)
-                }
-
-                Text(artist)
-                    .font(.caption)
-                    .foregroundColor(Color(red: 0.247, green: 0.227, blue: 0.204).opacity(0.7))
-                    .lineLimit(1)
-
-                // Progress bar - updates based on timer
-                let elapsed = now.timeIntervalSince(startDate)
-                let progress = totalDurationSeconds > 0 ? min(1.0, elapsed / Double(totalDurationSeconds)) : 0.0
-                GeometryReader { geometry in
-                    ZStack(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(Color(red: 0.247, green: 0.227, blue: 0.204).opacity(0.2))
-                            .frame(height: 4)
-
-                        RoundedRectangle(cornerRadius: 2)
-                            .fill(isNearFlip || isExpired ? Color.orange : Color(red: 0.247, green: 0.227, blue: 0.204))
-                            .frame(width: geometry.size.width * progress, height: 4)
-                    }
-                }
-                .frame(height: 4)
-            }
-        }
-        .padding(16)
+    var isAtFlipMoment: Bool {
+        isOvertime || Date() > endDate
     }
 }

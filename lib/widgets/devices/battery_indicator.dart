@@ -1,5 +1,28 @@
 import 'package:flutter/material.dart';
-import 'package:saturday_consumer_app/config/theme.dart';
+import 'package:saturday_consumer_app/config/tokens/tokens.dart';
+
+/// Resolve battery tone from a level.
+///
+/// Per the Saturday constitution, criticality is communicated by text and
+/// position — not by red/amber/green. Unknown and critical levels render in
+/// `inkTertiary` (muted, drawing the listener's eye to the label); healthy
+/// levels render in `ink`.
+Color _batteryTone(SaturdayColorTokens colors, int? level) {
+  if (level == null) return colors.inkTertiary;
+  if (level <= 20) return colors.inkTertiary;
+  return colors.ink;
+}
+
+IconData _batteryIconFor(int? level, {required bool isCharging}) {
+  if (isCharging) return Icons.battery_charging_full;
+  if (level == null) return Icons.battery_unknown;
+  if (level <= 10) return Icons.battery_alert;
+  if (level <= 20) return Icons.battery_1_bar;
+  if (level <= 40) return Icons.battery_2_bar;
+  if (level <= 60) return Icons.battery_4_bar;
+  if (level <= 80) return Icons.battery_5_bar;
+  return Icons.battery_full;
+}
 
 /// A widget displaying a battery level indicator.
 ///
@@ -26,32 +49,16 @@ class BatteryIndicator extends StatelessWidget {
     this.size = 24,
   });
 
-  Color get _batteryColor {
-    if (level == null) return SaturdayColors.secondary;
-    if (level! <= 10) return SaturdayColors.error;
-    if (level! <= 20) return SaturdayColors.warning;
-    return SaturdayColors.success;
-  }
-
-  IconData get _batteryIcon {
-    if (isCharging) return Icons.battery_charging_full;
-    if (level == null) return Icons.battery_unknown;
-    if (level! <= 10) return Icons.battery_alert;
-    if (level! <= 20) return Icons.battery_1_bar;
-    if (level! <= 40) return Icons.battery_2_bar;
-    if (level! <= 60) return Icons.battery_4_bar;
-    if (level! <= 80) return Icons.battery_5_bar;
-    return Icons.battery_full;
-  }
-
   @override
   Widget build(BuildContext context) {
+    final colors = SaturdayColorTokens.of(context);
+    final tone = _batteryTone(colors, level);
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         Icon(
-          _batteryIcon,
-          color: _batteryColor,
+          _batteryIconFor(level, isCharging: isCharging),
+          color: tone,
           size: size,
         ),
         if (showPercentage && level != null) ...[
@@ -59,7 +66,7 @@ class BatteryIndicator extends StatelessWidget {
           Text(
             '$level%',
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: _batteryColor,
+                  color: tone,
                   fontWeight: FontWeight.w500,
                 ),
           ),
@@ -82,26 +89,9 @@ class BatteryIconOnly extends StatelessWidget {
     this.size = 20,
   });
 
-  Color get _batteryColor {
-    if (level == null) return SaturdayColors.secondary;
-    if (level! <= 10) return SaturdayColors.error;
-    if (level! <= 20) return SaturdayColors.warning;
-    return SaturdayColors.success;
-  }
-
-  IconData get _batteryIcon {
-    if (isCharging) return Icons.battery_charging_full;
-    if (level == null) return Icons.battery_unknown;
-    if (level! <= 10) return Icons.battery_alert;
-    if (level! <= 20) return Icons.battery_1_bar;
-    if (level! <= 40) return Icons.battery_2_bar;
-    if (level! <= 60) return Icons.battery_4_bar;
-    if (level! <= 80) return Icons.battery_5_bar;
-    return Icons.battery_full;
-  }
-
   @override
   Widget build(BuildContext context) {
+    final colors = SaturdayColorTokens.of(context);
     final tooltip = isCharging
         ? 'Charging${level != null ? ' ($level%)' : ''}'
         : level != null
@@ -110,8 +100,8 @@ class BatteryIconOnly extends StatelessWidget {
     return Tooltip(
       message: tooltip,
       child: Icon(
-        _batteryIcon,
-        color: _batteryColor,
+        _batteryIconFor(level, isCharging: isCharging),
+        color: _batteryTone(colors, level),
         size: size,
       ),
     );
@@ -129,15 +119,10 @@ class BatteryProgress extends StatelessWidget {
     this.isCharging = false,
   });
 
-  Color get _batteryColor {
-    if (level == null) return SaturdayColors.secondary;
-    if (level! <= 10) return SaturdayColors.error;
-    if (level! <= 20) return SaturdayColors.warning;
-    return SaturdayColors.success;
-  }
-
   @override
   Widget build(BuildContext context) {
+    final colors = SaturdayColorTokens.of(context);
+    final tone = _batteryTone(colors, level);
     final displayLevel = level ?? 0;
 
     return Column(
@@ -158,12 +143,12 @@ class BatteryProgress extends StatelessWidget {
                   Icon(
                     Icons.bolt,
                     size: 14,
-                    color: SaturdayColors.warning,
+                    color: colors.ink,
                   ),
                   Text(
                     'Charging',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: SaturdayColors.warning,
+                          color: colors.ink,
                           fontWeight: FontWeight.w500,
                         ),
                   ),
@@ -173,7 +158,7 @@ class BatteryProgress extends StatelessWidget {
             Text(
               level != null ? '$level%' : 'Unknown',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: _batteryColor,
+                    color: tone,
                     fontWeight: FontWeight.w600,
                   ),
             ),
@@ -184,8 +169,8 @@ class BatteryProgress extends StatelessWidget {
           borderRadius: BorderRadius.circular(4),
           child: LinearProgressIndicator(
             value: displayLevel / 100,
-            backgroundColor: SaturdayColors.secondary.withValues(alpha: 0.2),
-            valueColor: AlwaysStoppedAnimation<Color>(_batteryColor),
+            backgroundColor: colors.borderQuiet,
+            valueColor: AlwaysStoppedAnimation<Color>(colors.ink),
             minHeight: 6,
           ),
         ),

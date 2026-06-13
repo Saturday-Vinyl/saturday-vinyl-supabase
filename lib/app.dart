@@ -59,6 +59,8 @@ class _SaturdayAppState extends ConsumerState<SaturdayApp> {
       title: 'Saturday',
       debugShowCheckedModeBanner: false,
       theme: SaturdayTheme.lightTheme,
+      darkTheme: SaturdayTheme.darkTheme,
+      themeMode: ThemeMode.system,
       routerConfig: router,
       // Uncomment to debug performance:
       // showPerformanceOverlay: true,

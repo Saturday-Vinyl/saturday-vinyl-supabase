@@ -1,35 +1,39 @@
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:saturday_consumer_app/config/routes.dart';
-import 'package:saturday_consumer_app/config/styles.dart';
-import 'package:saturday_consumer_app/config/theme.dart';
+import 'package:saturday_consumer_app/config/tokens/tokens.dart';
+import 'package:saturday_consumer_app/models/album.dart';
 import 'package:saturday_consumer_app/models/album_colors.dart';
 import 'package:saturday_consumer_app/models/library_album.dart';
 import 'package:saturday_consumer_app/providers/album_provider.dart';
 import 'package:saturday_consumer_app/providers/device_provider.dart';
 import 'package:saturday_consumer_app/providers/library_provider.dart';
-import 'package:saturday_consumer_app/providers/realtime_album_location_provider.dart';
-import 'package:saturday_consumer_app/providers/repository_providers.dart';
 import 'package:saturday_consumer_app/providers/now_playing_provider.dart';
 import 'package:saturday_consumer_app/providers/playback_queue_provider.dart';
+import 'package:saturday_consumer_app/providers/realtime_album_location_provider.dart';
+import 'package:saturday_consumer_app/providers/repository_providers.dart';
 import 'package:saturday_consumer_app/providers/tag_provider.dart';
 import 'package:saturday_consumer_app/utils/epc_validator.dart';
+import 'package:saturday_consumer_app/widgets/common/saturday_app_bar.dart';
+import 'package:saturday_consumer_app/widgets/foundation/saturday_skeleton.dart';
 import 'package:saturday_consumer_app/widgets/library/tag_method_picker.dart';
-import 'package:saturday_consumer_app/widgets/library/album_location_badge.dart';
 import 'package:saturday_consumer_app/widgets/library/track_list.dart';
 
-/// Screen showing detailed information about an album.
+/// Detail view for a record in the collection.
 ///
-/// Displays album art, metadata, track listing, location, and actions.
+/// Archive posture per the constitution: paper/ink only, no album-derived
+/// color on the surface, no streaming-app primitives (favorites, queue, play
+/// buttons, snackbars, confirm dialogs). The cover is the only color object
+/// on the page; the record speaks for itself.
 class AlbumDetailScreen extends ConsumerStatefulWidget {
   const AlbumDetailScreen({
     super.key,
     required this.libraryAlbumId,
   });
 
-  /// The ID of the library album to display.
   final String libraryAlbumId;
 
   @override
@@ -50,875 +54,93 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
   Widget build(BuildContext context) {
     final libraryAlbumAsync =
         ref.watch(libraryAlbumByIdProvider(widget.libraryAlbumId));
+    final colors = SaturdayColorTokens.of(context);
 
     return Scaffold(
-      body: libraryAlbumAsync.when(
-        data: (libraryAlbum) {
-          if (libraryAlbum == null) {
-            return _buildNotFoundState(context);
-          }
-          return _buildContent(context, libraryAlbum);
-        },
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (error, stack) => _buildErrorState(context, error.toString()),
-      ),
-    );
-  }
-
-  Widget _buildContent(BuildContext context, LibraryAlbum libraryAlbum) {
-    final album = libraryAlbum.album;
-    final canEdit = ref.watch(canEditCurrentLibraryProvider);
-
-    // Trigger lazy backfill of colors if this album doesn't have them yet
-    if (album != null && album.colors == null) {
-      ref.watch(albumColorsBackfillProvider(album.id));
-    }
-
-    // Resolve palette colors for immersive styling
-    final albumColors = album?.colors;
-    final dominant = AlbumColors.parseHex(albumColors?.dominant);
-    final vibrant = AlbumColors.parseHex(albumColors?.vibrant);
-    final darkVibrant = AlbumColors.parseHex(albumColors?.darkVibrant);
-    final darkMuted = AlbumColors.parseHex(albumColors?.darkMuted);
-    final muted = AlbumColors.parseHex(albumColors?.muted);
-
-    // Derived colors with fallbacks
-    final gradientBase = darkVibrant ?? darkMuted ?? dominant;
-    final appBarColor = gradientBase != null
-        ? Color.lerp(gradientBase, SaturdayColors.light, 0.3)!
-        : SaturdayColors.light;
-    final accentColor = vibrant ?? dominant;
-    final chipTint = muted ?? dominant;
-    final artistColor = darkVibrant ?? muted ?? SaturdayColors.secondary;
-
-    return CustomScrollView(
-      slivers: [
-        // Hero app bar with album art
-        _buildSliverAppBar(context, libraryAlbum, appBarColor: appBarColor, accentColor: accentColor),
-
-        // Content with full-page gradient background
-        SliverToBoxAdapter(
-          child: DecoratedBox(
-            decoration: gradientBase != null
-                ? BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      stops: const [0.0, 0.4, 1.0],
-                      colors: [
-                        gradientBase.withValues(alpha: 0.35),
-                        gradientBase.withValues(alpha: 0.12),
-                        SaturdayColors.light,
-                      ],
-                    ),
-                  )
-                : const BoxDecoration(),
-            child: Padding(
-              padding: Spacing.pagePadding,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const SizedBox(height: Spacing.lg),
-
-                  // Title and artist
-                  _buildHeader(context, libraryAlbum, artistColor: artistColor),
-                  const SizedBox(height: Spacing.lg),
-
-                  // Metadata chips (year, label, genres)
-                  if (album != null) _buildMetadataChips(context, album, chipTint: chipTint),
-                  const SizedBox(height: Spacing.xl),
-
-                  // Action buttons
-                  _buildActionButtons(context, libraryAlbum, accentColor: accentColor),
-                  const SizedBox(height: Spacing.xl),
-
-                  // Divider
-                  if (accentColor != null) _buildAccentDivider(accentColor),
-                  const SizedBox(height: Spacing.xl),
-
-                  // Location
-                  _buildLocationSection(context, libraryAlbum),
-                  const SizedBox(height: Spacing.xl),
-
-                  // Track listing
-                  if (album != null && album.tracks.isNotEmpty) ...[
-                    _buildSectionHeader(context, 'Tracks', accentColor: accentColor),
-                    const SizedBox(height: Spacing.sm),
-                    TrackList(tracks: album.tracks, accentColor: accentColor),
-                    const SizedBox(height: Spacing.lg),
-                    _buildTotalDuration(context, album.formattedTotalDuration),
-                    const SizedBox(height: Spacing.xl),
-                  ],
-
-                  // Notes
-                  _buildNotesSection(context, libraryAlbum, canEdit),
-                  const SizedBox(height: Spacing.xl),
-
-                  // Tags
-                  _buildTagsSection(context, libraryAlbum),
-                  const SizedBox(height: Spacing.xl),
-
-                  // Debug: Color palette
-                  if (albumColors != null) _buildColorPaletteDebug(context, albumColors),
-                  const SizedBox(height: Spacing.xxl),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildSliverAppBar(
-    BuildContext context,
-    LibraryAlbum libraryAlbum, {
-    required Color appBarColor,
-    Color? accentColor,
-  }) {
-    final album = libraryAlbum.album;
-    final coverUrl = album?.coverImageUrl;
-    final buttonBg = appBarColor.withValues(alpha: 0.9);
-    final favoriteColor = accentColor ?? SaturdayColors.error;
-
-    return SliverAppBar(
-      expandedHeight: MediaQuery.of(context).size.width,
-      pinned: true,
-      stretch: true,
-      backgroundColor: appBarColor,
-      leading: IconButton(
-        icon: Container(
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            color: buttonBg,
-            shape: BoxShape.circle,
-          ),
-          child: const Icon(Icons.arrow_back),
-        ),
-        onPressed: () => context.pop(),
-      ),
-      actions: [
-        IconButton(
-          icon: Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: buttonBg,
-              shape: BoxShape.circle,
-            ),
-            child: Icon(
-              libraryAlbum.isFavorite ? Icons.favorite : Icons.favorite_border,
-              color: libraryAlbum.isFavorite ? favoriteColor : null,
-            ),
-          ),
-          onPressed: () => _toggleFavorite(libraryAlbum),
-        ),
-        IconButton(
-          icon: Container(
-            padding: const EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: buttonBg,
-              shape: BoxShape.circle,
-            ),
-            child: const Icon(Icons.more_vert),
-          ),
-          onPressed: () => _showOptionsMenu(context, libraryAlbum),
-        ),
-      ],
-      flexibleSpace: FlexibleSpaceBar(
-        background: coverUrl != null
-            ? CachedNetworkImage(
-                imageUrl: coverUrl,
-                fit: BoxFit.cover,
-                placeholder: (context, url) => _buildArtPlaceholder(),
-                errorWidget: (context, url, error) => _buildArtPlaceholder(),
-              )
-            : _buildArtPlaceholder(),
-      ),
-    );
-  }
-
-  Widget _buildArtPlaceholder() {
-    return Container(
-      color: SaturdayColors.secondary.withValues(alpha: 0.2),
-      child: Center(
-        child: Icon(
-          Icons.album_outlined,
-          size: 120,
-          color: SaturdayColors.secondary,
+      backgroundColor: colors.paper,
+      appBar: SaturdayAppBar(
+        title: 'Archive',
+        actions: libraryAlbumAsync.maybeWhen(
+          data: (libraryAlbum) => libraryAlbum != null
+              ? [
+                  IconButton(
+                    icon: const Icon(Icons.more_horiz),
+                    onPressed: () => _showOptionsMenu(context, libraryAlbum),
+                  ),
+                ]
+              : null,
+          orElse: () => null,
         ),
       ),
-    );
-  }
-
-  Widget _buildHeader(BuildContext context, LibraryAlbum libraryAlbum, {Color? artistColor}) {
-    final album = libraryAlbum.album;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          album?.title ?? 'Unknown Album',
-          style: Theme.of(context).textTheme.headlineMedium,
-        ),
-        const SizedBox(height: Spacing.xs),
-        Text(
-          album?.artist ?? 'Unknown Artist',
-          style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                color: artistColor ?? SaturdayColors.secondary,
-                fontWeight: FontWeight.normal,
-              ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildMetadataChips(BuildContext context, dynamic album, {Color? chipTint}) {
-    final chips = <Widget>[];
-
-    if (album.year != null) {
-      chips.add(_buildChip(context, album.year.toString(), Icons.calendar_today, tint: chipTint));
-    }
-
-    if (album.label != null && album.label!.isNotEmpty) {
-      chips.add(_buildChip(context, album.label!, Icons.business, tint: chipTint));
-    }
-
-    for (final genre in album.genres.take(3)) {
-      chips.add(_buildChip(context, genre, Icons.music_note, tint: chipTint));
-    }
-
-    return Wrap(
-      spacing: Spacing.sm,
-      runSpacing: Spacing.sm,
-      children: chips,
-    );
-  }
-
-  Widget _buildChip(BuildContext context, String label, IconData icon, {Color? tint}) {
-    return Chip(
-      avatar: Icon(icon, size: 16, color: tint),
-      label: Text(label),
-      backgroundColor: tint?.withValues(alpha: 0.1),
-      side: tint != null ? BorderSide(color: tint.withValues(alpha: 0.2)) : null,
-      visualDensity: VisualDensity.compact,
-      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-    );
-  }
-
-  Widget _buildActionButtons(BuildContext context, LibraryAlbum libraryAlbum, {Color? accentColor}) {
-    final tagsAsync = ref.watch(tagsForAlbumProvider(libraryAlbum.id));
-    final hasTag = tagsAsync.valueOrNull?.isNotEmpty ?? false;
-
-    // Choose contrasting foreground for the accent button
-    final buttonFg = accentColor != null
-        ? (accentColor.computeLuminance() > 0.4 ? SaturdayColors.black : Colors.white)
-        : null;
-
-    return Column(
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: ElevatedButton.icon(
-                onPressed: () => _setAsNowPlaying(libraryAlbum),
-                icon: const Icon(Icons.play_circle_outline),
-                label: const Text('Now Playing'),
-                style: accentColor != null
-                    ? ElevatedButton.styleFrom(
-                        backgroundColor: accentColor,
-                        foregroundColor: buttonFg,
-                      )
-                    : null,
-              ),
-            ),
-            const SizedBox(width: Spacing.md),
-            Expanded(
-              child: OutlinedButton.icon(
-                onPressed: () => _addToQueue(libraryAlbum),
-                icon: const Icon(Icons.playlist_add),
-                label: const Text('Queue'),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: Spacing.sm),
-        SizedBox(
-          width: double.infinity,
-          child: hasTag
-              ? Container(
-                  padding: const EdgeInsets.symmetric(
-                    vertical: Spacing.sm,
-                  ),
-                  decoration: BoxDecoration(
-                    color: SaturdayColors.success.withValues(alpha: 0.1),
-                    borderRadius: AppRadius.smallRadius,
-                    border: Border.all(
-                      color: SaturdayColors.success.withValues(alpha: 0.3),
-                    ),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        Icons.nfc,
-                        size: 18,
-                        color: SaturdayColors.success,
-                      ),
-                      const SizedBox(width: Spacing.xs),
-                      Text(
-                        'Tracked',
-                        style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                              color: SaturdayColors.success,
-                            ),
-                      ),
-                    ],
-                  ),
-                )
-              : TextButton.icon(
-                  onPressed: () => _associateTag(libraryAlbum),
-                  icon: const Icon(Icons.nfc),
-                  label: const Text('Associate Tag'),
-                ),
-        ),
-      ],
-    );
-  }
-
-  Future<void> _addToQueue(LibraryAlbum libraryAlbum) async {
-    try {
-      await ref
-          .read(playbackQueueProvider.notifier)
-          .addAlbum(libraryAlbum.id);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context)
-        ..clearSnackBars()
-        ..showSnackBar(
-          SnackBar(
-            content: Text('Added "${libraryAlbum.album?.title}" to queue'),
-            action: SnackBarAction(
-              label: 'View',
-              onPressed: () => context.push('/now-playing/queue'),
-            ),
-          ),
-        );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not add to queue: $e')),
-      );
-    }
-  }
-
-  Widget _buildLocationSection(BuildContext context, LibraryAlbum libraryAlbum) {
-    final location = ref.watch(albumLocationProvider(libraryAlbum.id));
-
-    final deviceAsync = location != null
-        ? ref.watch(deviceByIdProvider(location.deviceId))
-        : null;
-    final deviceName = deviceAsync?.whenOrNull(
-      data: (device) => device?.name,
-    );
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _buildSectionHeader(context, 'Location'),
-        const SizedBox(height: Spacing.sm),
-        AlbumLocationBadge(
-          crateName: deviceName,
-          lastSeen: location?.detectedAt,
-          isCurrentlyDetected: location?.isPresent ?? false,
-        ),
-      ],
-    );
-  }
-
-  Widget _buildSectionHeader(BuildContext context, String title, {Color? accentColor}) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(
-          title,
-          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                color: accentColor,
-              ),
-        ),
-        if (accentColor != null) ...[
-          const SizedBox(height: 4),
-          Container(
-            width: 32,
-            height: 2,
-            decoration: BoxDecoration(
-              color: accentColor,
-              borderRadius: BorderRadius.circular(1),
-            ),
-          ),
-        ],
-      ],
-    );
-  }
-
-  Widget _buildAccentDivider(Color color) {
-    return Container(
-      height: 1,
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            color.withValues(alpha: 0.4),
-            color.withValues(alpha: 0.05),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTotalDuration(BuildContext context, String duration) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.end,
-      children: [
-        Text(
-          'Total Duration: ',
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: SaturdayColors.secondary,
-              ),
-        ),
-        Text(
-          duration,
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                fontWeight: FontWeight.w600,
-              ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildNotesSection(
-    BuildContext context,
-    LibraryAlbum libraryAlbum,
-    bool canEdit,
-  ) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            _buildSectionHeader(context, 'Notes'),
-            if (canEdit && !_isEditingNotes)
-              TextButton(
-                onPressed: () {
-                  setState(() {
-                    _isEditingNotes = true;
-                    _notesController.text = libraryAlbum.notes ?? '';
-                  });
-                },
-                child: Text(
-                  libraryAlbum.notes?.isEmpty ?? true ? 'Add' : 'Edit',
-                ),
-              ),
-          ],
-        ),
-        const SizedBox(height: Spacing.sm),
-        if (_isEditingNotes)
-          _buildNotesEditor(context, libraryAlbum)
-        else if (libraryAlbum.notes?.isNotEmpty ?? false)
-          Text(
-            libraryAlbum.notes!,
-            style: Theme.of(context).textTheme.bodyMedium,
-          )
-        else
-          Text(
-            'No notes yet',
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: SaturdayColors.secondary,
-                  fontStyle: FontStyle.italic,
-                ),
-          ),
-      ],
-    );
-  }
-
-  Widget _buildNotesEditor(BuildContext context, LibraryAlbum libraryAlbum) {
-    return Column(
-      children: [
-        TextField(
-          controller: _notesController,
-          maxLines: 4,
-          decoration: const InputDecoration(
-            hintText: 'Add notes about this album...',
-          ),
-        ),
-        const SizedBox(height: Spacing.sm),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.end,
-          children: [
-            TextButton(
-              onPressed: () {
-                setState(() => _isEditingNotes = false);
-              },
-              child: const Text('Cancel'),
-            ),
-            const SizedBox(width: Spacing.sm),
-            ElevatedButton(
-              onPressed: () => _saveNotes(libraryAlbum),
-              child: const Text('Save'),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _buildTagsSection(BuildContext context, LibraryAlbum libraryAlbum) {
-    final tagsAsync = ref.watch(tagsForAlbumProvider(libraryAlbum.id));
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _buildSectionHeader(context, 'Associated Tag'),
-        const SizedBox(height: Spacing.sm),
-        tagsAsync.when(
-          data: (tags) {
-            if (tags.isEmpty) {
-              return Text(
-                'No tag associated',
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                      color: SaturdayColors.secondary,
-                      fontStyle: FontStyle.italic,
-                    ),
-              );
-            }
-            final tag = tags.first;
-            return Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: Spacing.md,
-                vertical: Spacing.sm,
-              ),
-              decoration: BoxDecoration(
-                color: SaturdayColors.success.withValues(alpha: 0.1),
-                borderRadius: AppRadius.smallRadius,
-                border: Border.all(
-                  color: SaturdayColors.success.withValues(alpha: 0.3),
-                ),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.nfc,
-                    size: 16,
-                    color: SaturdayColors.success,
-                  ),
-                  const SizedBox(width: Spacing.sm),
-                  Text(
-                    EpcValidator.formatEpcForDisplay(tag.epcIdentifier),
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodySmall
-                        ?.copyWith(fontFamily: 'monospace'),
-                  ),
-                ],
-              ),
+      body: SafeArea(
+        child: libraryAlbumAsync.when(
+          data: (libraryAlbum) {
+            if (libraryAlbum == null) return _NotFound(colors: colors);
+            return _AlbumDetailBody(
+              libraryAlbum: libraryAlbum,
+              colors: colors,
+              notesController: _notesController,
+              isEditingNotes: _isEditingNotes,
+              onStartEditing: (notes) => setState(() {
+                _isEditingNotes = true;
+                _notesController.text = notes ?? '';
+              }),
+              onCancelEditing: () => setState(() => _isEditingNotes = false),
+              onSaveNotes: () => _saveNotes(libraryAlbum),
             );
           },
-          loading: () => const Center(
-            child: SizedBox(
-              width: 20,
-              height: 20,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            ),
-          ),
-          error: (error, _) => Text(
-            'Failed to load tags',
-            style: TextStyle(color: SaturdayColors.error),
+          loading: () => _LoadingPlaceholder(colors: colors),
+          error: (error, _) => _ErrorView(
+            colors: colors,
+            message: error.toString(),
           ),
         ),
-      ],
-    );
-  }
-
-  Widget _buildColorPaletteDebug(BuildContext context, AlbumColors colors) {
-    final namedColors = <String, String?>{
-      'dominant': colors.dominant,
-      'vibrant': colors.vibrant,
-      'lightVibrant': colors.lightVibrant,
-      'darkVibrant': colors.darkVibrant,
-      'muted': colors.muted,
-      'lightMuted': colors.lightMuted,
-      'darkMuted': colors.darkMuted,
-    };
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _buildSectionHeader(context, 'Color Palette'),
-        const SizedBox(height: Spacing.sm),
-
-        // Named colors
-        ...namedColors.entries.map((entry) {
-          final color = AlbumColors.parseHex(entry.value);
-          return Padding(
-            padding: const EdgeInsets.symmetric(vertical: 2),
-            child: Row(
-              children: [
-                Container(
-                  width: 20,
-                  height: 20,
-                  decoration: BoxDecoration(
-                    color: color ?? Colors.transparent,
-                    borderRadius: BorderRadius.circular(4),
-                    border: Border.all(
-                      color: SaturdayColors.secondary.withValues(alpha: 0.3),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: Spacing.sm),
-                Text(
-                  entry.key,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
-                ),
-                const Spacer(),
-                Text(
-                  entry.value ?? '—',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        fontFamily: 'monospace',
-                        color: SaturdayColors.secondary,
-                      ),
-                ),
-              ],
-            ),
-          );
-        }),
-
-        const SizedBox(height: Spacing.md),
-
-        // Light colors (LED-safe)
-        Text(
-          'Light (LED-safe): ${colors.light.length}',
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                fontWeight: FontWeight.w600,
-              ),
-        ),
-        const SizedBox(height: Spacing.xs),
-        Wrap(
-          spacing: 4,
-          runSpacing: 4,
-          children: colors.light.map((hex) {
-            final color = AlbumColors.parseHex(hex);
-            return Tooltip(
-              message: hex,
-              child: Container(
-                width: 28,
-                height: 28,
-                decoration: BoxDecoration(
-                  color: color ?? Colors.transparent,
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(
-                    color: SaturdayColors.secondary.withValues(alpha: 0.3),
-                  ),
-                ),
-              ),
-            );
-          }).toList(),
-        ),
-
-        const SizedBox(height: Spacing.md),
-
-        // Dark colors (UI only)
-        Text(
-          'Dark (UI only): ${colors.dark.length}',
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                fontWeight: FontWeight.w600,
-              ),
-        ),
-        const SizedBox(height: Spacing.xs),
-        Wrap(
-          spacing: 4,
-          runSpacing: 4,
-          children: colors.dark.map((hex) {
-            final color = AlbumColors.parseHex(hex);
-            return Tooltip(
-              message: hex,
-              child: Container(
-                width: 28,
-                height: 28,
-                decoration: BoxDecoration(
-                  color: color ?? Colors.transparent,
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(
-                    color: SaturdayColors.secondary.withValues(alpha: 0.3),
-                  ),
-                ),
-              ),
-            );
-          }).toList(),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildNotFoundState(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            Icons.album_outlined,
-            size: 80,
-            color: SaturdayColors.secondary,
-          ),
-          const SizedBox(height: Spacing.lg),
-          Text(
-            'Album not found',
-            style: Theme.of(context).textTheme.headlineSmall,
-          ),
-          const SizedBox(height: Spacing.xl),
-          ElevatedButton(
-            onPressed: () => context.pop(),
-            child: const Text('Go Back'),
-          ),
-        ],
       ),
     );
-  }
-
-  Widget _buildErrorState(BuildContext context, String error) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            Icons.error_outline,
-            size: 64,
-            color: SaturdayColors.error,
-          ),
-          const SizedBox(height: Spacing.lg),
-          Text(
-            'Failed to load album',
-            style: Theme.of(context).textTheme.headlineSmall,
-          ),
-          const SizedBox(height: Spacing.sm),
-          Text(
-            error,
-            textAlign: TextAlign.center,
-            style: TextStyle(color: SaturdayColors.secondary),
-          ),
-          const SizedBox(height: Spacing.xl),
-          ElevatedButton(
-            onPressed: () => context.pop(),
-            child: const Text('Go Back'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _toggleFavorite(LibraryAlbum libraryAlbum) async {
-    // TODO: Implement favorite toggle via repository
-    ScaffoldMessenger.of(context)
-      ..clearSnackBars()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(
-            libraryAlbum.isFavorite
-                ? 'Removed from favorites'
-                : 'Added to favorites',
-          ),
-        ),
-      );
-  }
-
-  void _setAsNowPlaying(LibraryAlbum libraryAlbum) {
-    ref.read(nowPlayingProvider.notifier).setNowPlaying(libraryAlbum);
-    ScaffoldMessenger.of(context)
-      ..clearSnackBars()
-      ..showSnackBar(
-        SnackBar(
-          content: Text('Now playing: "${libraryAlbum.album?.title}"'),
-          action: SnackBarAction(
-            label: 'View',
-            onPressed: () => context.go(RoutePaths.nowPlaying),
-          ),
-        ),
-      );
-  }
-
-  void _associateTag(LibraryAlbum libraryAlbum) {
-    showTagMethodPicker(context, ref, libraryAlbum.id);
   }
 
   Future<void> _saveNotes(LibraryAlbum libraryAlbum) async {
-    // TODO: Save notes via repository
+    // TODO: persist via repository when the witness repo lands.
+    if (!mounted) return;
     setState(() => _isEditingNotes = false);
-    ScaffoldMessenger.of(context)
-      ..clearSnackBars()
-      ..showSnackBar(
-        const SnackBar(content: Text('Notes saved')),
-      );
   }
 
   void _showOptionsMenu(BuildContext context, LibraryAlbum libraryAlbum) {
-    showModalBottomSheet(
+    final colors = SaturdayColorTokens.of(context);
+    showModalBottomSheet<void>(
       context: context,
-      builder: (context) => SafeArea(
+      backgroundColor: colors.paperElevated,
+      builder: (sheetContext) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              leading: const Icon(Icons.share),
-              title: const Text('Share'),
+              leading: Icon(Icons.ios_share, color: colors.ink),
+              title: Text(
+                'Share',
+                style: SaturdayType.body.copyWith(color: colors.ink),
+              ),
               onTap: () {
-                Navigator.pop(context);
-                // TODO: Implement share
+                Navigator.pop(sheetContext);
+                // TODO: implement share
               },
             ),
             ListTile(
-              leading: Icon(
-                Icons.delete_outline,
-                color: SaturdayColors.error,
-              ),
+              leading: Icon(Icons.remove_circle_outline, color: colors.ink),
               title: Text(
-                'Remove from Library',
-                style: TextStyle(color: SaturdayColors.error),
+                'Remove from collection',
+                style: SaturdayType.body.copyWith(color: colors.ink),
               ),
               onTap: () {
-                Navigator.pop(context);
-                _confirmRemove(libraryAlbum);
+                // Destructive proceeds without confirmation. Recovery is
+                // re-adding the record. Inline undo at the collection list
+                // is an open question.
+                Navigator.pop(sheetContext);
+                _removeAlbum(libraryAlbum);
               },
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  void _confirmRemove(LibraryAlbum libraryAlbum) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Remove Album?'),
-        content: Text(
-          'Are you sure you want to remove "${libraryAlbum.album?.title}" from your library?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () async {
-              Navigator.pop(context);
-              await _removeAlbum(libraryAlbum);
-            },
-            style: TextButton.styleFrom(
-              foregroundColor: SaturdayColors.error,
-            ),
-            child: const Text('Remove'),
-          ),
-        ],
       ),
     );
   }
@@ -928,34 +150,827 @@ class _AlbumDetailScreenState extends ConsumerState<AlbumDetailScreen> {
       final albumRepo = ref.read(albumRepositoryProvider);
       await albumRepo.removeAlbumFromLibrary(libraryAlbum.id);
 
-      // Invalidate the library albums provider to refresh the list
       ref.invalidate(libraryAlbumsProvider);
       ref.invalidate(allLibraryAlbumsProvider);
       ref.invalidate(libraryAlbumCountProvider);
 
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(
-            SnackBar(
-              content: Text(
-                '"${libraryAlbum.album?.title}" removed from library',
+      if (mounted) context.pop();
+    } catch (e) {
+      debugPrint('[AlbumDetail] remove failed: $e');
+    }
+  }
+}
+
+// =============================================================================
+// Body
+// =============================================================================
+
+class _AlbumDetailBody extends ConsumerWidget {
+  const _AlbumDetailBody({
+    required this.libraryAlbum,
+    required this.colors,
+    required this.notesController,
+    required this.isEditingNotes,
+    required this.onStartEditing,
+    required this.onCancelEditing,
+    required this.onSaveNotes,
+  });
+
+  final LibraryAlbum libraryAlbum;
+  final SaturdayColorTokens colors;
+  final TextEditingController notesController;
+  final bool isEditingNotes;
+  final void Function(String? currentNotes) onStartEditing;
+  final VoidCallback onCancelEditing;
+  final Future<void> Function() onSaveNotes;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final album = libraryAlbum.album;
+    final canEdit = ref.watch(canEditCurrentLibraryProvider);
+
+    // Lazy backfill of palette colors (used by the debug section).
+    if (album != null && album.colors == null) {
+      ref.watch(albumColorsBackfillProvider(album.id));
+    }
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(
+        SaturdaySpace.space4,
+        SaturdaySpace.space4,
+        SaturdaySpace.space4,
+        SaturdaySpace.space16,
+      ),
+      children: [
+        _Cover(album: album, colors: colors),
+        const SizedBox(height: SaturdaySpace.space8),
+        _Header(album: album, colors: colors),
+        const SizedBox(height: SaturdaySpace.space3),
+        _MetaLine(album: album, colors: colors),
+        const SizedBox(height: SaturdaySpace.space8),
+        _SendToTheRoomAction(libraryAlbum: libraryAlbum, colors: colors),
+        const SizedBox(height: SaturdaySpace.space8),
+        _SectionEyebrow(label: 'Where', colors: colors),
+        const SizedBox(height: SaturdaySpace.space3),
+        _LocationLine(libraryAlbum: libraryAlbum, colors: colors),
+        if (album != null && album.tracks.isNotEmpty) ...[
+          const SizedBox(height: SaturdaySpace.space8),
+          _SectionEyebrow(label: 'Sides', colors: colors),
+          const SizedBox(height: SaturdaySpace.space3),
+          TrackList(tracks: album.tracks),
+          const SizedBox(height: SaturdaySpace.space3),
+          _AlbumTotal(album: album, colors: colors),
+        ],
+        const SizedBox(height: SaturdaySpace.space8),
+        _SectionEyebrow(label: 'Witness', colors: colors),
+        const SizedBox(height: SaturdaySpace.space3),
+        _WitnessSection(
+          libraryAlbum: libraryAlbum,
+          colors: colors,
+          canEdit: canEdit,
+          controller: notesController,
+          isEditing: isEditingNotes,
+          onStartEditing: onStartEditing,
+          onCancel: onCancelEditing,
+          onSave: onSaveNotes,
+        ),
+        const SizedBox(height: SaturdaySpace.space8),
+        _SectionEyebrow(label: 'Tag', colors: colors),
+        const SizedBox(height: SaturdaySpace.space3),
+        _TagSection(libraryAlbum: libraryAlbum, colors: colors),
+        if (kDebugMode && album?.colors != null) ...[
+          const SizedBox(height: SaturdaySpace.space12),
+          _SectionEyebrow(label: 'Palette (debug)', colors: colors),
+          const SizedBox(height: SaturdaySpace.space3),
+          _ColorPaletteDebug(palette: album!.colors!, colors: colors),
+        ],
+      ],
+    );
+  }
+}
+
+// =============================================================================
+// Cover
+// =============================================================================
+
+class _Cover extends StatelessWidget {
+  const _Cover({required this.album, required this.colors});
+
+  final Album? album;
+  final SaturdayColorTokens colors;
+
+  @override
+  Widget build(BuildContext context) {
+    final coverUrl = album?.coverImageUrl;
+    final maxSize = MediaQuery.of(context).size.width * 0.72;
+
+    return Center(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: maxSize),
+        child: AspectRatio(
+          aspectRatio: 1,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(2),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                border: Border.all(color: colors.borderQuiet),
+                borderRadius: BorderRadius.circular(2),
+                color: colors.paperElevated,
+              ),
+              child: coverUrl != null
+                  ? CachedNetworkImage(
+                      imageUrl: coverUrl,
+                      fit: BoxFit.cover,
+                      placeholder: (context, url) =>
+                          _CoverPlaceholder(colors: colors),
+                      errorWidget: (context, url, error) =>
+                          _CoverPlaceholder(colors: colors),
+                    )
+                  : _CoverPlaceholder(colors: colors),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CoverPlaceholder extends StatelessWidget {
+  const _CoverPlaceholder({required this.colors});
+
+  final SaturdayColorTokens colors;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: colors.paperElevated,
+      alignment: Alignment.center,
+      child: Icon(
+        Icons.album_outlined,
+        size: 64,
+        color: colors.inkTertiary,
+      ),
+    );
+  }
+}
+
+// =============================================================================
+// Header (title / artist)
+// =============================================================================
+
+class _Header extends StatelessWidget {
+  const _Header({required this.album, required this.colors});
+
+  final Album? album;
+  final SaturdayColorTokens colors;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          album?.title ?? 'Untitled record',
+          style: SaturdayType.titleArchive.copyWith(
+            color: colors.ink,
+            fontStyle: FontStyle.italic,
+          ),
+        ),
+        const SizedBox(height: SaturdaySpace.space1),
+        Text(
+          album?.artist ?? 'Artist unknown',
+          style: SaturdayType.body.copyWith(
+            color: colors.inkSecondary,
+            fontSize: 16,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// =============================================================================
+// Meta line (year · label · genre)
+// =============================================================================
+
+class _MetaLine extends StatelessWidget {
+  const _MetaLine({required this.album, required this.colors});
+
+  final Album? album;
+  final SaturdayColorTokens colors;
+
+  @override
+  Widget build(BuildContext context) {
+    if (album == null) return const SizedBox.shrink();
+
+    final parts = <String>[
+      if (album!.year != null) album!.year.toString(),
+      if (album!.label != null && album!.label!.isNotEmpty) album!.label!,
+      ...album!.genres.take(2),
+    ];
+    if (parts.isEmpty) return const SizedBox.shrink();
+
+    return Text(
+      parts.join('  ·  '),
+      style: SaturdayType.meta.copyWith(color: colors.inkTertiary),
+    );
+  }
+}
+
+// =============================================================================
+// Send-to-the-room action
+// =============================================================================
+
+class _SendToTheRoomAction extends ConsumerWidget {
+  const _SendToTheRoomAction({
+    required this.libraryAlbum,
+    required this.colors,
+  });
+
+  final LibraryAlbum libraryAlbum;
+  final SaturdayColorTokens colors;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final nowPlaying = ref.watch(nowPlayingProvider);
+    final queue = ref.watch(playbackQueueProvider).items;
+
+    final isOnStand = nowPlaying.currentAlbum?.id == libraryAlbum.id;
+    final queueIndex =
+        queue.indexWhere((item) => item.libraryAlbumId == libraryAlbum.id);
+
+    final String label;
+    final VoidCallback? onTap;
+
+    if (isOnStand) {
+      final side = nowPlaying.currentSide;
+      if (nowPlaying.isPlaying) {
+        label = side.isEmpty ? 'On the stand.' : 'On the stand. Side $side.';
+      } else {
+        label = 'Waiting on the stand.';
+      }
+      onTap = () => context.go(RoutePaths.nowPlaying);
+    } else if (queueIndex >= 0) {
+      label = '${_ordinalUp(queueIndex)} in the room.';
+      onTap = () => context.go(RoutePaths.nowPlaying);
+    } else {
+      label = 'Send to the room';
+      onTap = () => _send(ref, nowPlaying);
+    }
+
+    return _ArchiveButton(
+      label: label,
+      onTap: onTap,
+      colors: colors,
+      isPrimary: !isOnStand && queueIndex < 0,
+    );
+  }
+
+  Future<void> _send(WidgetRef ref, NowPlayingState nowPlaying) async {
+    if (nowPlaying.currentAlbum == null) {
+      // Empty stand — place the record there, queued, awaiting the needle.
+      await ref.read(nowPlayingProvider.notifier).queueOnStand(libraryAlbum);
+    } else {
+      // Stand is occupied — record joins the session.
+      await ref
+          .read(playbackQueueProvider.notifier)
+          .addAlbum(libraryAlbum.id);
+    }
+  }
+
+  String _ordinalUp(int zeroIndexed) {
+    switch (zeroIndexed) {
+      case 0:
+        return 'Next up';
+      case 1:
+        return 'Second up';
+      case 2:
+        return 'Third up';
+      case 3:
+        return 'Fourth up';
+      case 4:
+        return 'Fifth up';
+      default:
+        return 'Up later';
+    }
+  }
+}
+
+class _ArchiveButton extends StatelessWidget {
+  const _ArchiveButton({
+    required this.label,
+    required this.onTap,
+    required this.colors,
+    required this.isPrimary,
+  });
+
+  final String label;
+  final VoidCallback? onTap;
+  final SaturdayColorTokens colors;
+  final bool isPrimary;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: double.infinity,
+      child: Material(
+        color: isPrimary ? colors.ink : Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(2),
+          side: BorderSide(
+            color: isPrimary ? colors.ink : colors.borderStrong,
+          ),
+        ),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(2),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: SaturdaySpace.space4,
+              vertical: SaturdaySpace.space3,
+            ),
+            child: Center(
+              child: Text(
+                label,
+                style: SaturdayType.body.copyWith(
+                  color: isPrimary ? colors.paper : colors.ink,
+                  fontWeight: SaturdayType.medium,
+                ),
               ),
             ),
-          );
-        context.pop();
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-          ..clearSnackBars()
-          ..showSnackBar(
-            SnackBar(
-              content: Text('Failed to remove album: $e'),
-              backgroundColor: SaturdayColors.error,
-            ),
-          );
-      }
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// =============================================================================
+// Section eyebrow
+// =============================================================================
+
+class _SectionEyebrow extends StatelessWidget {
+  const _SectionEyebrow({required this.label, required this.colors});
+
+  final String label;
+  final SaturdayColorTokens colors;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      label,
+      style: SaturdayType.eyebrow.copyWith(color: colors.inkSecondary),
+    );
+  }
+}
+
+// =============================================================================
+// Location
+// =============================================================================
+
+class _LocationLine extends ConsumerWidget {
+  const _LocationLine({required this.libraryAlbum, required this.colors});
+
+  final LibraryAlbum libraryAlbum;
+  final SaturdayColorTokens colors;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final location = ref.watch(albumLocationProvider(libraryAlbum.id));
+    if (location == null) {
+      return Text(
+        "Not seen in any crate yet.",
+        style: SaturdayType.body.copyWith(color: colors.inkSecondary),
+      );
     }
+
+    final deviceAsync = ref.watch(deviceByIdProvider(location.deviceId));
+    final deviceName =
+        deviceAsync.whenOrNull(data: (device) => device?.name) ??
+            'an unknown crate';
+
+    final primary = location.isPresent
+        ? 'In $deviceName.'
+        : 'Last seen in $deviceName.';
+
+    final secondary = !location.isPresent
+        ? _relativeTime(location.detectedAt)
+        : null;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          primary,
+          style: SaturdayType.body.copyWith(color: colors.ink),
+        ),
+        if (secondary != null) ...[
+          const SizedBox(height: SaturdaySpace.space1),
+          Text(
+            secondary,
+            style: SaturdayType.meta.copyWith(color: colors.inkTertiary),
+          ),
+        ],
+      ],
+    );
+  }
+
+  String _relativeTime(DateTime when) {
+    final delta = DateTime.now().difference(when);
+    if (delta.inMinutes < 1) return 'A moment ago.';
+    if (delta.inMinutes < 60) return '${delta.inMinutes} minutes ago.';
+    if (delta.inHours < 24) return '${delta.inHours} hours ago.';
+    if (delta.inDays < 7) return '${delta.inDays} days ago.';
+    return '${when.year}-${when.month.toString().padLeft(2, '0')}-${when.day.toString().padLeft(2, '0')}.';
+  }
+}
+
+// =============================================================================
+// Album total duration
+// =============================================================================
+
+class _AlbumTotal extends StatelessWidget {
+  const _AlbumTotal({required this.album, required this.colors});
+
+  final Album album;
+  final SaturdayColorTokens colors;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: SaturdaySpace.space2),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              'Album total',
+              style: SaturdayType.meta.copyWith(color: colors.inkTertiary),
+            ),
+          ),
+          Text(
+            album.formattedTotalDuration,
+            style: SaturdayType.mono.copyWith(color: colors.inkSecondary),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// =============================================================================
+// Witness (replaces "notes")
+// =============================================================================
+
+class _WitnessSection extends StatelessWidget {
+  const _WitnessSection({
+    required this.libraryAlbum,
+    required this.colors,
+    required this.canEdit,
+    required this.controller,
+    required this.isEditing,
+    required this.onStartEditing,
+    required this.onCancel,
+    required this.onSave,
+  });
+
+  final LibraryAlbum libraryAlbum;
+  final SaturdayColorTokens colors;
+  final bool canEdit;
+  final TextEditingController controller;
+  final bool isEditing;
+  final void Function(String? currentNotes) onStartEditing;
+  final VoidCallback onCancel;
+  final Future<void> Function() onSave;
+
+  @override
+  Widget build(BuildContext context) {
+    if (isEditing) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          TextField(
+            controller: controller,
+            maxLines: 5,
+            minLines: 3,
+            style: SaturdayType.bodySerif.copyWith(color: colors.ink),
+            decoration: InputDecoration(
+              hintText: 'Note something true.',
+              hintStyle:
+                  SaturdayType.bodySerif.copyWith(color: colors.inkTertiary),
+              filled: true,
+              fillColor: colors.paperElevated,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(2),
+                borderSide: BorderSide(color: colors.borderQuiet),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(2),
+                borderSide: BorderSide(color: colors.borderQuiet),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(2),
+                borderSide: BorderSide(color: colors.ink),
+              ),
+            ),
+          ),
+          const SizedBox(height: SaturdaySpace.space2),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              TextButton(
+                onPressed: onCancel,
+                child: Text(
+                  'Cancel',
+                  style: SaturdayType.body.copyWith(color: colors.inkSecondary),
+                ),
+              ),
+              const SizedBox(width: SaturdaySpace.space2),
+              TextButton(
+                onPressed: () => onSave(),
+                child: Text(
+                  'Save',
+                  style: SaturdayType.body.copyWith(
+                    color: colors.ink,
+                    fontWeight: SaturdayType.medium,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      );
+    }
+
+    final notes = libraryAlbum.notes;
+    final hasNotes = notes != null && notes.isNotEmpty;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (hasNotes)
+          Text(
+            notes,
+            style: SaturdayType.bodySerif.copyWith(color: colors.ink),
+          )
+        else
+          Text(
+            'No witness yet.',
+            style: SaturdayType.bodySerif.copyWith(color: colors.inkTertiary),
+          ),
+        if (canEdit) ...[
+          const SizedBox(height: SaturdaySpace.space2),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: GestureDetector(
+              onTap: () => onStartEditing(notes),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  vertical: SaturdaySpace.space1,
+                ),
+                child: Text(
+                  hasNotes ? 'Edit' : 'Add a witness entry',
+                  style: SaturdayType.bodySmall.copyWith(
+                    color: colors.ink,
+                    decoration: TextDecoration.underline,
+                    decorationColor: colors.borderStrong,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+// =============================================================================
+// Tag
+// =============================================================================
+
+class _TagSection extends ConsumerWidget {
+  const _TagSection({required this.libraryAlbum, required this.colors});
+
+  final LibraryAlbum libraryAlbum;
+  final SaturdayColorTokens colors;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final tagsAsync = ref.watch(tagsForAlbumProvider(libraryAlbum.id));
+
+    return tagsAsync.when(
+      data: (tags) {
+        if (tags.isEmpty) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'No tag yet.',
+                style: SaturdayType.body.copyWith(color: colors.inkSecondary),
+              ),
+              const SizedBox(height: SaturdaySpace.space2),
+              GestureDetector(
+                onTap: () => showTagMethodPicker(context, ref, libraryAlbum.id),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    vertical: SaturdaySpace.space1,
+                  ),
+                  child: Text(
+                    'Associate a tag',
+                    style: SaturdayType.bodySmall.copyWith(
+                      color: colors.ink,
+                      decoration: TextDecoration.underline,
+                      decorationColor: colors.borderStrong,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          );
+        }
+        final tag = tags.first;
+        return Text(
+          EpcValidator.formatEpcForDisplay(tag.epcIdentifier),
+          style: SaturdayType.mono.copyWith(color: colors.ink),
+        );
+      },
+      loading: () => SaturdaySkeleton.rect(
+        width: 220,
+        height: 16,
+      ),
+      error: (error, _) => Text(
+        "Tag isn't loading.",
+        style: SaturdayType.body.copyWith(color: colors.inkSecondary),
+      ),
+    );
+  }
+}
+
+// =============================================================================
+// Debug palette
+// =============================================================================
+
+class _ColorPaletteDebug extends StatelessWidget {
+  const _ColorPaletteDebug({required this.palette, required this.colors});
+
+  final AlbumColors palette;
+  final SaturdayColorTokens colors;
+
+  @override
+  Widget build(BuildContext context) {
+    final namedColors = <String, String?>{
+      'dominant': palette.dominant,
+      'vibrant': palette.vibrant,
+      'lightVibrant': palette.lightVibrant,
+      'darkVibrant': palette.darkVibrant,
+      'muted': palette.muted,
+      'lightMuted': palette.lightMuted,
+      'darkMuted': palette.darkMuted,
+    };
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final entry in namedColors.entries)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 2),
+            child: Row(
+              children: [
+                Container(
+                  width: 20,
+                  height: 20,
+                  decoration: BoxDecoration(
+                    color: AlbumColors.parseHex(entry.value) ??
+                        Colors.transparent,
+                    borderRadius: BorderRadius.circular(2),
+                    border: Border.all(color: colors.borderQuiet),
+                  ),
+                ),
+                const SizedBox(width: SaturdaySpace.space3),
+                Expanded(
+                  child: Text(
+                    entry.key,
+                    style: SaturdayType.bodySmall.copyWith(color: colors.ink),
+                  ),
+                ),
+                Text(
+                  entry.value ?? '—',
+                  style: SaturdayType.mono.copyWith(color: colors.inkTertiary),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+// =============================================================================
+// Loading + states
+// =============================================================================
+
+class _LoadingPlaceholder extends StatelessWidget {
+  const _LoadingPlaceholder({required this.colors});
+
+  final SaturdayColorTokens colors;
+
+  @override
+  Widget build(BuildContext context) {
+    final coverSize = MediaQuery.of(context).size.width * 0.72;
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(
+        SaturdaySpace.space4,
+        SaturdaySpace.space4,
+        SaturdaySpace.space4,
+        SaturdaySpace.space16,
+      ),
+      children: [
+        Center(child: SaturdaySkeleton.square(size: coverSize)),
+        const SizedBox(height: SaturdaySpace.space8),
+        SaturdaySkeleton.rect(width: 240, height: 28),
+        const SizedBox(height: SaturdaySpace.space3),
+        SaturdaySkeleton.rect(width: 160, height: 16),
+        const SizedBox(height: SaturdaySpace.space3),
+        SaturdaySkeleton.rect(width: 200, height: 12),
+        const SizedBox(height: SaturdaySpace.space8),
+        SaturdaySkeleton.rect(width: double.infinity, height: 44),
+      ],
+    );
+  }
+}
+
+class _NotFound extends StatelessWidget {
+  const _NotFound({required this.colors});
+
+  final SaturdayColorTokens colors;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(SaturdaySpace.space8),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            "This record isn't in the collection.",
+            style: SaturdayType.section.copyWith(color: colors.ink),
+          ),
+          const SizedBox(height: SaturdaySpace.space3),
+          GestureDetector(
+            onTap: () => context.pop(),
+            child: Text(
+              'Back',
+              style: SaturdayType.body.copyWith(
+                color: colors.ink,
+                decoration: TextDecoration.underline,
+                decorationColor: colors.borderStrong,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ErrorView extends StatelessWidget {
+  const _ErrorView({required this.colors, required this.message});
+
+  final SaturdayColorTokens colors;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(SaturdaySpace.space8),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            "Record details aren't loading.",
+            style: SaturdayType.section.copyWith(color: colors.ink),
+          ),
+          const SizedBox(height: SaturdaySpace.space2),
+          Text(
+            message,
+            style: SaturdayType.bodySmall.copyWith(color: colors.inkTertiary),
+          ),
+          const SizedBox(height: SaturdaySpace.space3),
+          GestureDetector(
+            onTap: () => context.pop(),
+            child: Text(
+              'Back',
+              style: SaturdayType.body.copyWith(
+                color: colors.ink,
+                decoration: TextDecoration.underline,
+                decorationColor: colors.borderStrong,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

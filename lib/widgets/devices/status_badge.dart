@@ -1,10 +1,36 @@
 import 'package:flutter/material.dart';
-import 'package:saturday_consumer_app/config/theme.dart';
+import 'package:saturday_consumer_app/config/tokens/tokens.dart';
 import 'package:saturday_consumer_app/models/device.dart';
+
+/// Resolve a connectivity status to a Saturday token tone.
+///
+/// Per the Saturday constitution, state is communicated by text, position,
+/// and tonal weight — not by saturated semantic color. Online uses `ink`
+/// (present); offline uses `inkTertiary` (muted); setup-required uses `ink`
+/// because the label itself is the call to action.
+Color _toneForStatus(SaturdayColorTokens c, ConnectivityStatus status) {
+  switch (status) {
+    case ConnectivityStatus.online:
+    case ConnectivityStatus.setupRequired:
+      return c.ink;
+    case ConnectivityStatus.offline:
+      return c.inkTertiary;
+  }
+}
+
+Color _toneForLegacyStatus(SaturdayColorTokens c, DeviceStatus status) {
+  switch (status) {
+    case DeviceStatus.online:
+    case DeviceStatus.setupRequired:
+      return c.ink;
+    case DeviceStatus.offline:
+      return c.inkTertiary;
+  }
+}
 
 /// A badge displaying the device's connectivity status.
 ///
-/// Shows a colored dot indicator with optional label text.
+/// Shows a tonal dot indicator with optional label text.
 /// Use [ConnectivityStatusBadge] for heartbeat-aware status display.
 class StatusBadge extends StatelessWidget {
   final DeviceStatus status;
@@ -18,17 +44,6 @@ class StatusBadge extends StatelessWidget {
     this.size = 8,
   });
 
-  Color get _statusColor {
-    switch (status) {
-      case DeviceStatus.online:
-        return SaturdayColors.success;
-      case DeviceStatus.offline:
-        return SaturdayColors.secondary;
-      case DeviceStatus.setupRequired:
-        return SaturdayColors.warning;
-    }
-  }
-
   String get _statusLabel {
     switch (status) {
       case DeviceStatus.online:
@@ -36,12 +51,14 @@ class StatusBadge extends StatelessWidget {
       case DeviceStatus.offline:
         return 'Offline';
       case DeviceStatus.setupRequired:
-        return 'Setup Required';
+        return 'Setup required';
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final colors = SaturdayColorTokens.of(context);
+    final tone = _toneForLegacyStatus(colors, status);
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -49,7 +66,7 @@ class StatusBadge extends StatelessWidget {
           width: size,
           height: size,
           decoration: BoxDecoration(
-            color: _statusColor,
+            color: tone,
             shape: BoxShape.circle,
           ),
         ),
@@ -58,7 +75,7 @@ class StatusBadge extends StatelessWidget {
           Text(
             _statusLabel,
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: _statusColor,
+                  color: tone,
                   fontWeight: FontWeight.w500,
                 ),
           ),
@@ -99,17 +116,6 @@ class ConnectivityStatusBadge extends StatelessWidget {
     );
   }
 
-  Color get _statusColor {
-    switch (connectivityStatus) {
-      case ConnectivityStatus.online:
-        return SaturdayColors.success;
-      case ConnectivityStatus.offline:
-        return SaturdayColors.secondary;
-      case ConnectivityStatus.setupRequired:
-        return SaturdayColors.warning;
-    }
-  }
-
   String get _statusLabel {
     switch (connectivityStatus) {
       case ConnectivityStatus.online:
@@ -117,12 +123,14 @@ class ConnectivityStatusBadge extends StatelessWidget {
       case ConnectivityStatus.offline:
         return 'Offline';
       case ConnectivityStatus.setupRequired:
-        return 'Setup Required';
+        return 'Setup required';
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final colors = SaturdayColorTokens.of(context);
+    final tone = _toneForStatus(colors, connectivityStatus);
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -130,7 +138,7 @@ class ConnectivityStatusBadge extends StatelessWidget {
           width: size,
           height: size,
           decoration: BoxDecoration(
-            color: _statusColor,
+            color: tone,
             shape: BoxShape.circle,
           ),
         ),
@@ -139,7 +147,7 @@ class ConnectivityStatusBadge extends StatelessWidget {
           Text(
             _statusLabel,
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: _statusColor,
+                  color: tone,
                   fontWeight: FontWeight.w500,
                 ),
           ),
@@ -158,17 +166,6 @@ class StatusChip extends StatelessWidget {
     required this.status,
   });
 
-  Color get _statusColor {
-    switch (status) {
-      case DeviceStatus.online:
-        return SaturdayColors.success;
-      case DeviceStatus.offline:
-        return SaturdayColors.secondary;
-      case DeviceStatus.setupRequired:
-        return SaturdayColors.warning;
-    }
-  }
-
   String get _statusLabel {
     switch (status) {
       case DeviceStatus.online:
@@ -176,17 +173,20 @@ class StatusChip extends StatelessWidget {
       case DeviceStatus.offline:
         return 'Offline';
       case DeviceStatus.setupRequired:
-        return 'Setup Required';
+        return 'Setup required';
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final colors = SaturdayColorTokens.of(context);
+    final tone = _toneForLegacyStatus(colors, status);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
-        color: _statusColor.withValues(alpha: 0.15),
+        color: colors.paperElevated,
         borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: colors.borderQuiet),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -195,7 +195,7 @@ class StatusChip extends StatelessWidget {
             width: 6,
             height: 6,
             decoration: BoxDecoration(
-              color: _statusColor,
+              color: tone,
               shape: BoxShape.circle,
             ),
           ),
@@ -203,7 +203,7 @@ class StatusChip extends StatelessWidget {
           Text(
             _statusLabel,
             style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                  color: _statusColor,
+                  color: tone,
                   fontWeight: FontWeight.w600,
                 ),
           ),
@@ -236,17 +236,6 @@ class ConnectivityStatusChip extends StatelessWidget {
     );
   }
 
-  Color get _statusColor {
-    switch (connectivityStatus) {
-      case ConnectivityStatus.online:
-        return SaturdayColors.success;
-      case ConnectivityStatus.offline:
-        return SaturdayColors.secondary;
-      case ConnectivityStatus.setupRequired:
-        return SaturdayColors.warning;
-    }
-  }
-
   String get _statusLabel {
     switch (connectivityStatus) {
       case ConnectivityStatus.online:
@@ -254,17 +243,20 @@ class ConnectivityStatusChip extends StatelessWidget {
       case ConnectivityStatus.offline:
         return 'Offline';
       case ConnectivityStatus.setupRequired:
-        return 'Setup Required';
+        return 'Setup required';
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final colors = SaturdayColorTokens.of(context);
+    final tone = _toneForStatus(colors, connectivityStatus);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
-        color: _statusColor.withValues(alpha: 0.15),
+        color: colors.paperElevated,
         borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: colors.borderQuiet),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -273,7 +265,7 @@ class ConnectivityStatusChip extends StatelessWidget {
             width: 6,
             height: 6,
             decoration: BoxDecoration(
-              color: _statusColor,
+              color: tone,
               shape: BoxShape.circle,
             ),
           ),
@@ -281,7 +273,7 @@ class ConnectivityStatusChip extends StatelessWidget {
           Text(
             _statusLabel,
             style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                  color: _statusColor,
+                  color: tone,
                   fontWeight: FontWeight.w600,
                 ),
           ),

@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:saturday_consumer_app/config/routes.dart';
 import 'package:saturday_consumer_app/config/styles.dart';
-import 'package:saturday_consumer_app/config/theme.dart';
+import 'package:saturday_consumer_app/config/tokens/tokens.dart';
 import 'package:saturday_consumer_app/models/device.dart';
 import 'package:saturday_consumer_app/providers/device_provider.dart';
 import 'package:saturday_consumer_app/providers/realtime_album_location_provider.dart';
@@ -76,8 +76,8 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
                 const PopupMenuItem(
                   value: 'remove',
                   child: ListTile(
-                    leading: Icon(Icons.delete_outline, color: SaturdayColors.error),
-                    title: Text('Remove Device', style: TextStyle(color: SaturdayColors.error)),
+                    leading: Icon(Icons.delete_outline),
+                    title: Text('Remove Device'),
                     contentPadding: EdgeInsets.zero,
                   ),
                 ),
@@ -164,25 +164,27 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
     );
   }
 
-  Color _getConnectivityColor(ConnectivityStatus status) {
+  Color _getConnectivityColor(SaturdayColorTokens colors, ConnectivityStatus status) {
     switch (status) {
       case ConnectivityStatus.online:
-        return SaturdayColors.success;
-      case ConnectivityStatus.offline:
       case ConnectivityStatus.setupRequired:
-        return SaturdayColors.secondary;
+        return colors.ink;
+      case ConnectivityStatus.offline:
+        return colors.inkTertiary;
     }
   }
 
   Widget _buildDeviceHeader(BuildContext context, Device device) {
-    final connectivityColor = _getConnectivityColor(device.connectivityStatus);
+    final colors = SaturdayColorTokens.of(context);
+    final connectivityColor =
+        _getConnectivityColor(colors, device.connectivityStatus);
 
     return Container(
       padding: Spacing.cardPadding,
       decoration: BoxDecoration(
-        color: SaturdayColors.white,
+        color: colors.paperElevated,
         borderRadius: AppRadius.largeRadius,
-        boxShadow: AppShadows.card,
+        border: Border.all(color: colors.borderQuiet),
       ),
       child: Row(
         children: [
@@ -201,7 +203,7 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
               width: 64,
               height: 64,
               decoration: BoxDecoration(
-                color: connectivityColor.withValues(alpha: 0.1),
+                color: colors.borderQuiet,
                 borderRadius: AppRadius.mediumRadius,
               ),
               child: Icon(
@@ -234,7 +236,7 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
                 Text(
                   device.isHub ? 'Saturday Hub' : 'Saturday Crate',
                   style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: SaturdayColors.secondary,
+                        color: colors.inkSecondary,
                       ),
                 ),
               ],
@@ -275,6 +277,7 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
     required String title,
     required Widget child,
   }) {
+    final colors = SaturdayColorTokens.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -287,9 +290,9 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
           width: double.infinity,
           padding: Spacing.cardPadding,
           decoration: BoxDecoration(
-            color: SaturdayColors.white,
+            color: colors.paperElevated,
             borderRadius: AppRadius.largeRadius,
-            boxShadow: AppShadows.card,
+            border: Border.all(color: colors.borderQuiet),
           ),
           child: child,
         ),
@@ -309,7 +312,9 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
   }
 
   Widget _buildStatusContent(BuildContext context, Device device) {
-    final connectivityColor = _getConnectivityColor(device.connectivityStatus);
+    final colors = SaturdayColorTokens.of(context);
+    final connectivityColor =
+        _getConnectivityColor(colors, device.connectivityStatus);
     final connectivityLabel = _getConnectivityLabel(device.connectivityStatus);
 
     return Column(
@@ -399,12 +404,13 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
     required String label,
     required String value,
   }) {
+    final colors = SaturdayColorTokens.of(context);
     return Row(
       children: [
         Icon(
           icon,
           size: 20,
-          color: iconColor ?? SaturdayColors.secondary,
+          color: iconColor ?? colors.inkTertiary,
         ),
         const SizedBox(width: 12),
         Expanded(
@@ -433,6 +439,7 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
   ) {
     final albumsAsync = ref.watch(crateAlbumsProvider(device.id));
 
+    final colors = SaturdayColorTokens.of(context);
     return albumsAsync.when(
       data: (albums) => _buildSection(
         context,
@@ -446,13 +453,13 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
                       Icon(
                         Icons.album_outlined,
                         size: 32,
-                        color: SaturdayColors.secondary,
+                        color: colors.inkTertiary,
                       ),
                       const SizedBox(height: Spacing.sm),
                       Text(
                         'No albums detected',
                         style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                              color: SaturdayColors.secondary,
+                              color: colors.inkSecondary,
                             ),
                       ),
                     ],
@@ -491,7 +498,7 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
             child: Text(
               'Failed to load albums',
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: SaturdayColors.secondary,
+                    color: colors.inkSecondary,
                   ),
             ),
           ),
@@ -545,16 +552,13 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
           onPressed: () => _showRemoveConfirmation(context, ref, device),
           icon: const Icon(Icons.delete_outline),
           label: const Text('Remove Device'),
-          style: OutlinedButton.styleFrom(
-            foregroundColor: SaturdayColors.error,
-            side: const BorderSide(color: SaturdayColors.error),
-          ),
         ),
       ],
     );
   }
 
   Widget _buildNotFound(BuildContext context) {
+    final colors = SaturdayColorTokens.of(context);
     return Center(
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -562,7 +566,7 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
           Icon(
             Icons.device_unknown,
             size: 64,
-            color: SaturdayColors.secondary,
+            color: colors.inkTertiary,
           ),
           const SizedBox(height: 16),
           Text(
@@ -580,6 +584,7 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
   }
 
   Widget _buildError(BuildContext context, WidgetRef ref, Object error) {
+    final colors = SaturdayColorTokens.of(context);
     return Center(
       child: Padding(
         padding: Spacing.pagePadding,
@@ -589,7 +594,7 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
             Icon(
               Icons.error_outline,
               size: 64,
-              color: SaturdayColors.error,
+              color: colors.ink,
             ),
             const SizedBox(height: 16),
             Text(
@@ -728,7 +733,6 @@ class _DeviceDetailScreenState extends ConsumerState<DeviceDetailScreen> {
           ),
           TextButton(
             onPressed: () => Navigator.of(context).pop(true),
-            style: TextButton.styleFrom(foregroundColor: SaturdayColors.error),
             child: const Text('Remove'),
           ),
         ],

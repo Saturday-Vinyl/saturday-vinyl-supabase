@@ -4,6 +4,9 @@ Central repository for Saturday Vinyl technical documentation shared across all 
 
 ## Contents
 
+### Foundation
+- **[Foundation](foundation/)** - Brand operating framework, design system foundations, constitution, and brand assets (wordmark, icon). The `foundation/CLAUDE.md` snippet is injected into each consuming project's root `CLAUDE.md` by the setup script (see [Foundation block in root CLAUDE.md](#foundation-block-in-root-claudemd)).
+
 ### Concepts
 - **[Data Model](concepts/data_model.md)** - Core entity relationships (Units, Devices, Products, Device Types, Capabilities, Firmware)
 
@@ -49,10 +52,34 @@ cp ./shared-docs/templates/claude-commands/*.md ./.claude/commands/
 
 ### Pulling Updates
 
-When the central docs are updated, pull changes into your project:
+When the central docs are updated, pull changes into your project. Re-run the setup script afterward so the foundation block in your root `CLAUDE.md` picks up any changes:
 
 ```bash
 git subtree pull --prefix=shared-docs shared-docs main --squash -m "Merge shared-docs updates"
+~/saturday-vinyl-shared-docs/scripts/setup-shared-docs.sh
+```
+
+### Foundation block in root CLAUDE.md
+
+The setup script keeps a managed block in your project's root `CLAUDE.md`, sourced from `shared-docs/foundation/CLAUDE.md`. The block is delimited by:
+
+```
+<!-- BEGIN shared-docs/foundation -->
+...
+<!-- END shared-docs/foundation -->
+```
+
+Rules:
+
+- **Do not edit between the markers.** Any changes are overwritten on the next setup run. Edit `shared-docs/foundation/CLAUDE.md` upstream instead.
+- **Everything outside the markers is yours.** Project-specific guidance above or below the block is preserved.
+- **The block is appended to the bottom** on each run. If you move the markers, the script will strip them on the next run and re-append at the end.
+- If you have no root `CLAUDE.md` yet, the script creates one containing just the block.
+
+To pick up a foundation change without re-running setup, re-run just the script — it's safe to invoke any time:
+
+```bash
+~/saturday-vinyl-shared-docs/scripts/setup-shared-docs.sh
 ```
 
 ### Contributing Changes
@@ -90,6 +117,13 @@ Read @./shared-docs/protocols/ble_provisioning_protocol.md and implement the Sta
 ```
 saturday-vinyl-shared-docs/
 ├── README.md                    # This file
+├── foundation/                  # Brand, design system, operating framework
+│   ├── CLAUDE.md                # Injected into each project's root CLAUDE.md
+│   ├── constitution.md
+│   ├── saturday_design_system_foundations.md
+│   ├── saturday_operating_framework.md
+│   ├── Saturday_Logo_Final.svg
+│   └── saturday-icon.svg
 ├── concepts/                    # Architectural concepts
 │   └── data_model.md            # Core entity relationships
 ├── protocols/                   # Protocol specifications

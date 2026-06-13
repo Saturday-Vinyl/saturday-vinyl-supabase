@@ -4,8 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:saturday_consumer_app/config/routes.dart';
-import 'package:saturday_consumer_app/config/styles.dart';
-import 'package:saturday_consumer_app/config/theme.dart';
+import 'package:saturday_consumer_app/config/tokens/tokens.dart';
 import 'package:saturday_consumer_app/models/library_member.dart';
 import 'package:saturday_consumer_app/providers/auth_provider.dart';
 import 'package:saturday_consumer_app/providers/device_provider.dart';
@@ -14,21 +13,17 @@ import 'package:saturday_consumer_app/providers/library_provider.dart';
 import 'package:saturday_consumer_app/services/push_token_service.dart';
 import 'package:saturday_consumer_app/widgets/common/saturday_app_bar.dart';
 import 'package:saturday_consumer_app/widgets/devices/devices.dart';
+import 'package:saturday_consumer_app/widgets/foundation/saturday_skeleton.dart';
 
-/// Account screen - user profile and settings.
-///
-/// Features:
-/// - User profile info
-/// - Device management
-/// - Shared libraries
-/// - App settings
-/// - Help & support
+/// Account screen — profile, devices, collections, and settings.
 class AccountScreen extends ConsumerWidget {
   const AccountScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final user = ref.watch(currentSupabaseUserProvider);
+    final colors = SaturdayColorTokens.of(context);
+
     return Scaffold(
       appBar: const SaturdayAppBar(
         title: 'Account',
@@ -37,275 +32,136 @@ class AccountScreen extends ConsumerWidget {
       ),
       body: SafeArea(
         child: ListView(
-          padding: Spacing.pagePadding,
+          padding: const EdgeInsets.all(SaturdaySpace.space4),
           children: [
-            // Profile card
-            _buildProfileCard(context, user),
+            _ProfileCard(user: user, colors: colors),
 
-            Spacing.sectionGap,
+            const SizedBox(height: SaturdaySpace.space8),
 
-            // Devices section
-            _buildSectionHeader(context, 'Devices'),
-            Spacing.itemGap,
-            _buildDevicesSection(context, ref),
+            _SectionEyebrow(label: 'Devices', colors: colors),
+            const SizedBox(height: SaturdaySpace.space3),
+            _DevicesSection(colors: colors),
 
-            Spacing.sectionGap,
+            const SizedBox(height: SaturdaySpace.space8),
 
-            // Libraries section
-            _buildSectionHeader(context, 'Libraries'),
-            Spacing.itemGap,
-            _buildLibrariesSection(context, ref),
+            _SectionEyebrow(label: 'Collections', colors: colors),
+            const SizedBox(height: SaturdaySpace.space3),
+            _CollectionsSection(colors: colors),
 
-            Spacing.sectionGap,
+            const SizedBox(height: SaturdaySpace.space8),
 
-            // Settings section
-            _buildSectionHeader(context, 'Settings'),
-            Spacing.itemGap,
-            _buildSettingsTile(
-              context,
+            _SectionEyebrow(label: 'Settings', colors: colors),
+            const SizedBox(height: SaturdaySpace.space3),
+            _SettingsTile(
               icon: Icons.notifications_outlined,
               title: 'Notifications',
+              colors: colors,
               onTap: () => context.pushNamed(RouteNames.notificationSettings),
             ),
-            _buildSettingsTile(
-              context,
+            _SettingsTile(
               icon: Icons.tv,
               title: 'Pair TV',
               subtitle: 'Connect your Saturday Apple TV app',
+              colors: colors,
               onTap: () => context.pushNamed(RouteNames.pairTv),
             ),
-            _buildSettingsTile(
-              context,
+            _SettingsTile(
               icon: Icons.palette_outlined,
               title: 'Appearance',
+              colors: colors,
               onTap: () {
                 // TODO: Navigate to appearance settings
               },
             ),
-            _buildSettingsTile(
-              context,
+            _SettingsTile(
               icon: Icons.storage_outlined,
               title: 'Storage',
+              colors: colors,
               onTap: () {
                 // TODO: Navigate to storage settings
               },
             ),
 
-            Spacing.sectionGap,
+            const SizedBox(height: SaturdaySpace.space8),
 
-            // Support section
-            _buildSectionHeader(context, 'Support'),
-            Spacing.itemGap,
-            _buildSettingsTile(
-              context,
+            _SectionEyebrow(label: 'Support', colors: colors),
+            const SizedBox(height: SaturdaySpace.space3),
+            _SettingsTile(
               icon: Icons.help_outline,
-              title: 'Help & FAQ',
+              title: 'Help',
+              colors: colors,
               onTap: () {
                 // TODO: Open help
               },
             ),
-            _buildSettingsTile(
-              context,
+            _SettingsTile(
               icon: Icons.mail_outline,
-              title: 'Contact Us',
+              title: 'Contact',
+              colors: colors,
               onTap: () {
                 // TODO: Open contact
               },
             ),
-            _buildSettingsTile(
-              context,
+            _SettingsTile(
               icon: Icons.info_outline,
               title: 'About',
               subtitle: 'Version 1.0.0',
+              colors: colors,
               onTap: () {
                 // TODO: Show about dialog
               },
             ),
 
-            Spacing.sectionGap,
+            const SizedBox(height: SaturdaySpace.space8),
 
-            // Sign out button
-            if (ref.watch(currentSupabaseUserProvider) != null)
-              _buildSignOutButton(context, ref),
+            if (user != null)
+              _SignOutButton(
+                onSignOut: () async {
+                  // Destructive actions are sovereign per the constitution —
+                  // no confirmation modal. Recovery is signing back in.
+                  await ref.read(signOutProvider.future);
+                  if (context.mounted) context.go(RoutePaths.login);
+                },
+              ),
 
-            // Debug section (only in debug mode)
             if (kDebugMode) ...[
-              Spacing.sectionGap,
-              _buildSectionHeader(context, 'Debug'),
-              Spacing.itemGap,
-              _buildSettingsTile(
-                context,
+              const SizedBox(height: SaturdaySpace.space8),
+              _SectionEyebrow(label: 'Debug', colors: colors),
+              const SizedBox(height: SaturdaySpace.space3),
+              _SettingsTile(
                 icon: Icons.replay,
-                title: 'Reset Intro Splash',
+                title: 'Reset intro splash',
                 subtitle: 'Show splash screen on next launch',
+                colors: colors,
                 onTap: () async {
                   await ref
                       .read(introSplashNotifierProvider.notifier)
                       .resetSplash();
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context)
-                      ..clearSnackBars()
-                      ..showSnackBar(
-                        const SnackBar(
-                          content: Text('Splash reset. Restart app to see it.'),
-                        ),
-                      );
-                  }
                 },
               ),
-              _buildSettingsTile(
-                context,
+              _SettingsTile(
                 icon: Icons.play_arrow,
-                title: 'Show Intro Splash Now',
+                title: 'Show intro splash now',
                 subtitle: 'Navigate to splash screen immediately',
-                onTap: () {
-                  // Navigate directly without resetting state to avoid redirect loops
-                  context.go(RoutePaths.introSplash);
-                },
+                colors: colors,
+                onTap: () => context.go(RoutePaths.introSplash),
               ),
             ],
 
-            // Admin section — visible in release builds for @saturdayvinyl.com users
             if (_isAdmin(user)) ...[
-              Spacing.sectionGap,
-              _buildSectionHeader(context, 'Admin'),
-              Spacing.itemGap,
-              _buildSettingsTile(
-                context,
+              const SizedBox(height: SaturdaySpace.space8),
+              _SectionEyebrow(label: 'Admin', colors: colors),
+              const SizedBox(height: SaturdaySpace.space3),
+              _SettingsTile(
                 icon: Icons.vpn_key,
-                title: 'Push Token',
+                title: 'Push token',
                 subtitle: 'View and copy the current FCM token',
+                colors: colors,
                 onTap: () => _showPushTokenDialog(context),
               ),
             ],
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _buildSignOutButton(BuildContext context, WidgetRef ref) {
-    return TextButton.icon(
-      onPressed: () async {
-        final confirmed = await showDialog<bool>(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text('Sign Out'),
-            content: const Text('Are you sure you want to sign out?'),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('Cancel'),
-              ),
-              TextButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('Sign Out'),
-              ),
-            ],
-          ),
-        );
-
-        if (confirmed == true) {
-          await ref.read(signOutProvider.future);
-          if (context.mounted) {
-            context.go(RoutePaths.login);
-          }
-        }
-      },
-      icon: Icon(Icons.logout, color: SaturdayColors.error),
-      label: Text(
-        'Sign Out',
-        style: TextStyle(color: SaturdayColors.error),
-      ),
-    );
-  }
-
-  Widget _buildProfileCard(BuildContext context, dynamic user) {
-    final isSignedIn = user != null;
-
-    return GestureDetector(
-      onTap: () {
-        if (isSignedIn) {
-          context.pushNamed(RouteNames.profile);
-        } else {
-          context.push(RoutePaths.login);
-        }
-      },
-      child: Container(
-        decoration: AppDecorations.card,
-        padding: Spacing.cardPadding,
-        child: Row(
-          children: [
-            // Avatar
-            Container(
-              width: 64,
-              height: 64,
-              decoration: AppDecorations.avatar,
-              child: Icon(
-                isSignedIn ? Icons.person : Icons.person_outline,
-                size: 32,
-                color: SaturdayColors.white,
-              ),
-            ),
-            Spacing.horizontalGapLg,
-            // User info
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    isSignedIn
-                        ? (user.userMetadata?['full_name'] as String? ??
-                            user.email ??
-                            'User')
-                        : 'Sign In',
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    isSignedIn
-                        ? user.email ?? ''
-                        : 'Sign in to sync your library across devices',
-                    style: TextStyle(
-                      color: SaturdayColors.secondary,
-                      fontSize: 14,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const Icon(Icons.chevron_right),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSectionHeader(BuildContext context, String title) {
-    return Text(
-      title,
-      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-            color: SaturdayColors.secondary,
-          ),
-    );
-  }
-
-  Widget _buildSettingsTile(
-    BuildContext context, {
-    required IconData icon,
-    required String title,
-    String? subtitle,
-    required VoidCallback onTap,
-  }) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      decoration: AppDecorations.card,
-      child: ListTile(
-        leading: Icon(icon),
-        title: Text(title),
-        subtitle: subtitle != null ? Text(subtitle) : null,
-        trailing: const Icon(Icons.chevron_right),
-        onTap: onTap,
       ),
     );
   }
@@ -321,63 +177,256 @@ class AccountScreen extends ConsumerWidget {
       builder: (dialogContext) => const _PushTokenDialog(),
     );
   }
+}
 
-  Widget _buildDevicesSection(BuildContext context, WidgetRef ref) {
+// =============================================================================
+// Profile card
+// =============================================================================
+
+class _ProfileCard extends StatelessWidget {
+  const _ProfileCard({required this.user, required this.colors});
+
+  final dynamic user;
+  final SaturdayColorTokens colors;
+
+  @override
+  Widget build(BuildContext context) {
+    final isSignedIn = user != null;
+    final name = isSignedIn
+        ? (user.userMetadata?['full_name'] as String?)
+        : null;
+    final email = isSignedIn ? user.email as String? : null;
+    final primaryLine = name ?? email ?? (isSignedIn ? 'Signed in' : 'Sign in');
+    final secondaryLine = isSignedIn
+        ? (name != null && email != null ? email : null)
+        : 'Sync your collection across devices';
+
+    return GestureDetector(
+      onTap: () {
+        if (isSignedIn) {
+          context.pushNamed(RouteNames.profile);
+        } else {
+          context.push(RoutePaths.login);
+        }
+      },
+      child: Container(
+        padding: const EdgeInsets.all(SaturdaySpace.space4),
+        decoration: BoxDecoration(
+          color: colors.paperElevated,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: colors.borderQuiet),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                color: colors.paper,
+                shape: BoxShape.circle,
+                border: Border.all(color: colors.borderQuiet),
+              ),
+              child: Icon(
+                isSignedIn ? Icons.person : Icons.person_outline,
+                size: 32,
+                color: colors.ink,
+              ),
+            ),
+            const SizedBox(width: SaturdaySpace.space4),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    primaryLine,
+                    style: SaturdayType.body.copyWith(
+                      fontSize: 16,
+                      fontWeight: SaturdayType.medium,
+                      color: colors.ink,
+                    ),
+                  ),
+                  if (secondaryLine != null) ...[
+                    const SizedBox(height: SaturdaySpace.space1),
+                    Text(
+                      secondaryLine,
+                      style: SaturdayType.meta.copyWith(
+                        color: colors.inkSecondary,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right, color: colors.inkTertiary),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// =============================================================================
+// Section eyebrow
+// =============================================================================
+
+class _SectionEyebrow extends StatelessWidget {
+  const _SectionEyebrow({required this.label, required this.colors});
+
+  final String label;
+  final SaturdayColorTokens colors;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      label,
+      style: SaturdayType.eyebrow.copyWith(color: colors.inkSecondary),
+    );
+  }
+}
+
+// =============================================================================
+// Settings tile
+// =============================================================================
+
+class _SettingsTile extends StatelessWidget {
+  const _SettingsTile({
+    required this.icon,
+    required this.title,
+    this.subtitle,
+    required this.colors,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final String title;
+  final String? subtitle;
+  final SaturdayColorTokens colors;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: SaturdaySpace.space2),
+      decoration: BoxDecoration(
+        color: colors.paperElevated,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: colors.borderQuiet),
+      ),
+      child: ListTile(
+        leading: Icon(icon, color: colors.ink),
+        title: Text(
+          title,
+          style: SaturdayType.body.copyWith(color: colors.ink),
+        ),
+        subtitle: subtitle != null
+            ? Text(
+                subtitle!,
+                style: SaturdayType.meta.copyWith(color: colors.inkSecondary),
+              )
+            : null,
+        trailing: Icon(Icons.chevron_right, color: colors.inkTertiary),
+        onTap: onTap,
+      ),
+    );
+  }
+}
+
+// =============================================================================
+// Sign-out button (no confirmation — destructive actions are sovereign)
+// =============================================================================
+
+class _SignOutButton extends StatelessWidget {
+  const _SignOutButton({required this.onSignOut});
+
+  final Future<void> Function() onSignOut;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextButton.icon(
+      onPressed: () async => onSignOut(),
+      icon: const Icon(Icons.logout),
+      label: const Text('Sign out'),
+    );
+  }
+}
+
+// =============================================================================
+// Devices section
+// =============================================================================
+
+class _DevicesSection extends ConsumerWidget {
+  const _DevicesSection({required this.colors});
+
+  final SaturdayColorTokens colors;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
     final devicesAsync = ref.watch(userDevicesProvider);
 
     return devicesAsync.when(
       data: (devices) {
         final hubCount = devices.where((d) => d.isHub).length;
         final crateCount = devices.where((d) => d.isCrate).length;
-        // Use isEffectivelyOnline to account for heartbeat staleness
-        final onlineCount = devices.where((d) => d.isEffectivelyOnline).length;
+        final onlineCount =
+            devices.where((d) => d.isEffectivelyOnline).length;
 
         return Column(
           children: [
-            // Device summary card
             DeviceMiniCard(
               hubCount: hubCount,
               crateCount: crateCount,
               onlineCount: onlineCount,
               onTap: () => context.pushNamed(RouteNames.deviceList),
             ),
-            const SizedBox(height: 8),
-            // Add device button
-            _buildSettingsTile(
-              context,
+            const SizedBox(height: SaturdaySpace.space2),
+            _SettingsTile(
               icon: Icons.add_circle_outline,
-              title: 'Add Device',
-              subtitle: 'Connect a Saturday Hub or Crate',
+              title: 'Add device',
+              subtitle: 'Connect a Saturday hub or crate',
+              colors: colors,
               onTap: () => context.pushNamed(RouteNames.deviceSetup),
             ),
           ],
         );
       },
-      loading: () => const Padding(
-        padding: EdgeInsets.all(16),
-        child: Center(child: CircularProgressIndicator()),
+      loading: () => Padding(
+        padding: const EdgeInsets.symmetric(vertical: SaturdaySpace.space2),
+        child: SaturdaySkeleton.rect(
+          width: double.infinity,
+          height: 96,
+          radius: 12,
+        ),
       ),
       error: (error, stack) {
-        // Log the error for debugging
         debugPrint('Device loading error: $error');
         debugPrint('Stack trace: $stack');
-        return _buildSettingsTile(
-          context,
+        return _SettingsTile(
           icon: Icons.error_outline,
-          title: 'My Devices',
-          subtitle: 'Tap to retry',
+          title: 'Devices',
+          subtitle: "Devices aren't responding.",
+          colors: colors,
           onTap: () => ref.invalidate(userDevicesProvider),
         );
       },
     );
   }
+}
 
-  Widget _buildLibrariesSection(BuildContext context, WidgetRef ref) {
+// =============================================================================
+// Collections section (previously "Libraries")
+// =============================================================================
+
+class _CollectionsSection extends ConsumerWidget {
+  const _CollectionsSection({required this.colors});
+
+  final SaturdayColorTokens colors;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
     final librariesAsync = ref.watch(userLibrariesProvider);
 
     return librariesAsync.when(
       data: (libraries) {
-        // Separate owned vs shared libraries
         final ownedLibraries =
             libraries.where((l) => l.role == LibraryRole.owner).toList();
         final sharedLibraries =
@@ -388,63 +437,63 @@ class AccountScreen extends ConsumerWidget {
 
         return Column(
           children: [
-            // My Libraries - navigate to current library details
-            _buildSettingsTile(
-              context,
+            _SettingsTile(
               icon: Icons.library_music,
-              title: 'My Libraries',
+              title: 'My collections',
               subtitle: ownedCount == 0
-                  ? 'No libraries'
-                  : '$ownedCount ${ownedCount == 1 ? 'library' : 'libraries'}',
-              onTap: () {
-                // Navigate to current library details
-                context.pushNamed(RouteNames.libraryDetails);
-              },
+                  ? 'No collections'
+                  : '$ownedCount ${ownedCount == 1 ? 'collection' : 'collections'}',
+              colors: colors,
+              onTap: () => context.pushNamed(RouteNames.libraryDetails),
             ),
-            // Shared Libraries
-            _buildSettingsTile(
-              context,
+            _SettingsTile(
               icon: Icons.share,
-              title: 'Shared with Me',
+              title: 'Shared with me',
               subtitle: sharedCount == 0
-                  ? 'No shared libraries'
-                  : '$sharedCount ${sharedCount == 1 ? 'library' : 'libraries'}',
+                  ? 'No shared collections'
+                  : '$sharedCount ${sharedCount == 1 ? 'collection' : 'collections'}',
+              colors: colors,
               onTap: () {
-                if (sharedCount > 0) {
-                  // Switch to first shared library and go to its details
-                  ref.read(currentLibraryIdProvider.notifier).state =
-                      sharedLibraries.first.library.id;
-                  context.pushNamed(RouteNames.libraryDetails);
-                } else {
-                  ScaffoldMessenger.of(context)
-                    ..clearSnackBars()
-                    ..showSnackBar(
-                      const SnackBar(
-                        content: Text(
-                          'No shared libraries yet. Ask someone to share their library with you!',
-                        ),
-                      ),
-                    );
-                }
+                if (sharedCount == 0) return;
+                ref.read(currentLibraryIdProvider.notifier).state =
+                    sharedLibraries.first.library.id;
+                context.pushNamed(RouteNames.libraryDetails);
               },
             ),
           ],
         );
       },
-      loading: () => const Padding(
-        padding: EdgeInsets.all(16),
-        child: Center(child: CircularProgressIndicator()),
+      loading: () => Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(bottom: SaturdaySpace.space2),
+            child: SaturdaySkeleton.rect(
+              width: double.infinity,
+              height: 64,
+              radius: 12,
+            ),
+          ),
+          SaturdaySkeleton.rect(
+            width: double.infinity,
+            height: 64,
+            radius: 12,
+          ),
+        ],
       ),
-      error: (error, stack) => _buildSettingsTile(
-        context,
+      error: (error, stack) => _SettingsTile(
         icon: Icons.error_outline,
-        title: 'Libraries',
-        subtitle: 'Tap to retry',
+        title: 'Collections',
+        subtitle: "Collections aren't loading.",
+        colors: colors,
         onTap: () => ref.invalidate(userLibrariesProvider),
       ),
     );
   }
 }
+
+// =============================================================================
+// Push token dialog (admin / debug)
+// =============================================================================
 
 class _PushTokenDialog extends StatefulWidget {
   const _PushTokenDialog();
@@ -455,32 +504,38 @@ class _PushTokenDialog extends StatefulWidget {
 
 class _PushTokenDialogState extends State<_PushTokenDialog> {
   bool _refreshing = false;
+  bool _justCopied = false;
 
   @override
   Widget build(BuildContext context) {
+    final colors = SaturdayColorTokens.of(context);
     final token = PushTokenService.instance.currentToken;
+
     return AlertDialog(
-      title: const Text('Push Token'),
+      title: const Text('Push token'),
       content: SingleChildScrollView(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
             if (token == null)
-              const Text('No token registered yet.')
+              Text(
+                'No token registered yet.',
+                style: SaturdayType.body.copyWith(color: colors.ink),
+              )
             else
               SelectableText(
                 token,
-                style: const TextStyle(
-                  fontFamily: 'monospace',
+                style: SaturdayType.mono.copyWith(
                   fontSize: 12,
+                  color: colors.ink,
                 ),
               ),
-            const SizedBox(height: 12),
+            const SizedBox(height: SaturdaySpace.space3),
             Text(
               'Compare against push_notification_tokens.token in Supabase. '
-              'If they differ, tap Refresh to rotate.',
-              style: Theme.of(context).textTheme.bodySmall,
+              'If they differ, tap refresh to rotate.',
+              style: SaturdayType.meta.copyWith(color: colors.inkSecondary),
             ),
           ],
         ),
@@ -491,44 +546,24 @@ class _PushTokenDialogState extends State<_PushTokenDialog> {
               ? null
               : () async {
                   await Clipboard.setData(ClipboardData(text: token));
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context)
-                      ..clearSnackBars()
-                      ..showSnackBar(
-                        const SnackBar(content: Text('Token copied')),
-                      );
-                  }
+                  if (!mounted) return;
+                  setState(() => _justCopied = true);
+                  Future.delayed(const Duration(seconds: 2), () {
+                    if (mounted) setState(() => _justCopied = false);
+                  });
                 },
-          child: const Text('Copy'),
+          child: Text(_justCopied ? 'Copied' : 'Copy'),
         ),
         TextButton(
           onPressed: _refreshing
               ? null
               : () async {
                   setState(() => _refreshing = true);
-                  final fresh =
-                      await PushTokenService.instance.forceRefresh();
-                  if (!context.mounted) return;
+                  await PushTokenService.instance.forceRefresh();
+                  if (!mounted) return;
                   setState(() => _refreshing = false);
-                  ScaffoldMessenger.of(context)
-                    ..clearSnackBars()
-                    ..showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          fresh != null
-                              ? 'Token refreshed'
-                              : 'Refresh failed — check logs',
-                        ),
-                      ),
-                    );
                 },
-          child: _refreshing
-              ? const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Text('Refresh'),
+          child: Text(_refreshing ? 'Refreshing' : 'Refresh'),
         ),
         TextButton(
           onPressed: () => Navigator.of(context).pop(),

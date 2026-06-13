@@ -1,6 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:saturday_consumer_app/config/tokens/tokens.dart';
 
-/// Saturday brand colors.
+/// Legacy brand-color constants.
+///
+/// Deprecated in favor of `lib/config/tokens/colors.dart`
+/// ([SaturdayColorTokens]). These constants are kept at their original values
+/// so existing screens compile against the same names while the redesign
+/// migrates call sites. New code should consume
+/// `SaturdayColorTokens.of(context)` so it picks up the paper/ink palette and
+/// dark mode automatically.
 class SaturdayColors {
   SaturdayColors._();
 
@@ -8,15 +16,25 @@ class SaturdayColors {
   static const Color primaryDark = Color(0xFF3F3A34);
 
   /// Success color - success states, confirmations
+  ///
+  /// The Saturday constitution bans semantic state colors — surfaces
+  /// communicate state with text, position, or motion. Call sites using this
+  /// will be migrated as their screens are redesigned.
   static const Color success = Color(0xFF30AA47);
 
   /// Error color - errors, destructive actions
+  ///
+  /// See note on [success] — state colors are banned by the constitution.
   static const Color error = Color(0xFFF35345);
 
   /// Warning color - caution states, warnings
+  ///
+  /// See note on [success] — state colors are banned by the constitution.
   static const Color warning = Color(0xFFF5A623);
 
   /// Info color - informational states
+  ///
+  /// See note on [success] — state colors are banned by the constitution.
   static const Color info = Color(0xFF6AC5F4);
 
   /// Secondary color - secondary text, borders
@@ -33,398 +51,370 @@ class SaturdayColors {
 }
 
 /// Saturday theme configuration.
+///
+/// Both [lightTheme] and [darkTheme] are built from the same
+/// [SaturdayColorTokens] structure, so any token change cascades to both.
+///
+/// What the constitution forbids — and how this file handles each case:
+///
+/// - **Semantic state colors** (success-green, error-red, warning-amber)
+///   are not used. The Material [ColorScheme.error] slot maps to [ink]
+///   because Material requires a value; input error borders use
+///   [SaturdayColorTokens.borderStrong] instead of a red.
+/// - **Toggles / spinners / snackbars / confirm dialogs** are themed only
+///   so leftover call sites don't look broken during the redesign. Each
+///   such theme block is marked as transitional. The widgets themselves
+///   are removed when their owning screens are migrated.
+/// - **No drop shadows** beyond the OS-level scrim. Cards and dialogs use
+///   hairline borders ([SaturdayColorTokens.borderQuiet]) for separation.
 class SaturdayTheme {
   SaturdayTheme._();
 
-  /// Bevan text style for headlines (blocky serif, retro feel).
-  static TextStyle _bevanStyle({
-    required double fontSize,
-    FontWeight fontWeight = FontWeight.w400,
-    Color color = SaturdayColors.primaryDark,
-  }) {
-    return TextStyle(
-      fontFamily: 'Bevan',
-      fontSize: fontSize,
-      fontWeight: fontWeight,
-      color: color,
-    );
-  }
+  static final ThemeData lightTheme = _build(
+    SaturdayColorTokens.light,
+    Brightness.light,
+  );
 
-  /// Light theme for the app.
-  static ThemeData get lightTheme {
-    // Base text theme with system font
-    final baseTextTheme = ThemeData.light().textTheme;
+  static final ThemeData darkTheme = _build(
+    SaturdayColorTokens.dark,
+    Brightness.dark,
+  );
+
+  static ThemeData _build(SaturdayColorTokens c, Brightness brightness) {
+    final colorScheme = ColorScheme(
+      brightness: brightness,
+      primary: c.ink,
+      onPrimary: c.paper,
+      secondary: c.inkSecondary,
+      onSecondary: c.paper,
+      tertiary: c.felt,
+      onTertiary: c.paper,
+      surface: c.paper,
+      onSurface: c.ink,
+      surfaceContainerHighest: c.paperElevated,
+      onSurfaceVariant: c.inkSecondary,
+      outline: c.borderStrong,
+      outlineVariant: c.borderQuiet,
+      // The constitution bans semantic state colors; Material still
+      // requires an error slot, so map it onto ink. Errors communicate via
+      // factual text — not red surfaces.
+      error: c.ink,
+      onError: c.paper,
+    );
 
     return ThemeData(
       useMaterial3: true,
-      colorScheme: ColorScheme.fromSeed(
-        seedColor: SaturdayColors.primaryDark,
-        brightness: Brightness.light,
-        primary: SaturdayColors.primaryDark,
-        secondary: SaturdayColors.secondary,
-        surface: SaturdayColors.light,
-        error: SaturdayColors.error,
-        onPrimary: SaturdayColors.white,
-        onSecondary: SaturdayColors.primaryDark,
-        onSurface: SaturdayColors.primaryDark,
-        onError: SaturdayColors.white,
-      ),
-      scaffoldBackgroundColor: SaturdayColors.light,
+      brightness: brightness,
+      colorScheme: colorScheme,
+      scaffoldBackgroundColor: c.paper,
+      canvasColor: c.paper,
+      dividerColor: c.borderQuiet,
 
-      // App Bar
+      // App Bar — quiet paper bar, serif title in sentence case.
       appBarTheme: AppBarTheme(
-        backgroundColor: SaturdayColors.light,
-        foregroundColor: SaturdayColors.primaryDark,
+        backgroundColor: c.paper,
+        foregroundColor: c.ink,
         elevation: 0,
+        scrolledUnderElevation: 0,
         centerTitle: false,
-        titleTextStyle: _bevanStyle(fontSize: 20),
-        iconTheme: const IconThemeData(
-          color: SaturdayColors.primaryDark,
-          size: 24,
+        titleTextStyle: SaturdayType.section.copyWith(
+          fontSize: 20,
+          color: c.ink,
         ),
+        iconTheme: IconThemeData(color: c.ink, size: 24),
       ),
 
-      // Cards
+      // Cards — paperElevated with a quiet hairline. No drop shadow.
       cardTheme: CardThemeData(
-        color: SaturdayColors.white,
-        elevation: 2,
-        shadowColor: SaturdayColors.primaryDark.withValues(alpha: 0.1),
+        color: c.paperElevated,
+        elevation: 0,
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
+          borderRadius: BorderRadius.circular(12),
+          side: BorderSide(color: c.borderQuiet),
         ),
-        margin: const EdgeInsets.all(8),
+        margin: const EdgeInsets.all(SaturdaySpace.space2),
       ),
 
-      // Elevated Buttons
+      // Buttons — ink fill on paper. No elevation.
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
-          backgroundColor: SaturdayColors.primaryDark,
-          foregroundColor: SaturdayColors.white,
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+          backgroundColor: c.ink,
+          foregroundColor: c.paper,
+          padding: const EdgeInsets.symmetric(
+            horizontal: SaturdaySpace.space6,
+            vertical: SaturdaySpace.space3,
+          ),
           minimumSize: const Size(88, 48),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-          textStyle: const TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w600,
-          ),
-          elevation: 2,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          textStyle: SaturdayType.body.copyWith(fontWeight: SaturdayType.medium),
+          elevation: 0,
         ),
       ),
 
-      // Outlined Buttons
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
-          foregroundColor: SaturdayColors.primaryDark,
-          side: const BorderSide(
-            color: SaturdayColors.primaryDark,
-            width: 1.5,
+          foregroundColor: c.ink,
+          side: BorderSide(color: c.ink),
+          padding: const EdgeInsets.symmetric(
+            horizontal: SaturdaySpace.space6,
+            vertical: SaturdaySpace.space3,
           ),
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
           minimumSize: const Size(88, 48),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-          textStyle: const TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w600,
-          ),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          textStyle: SaturdayType.body.copyWith(fontWeight: SaturdayType.medium),
         ),
       ),
 
-      // Text Buttons
       textButtonTheme: TextButtonThemeData(
         style: TextButton.styleFrom(
-          foregroundColor: SaturdayColors.primaryDark,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          textStyle: const TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
+          foregroundColor: c.ink,
+          padding: const EdgeInsets.symmetric(
+            horizontal: SaturdaySpace.space4,
+            vertical: SaturdaySpace.space2,
           ),
+          textStyle: SaturdayType.body.copyWith(fontWeight: SaturdayType.medium),
         ),
       ),
 
-      // Floating Action Buttons
-      floatingActionButtonTheme: const FloatingActionButtonThemeData(
-        backgroundColor: SaturdayColors.primaryDark,
-        foregroundColor: SaturdayColors.white,
-        elevation: 4,
-        shape: CircleBorder(),
+      floatingActionButtonTheme: FloatingActionButtonThemeData(
+        backgroundColor: c.ink,
+        foregroundColor: c.paper,
+        elevation: 0,
+        shape: const CircleBorder(),
       ),
 
-      // Input Decoration
+      // Input fields — paperElevated fill, ink focus stroke, no red errors.
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: SaturdayColors.white,
+        fillColor: c.paperElevated,
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: SaturdayColors.secondary),
+          borderSide: BorderSide(color: c.borderQuiet),
         ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: SaturdayColors.secondary),
+          borderSide: BorderSide(color: c.borderQuiet),
         ),
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(
-            color: SaturdayColors.primaryDark,
-            width: 2,
-          ),
+          borderSide: BorderSide(color: c.ink, width: 1.5),
         ),
         errorBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(color: SaturdayColors.error),
+          borderSide: BorderSide(color: c.borderStrong),
         ),
         focusedErrorBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
-          borderSide: const BorderSide(
-            color: SaturdayColors.error,
-            width: 2,
-          ),
+          borderSide: BorderSide(color: c.ink, width: 1.5),
         ),
         contentPadding: const EdgeInsets.symmetric(
-          horizontal: 16,
-          vertical: 14,
+          horizontal: SaturdaySpace.space4,
+          vertical: SaturdaySpace.space3,
         ),
-        hintStyle: const TextStyle(
-          color: SaturdayColors.secondary,
-          fontSize: 16,
-        ),
-        labelStyle: const TextStyle(
-          color: SaturdayColors.primaryDark,
-          fontSize: 16,
-        ),
-        errorStyle: const TextStyle(
-          color: SaturdayColors.error,
-          fontSize: 12,
-        ),
+        hintStyle: SaturdayType.body.copyWith(color: c.inkTertiary),
+        labelStyle: SaturdayType.body.copyWith(color: c.inkSecondary),
+        errorStyle: SaturdayType.meta.copyWith(color: c.inkSecondary),
       ),
 
-      // Bottom Navigation Bar
-      bottomNavigationBarTheme: const BottomNavigationBarThemeData(
-        backgroundColor: SaturdayColors.white,
-        selectedItemColor: SaturdayColors.primaryDark,
-        unselectedItemColor: SaturdayColors.secondary,
+      bottomNavigationBarTheme: BottomNavigationBarThemeData(
+        backgroundColor: c.paperElevated,
+        selectedItemColor: c.ink,
+        unselectedItemColor: c.inkTertiary,
         type: BottomNavigationBarType.fixed,
-        elevation: 8,
-        selectedLabelStyle: TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.w600,
+        elevation: 0,
+        selectedLabelStyle: SaturdayType.meta.copyWith(
+          fontWeight: SaturdayType.medium,
         ),
-        unselectedLabelStyle: TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.normal,
-        ),
+        unselectedLabelStyle: SaturdayType.meta,
       ),
 
-      // Navigation Bar (Material 3)
       navigationBarTheme: NavigationBarThemeData(
-        backgroundColor: SaturdayColors.white,
-        indicatorColor: SaturdayColors.light,
-        elevation: 8,
+        backgroundColor: c.paperElevated,
+        indicatorColor: c.borderQuiet,
+        elevation: 0,
         labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
         iconTheme: WidgetStateProperty.resolveWith((states) {
           if (states.contains(WidgetState.selected)) {
-            return const IconThemeData(
-              color: SaturdayColors.primaryDark,
-              size: 24,
+            return IconThemeData(color: c.ink, size: 24);
+          }
+          return IconThemeData(color: c.inkTertiary, size: 24);
+        }),
+        labelTextStyle: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.selected)) {
+            return SaturdayType.meta.copyWith(
+              color: c.ink,
+              fontWeight: SaturdayType.medium,
             );
           }
-          return const IconThemeData(
-            color: SaturdayColors.secondary,
-            size: 24,
-          );
+          return SaturdayType.meta.copyWith(color: c.inkTertiary);
         }),
       ),
 
-      // Chips
       chipTheme: ChipThemeData(
-        backgroundColor: SaturdayColors.white,
-        selectedColor: SaturdayColors.primaryDark,
-        disabledColor: SaturdayColors.secondary.withValues(alpha: 0.3),
-        labelStyle: const TextStyle(
-          color: SaturdayColors.primaryDark,
-          fontSize: 14,
+        backgroundColor: c.paperElevated,
+        selectedColor: c.ink,
+        disabledColor: c.borderQuiet,
+        labelStyle: SaturdayType.body.copyWith(color: c.ink),
+        secondaryLabelStyle: SaturdayType.body.copyWith(color: c.paper),
+        padding: const EdgeInsets.symmetric(
+          horizontal: SaturdaySpace.space3,
+          vertical: SaturdaySpace.space2,
         ),
-        secondaryLabelStyle: const TextStyle(
-          color: SaturdayColors.white,
-          fontSize: 14,
-        ),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-          side: const BorderSide(color: SaturdayColors.secondary),
+          borderRadius: BorderRadius.circular(999),
+          side: BorderSide(color: c.borderQuiet),
         ),
       ),
 
-      // Dialogs
+      // Dialogs — paperElevated card with a hairline. The constitution
+      // bans confirmation dialogs before destructive actions (use undo
+      // instead); informational dialogs are still allowed.
       dialogTheme: DialogThemeData(
-        backgroundColor: SaturdayColors.white,
-        elevation: 8,
+        backgroundColor: c.paperElevated,
+        elevation: 0,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(16),
+          side: BorderSide(color: c.borderQuiet),
         ),
-        titleTextStyle: _bevanStyle(fontSize: 20),
+        titleTextStyle: SaturdayType.section.copyWith(
+          fontSize: 22,
+          color: c.ink,
+        ),
       ),
 
-      // Bottom Sheets
-      bottomSheetTheme: const BottomSheetThemeData(
-        backgroundColor: SaturdayColors.white,
-        elevation: 8,
-        shape: RoundedRectangleBorder(
+      bottomSheetTheme: BottomSheetThemeData(
+        backgroundColor: c.paper,
+        elevation: 0,
+        shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
         ),
-        dragHandleColor: SaturdayColors.secondary,
-        dragHandleSize: Size(32, 4),
+        dragHandleColor: c.borderStrong,
+        dragHandleSize: const Size(32, 4),
         showDragHandle: true,
       ),
 
-      // Snackbar
+      // Snackbars are banned by the constitution — state changes reflect
+      // in the surface itself, not in a floating toast. Themed quietly so
+      // any leftover call sites don't look obviously broken; removal
+      // happens at the call sites during per-screen migration.
       snackBarTheme: SnackBarThemeData(
-        backgroundColor: SaturdayColors.primaryDark,
-        contentTextStyle: const TextStyle(
-          color: SaturdayColors.white,
-          fontSize: 14,
-        ),
-        actionTextColor: SaturdayColors.info,
+        backgroundColor: c.ink,
+        contentTextStyle: SaturdayType.body.copyWith(color: c.paper),
+        actionTextColor: c.paper,
         behavior: SnackBarBehavior.floating,
         showCloseIcon: true,
-        closeIconColor: SaturdayColors.white,
+        closeIconColor: c.paper,
         dismissDirection: DismissDirection.horizontal,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(8),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       ),
 
-      // Divider
-      dividerTheme: const DividerThemeData(
-        color: SaturdayColors.secondary,
+      dividerTheme: DividerThemeData(
+        color: c.borderQuiet,
         thickness: 1,
         space: 1,
       ),
 
-      // List Tiles
-      listTileTheme: const ListTileThemeData(
-        iconColor: SaturdayColors.primaryDark,
-        textColor: SaturdayColors.primaryDark,
-        contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      listTileTheme: ListTileThemeData(
+        iconColor: c.ink,
+        textColor: c.ink,
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: SaturdaySpace.space4,
+          vertical: SaturdaySpace.space1,
+        ),
       ),
 
-      // Icon theme
-      iconTheme: const IconThemeData(
-        color: SaturdayColors.primaryDark,
-        size: 24,
+      iconTheme: IconThemeData(color: c.ink, size: 24),
+
+      // Progress indicators are banned by the constitution — loading uses
+      // <Skeleton> and content arrives via the `arrive` gesture. Themed
+      // quietly so any leftover call sites don't show a Material-default
+      // blue spinner; removal happens at the call sites.
+      progressIndicatorTheme: ProgressIndicatorThemeData(
+        color: c.ink,
+        linearTrackColor: c.borderQuiet,
+        circularTrackColor: c.borderQuiet,
       ),
 
-      // Progress Indicators
-      progressIndicatorTheme: const ProgressIndicatorThemeData(
-        color: SaturdayColors.primaryDark,
-        linearTrackColor: SaturdayColors.secondary,
-        circularTrackColor: SaturdayColors.secondary,
-      ),
-
-      // Switch
+      // Toggle switches are banned by the constitution — state is text
+      // (`off`, `local only`, `connected`), not a switch. Themed quietly
+      // so leftover call sites don't look out of place; removal happens
+      // at the call sites during per-screen migration.
       switchTheme: SwitchThemeData(
         thumbColor: WidgetStateProperty.resolveWith((states) {
-          if (states.contains(WidgetState.selected)) {
-            return SaturdayColors.primaryDark;
-          }
-          return SaturdayColors.secondary;
+          if (states.contains(WidgetState.selected)) return c.ink;
+          return c.inkTertiary;
         }),
         trackColor: WidgetStateProperty.resolveWith((states) {
           if (states.contains(WidgetState.selected)) {
-            return SaturdayColors.primaryDark.withValues(alpha: 0.5);
+            return c.ink.withValues(alpha: 0.4);
           }
-          return SaturdayColors.secondary.withValues(alpha: 0.3);
+          return c.borderQuiet;
         }),
       ),
 
-      // Checkbox
       checkboxTheme: CheckboxThemeData(
         fillColor: WidgetStateProperty.resolveWith((states) {
-          if (states.contains(WidgetState.selected)) {
-            return SaturdayColors.primaryDark;
-          }
+          if (states.contains(WidgetState.selected)) return c.ink;
           return Colors.transparent;
         }),
-        checkColor: WidgetStateProperty.all(SaturdayColors.white),
-        side: const BorderSide(color: SaturdayColors.secondary, width: 2),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(4),
-        ),
+        checkColor: WidgetStateProperty.all(c.paper),
+        side: BorderSide(color: c.borderStrong, width: 1.5),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
       ),
 
-      // Radio
       radioTheme: RadioThemeData(
         fillColor: WidgetStateProperty.resolveWith((states) {
-          if (states.contains(WidgetState.selected)) {
-            return SaturdayColors.primaryDark;
-          }
-          return SaturdayColors.secondary;
+          if (states.contains(WidgetState.selected)) return c.ink;
+          return c.borderStrong;
         }),
       ),
 
-      // Text Theme - Bevan for headlines, system font for body
-      textTheme: TextTheme(
-        // Display styles (large headers)
-        displayLarge: _bevanStyle(fontSize: 57),
-        displayMedium: _bevanStyle(fontSize: 45),
-        displaySmall: _bevanStyle(fontSize: 36),
+      textTheme: _textTheme(c),
+      primaryTextTheme: _textTheme(c),
+    );
+  }
 
-        // Headline styles (section headers)
-        headlineLarge: _bevanStyle(fontSize: 32),
-        headlineMedium: _bevanStyle(fontSize: 28),
-        headlineSmall: _bevanStyle(fontSize: 24),
+  /// Map Material's text-theme slots onto Saturday named tokens so existing
+  /// widgets that look up `Theme.of(context).textTheme.bodyMedium` keep
+  /// working. Per-screen redesigns can address tokens directly via
+  /// [SaturdayType].
+  static TextTheme _textTheme(SaturdayColorTokens c) {
+    TextStyle ink(TextStyle s) => s.copyWith(color: c.ink);
+    TextStyle dim(TextStyle s) => s.copyWith(color: c.inkSecondary);
 
-        // Title styles (card titles, etc.)
-        titleLarge: baseTextTheme.titleLarge?.copyWith(
-          fontSize: 22,
-          fontWeight: FontWeight.w600,
-          color: SaturdayColors.primaryDark,
-        ),
-        titleMedium: baseTextTheme.titleMedium?.copyWith(
-          fontSize: 16,
-          fontWeight: FontWeight.w600,
-          color: SaturdayColors.primaryDark,
-        ),
-        titleSmall: baseTextTheme.titleSmall?.copyWith(
-          fontSize: 14,
-          fontWeight: FontWeight.w600,
-          color: SaturdayColors.primaryDark,
-        ),
-
-        // Body styles (main content)
-        bodyLarge: baseTextTheme.bodyLarge?.copyWith(
-          fontSize: 16,
-          color: SaturdayColors.primaryDark,
-        ),
-        bodyMedium: baseTextTheme.bodyMedium?.copyWith(
-          fontSize: 14,
-          color: SaturdayColors.primaryDark,
-        ),
-        bodySmall: baseTextTheme.bodySmall?.copyWith(
-          fontSize: 12,
-          color: SaturdayColors.secondary,
-        ),
-
-        // Label styles (buttons, inputs)
-        labelLarge: baseTextTheme.labelLarge?.copyWith(
-          fontSize: 14,
-          fontWeight: FontWeight.w600,
-          color: SaturdayColors.primaryDark,
-        ),
-        labelMedium: baseTextTheme.labelMedium?.copyWith(
-          fontSize: 12,
-          fontWeight: FontWeight.w500,
-          color: SaturdayColors.primaryDark,
-        ),
-        labelSmall: baseTextTheme.labelSmall?.copyWith(
-          fontSize: 11,
-          fontWeight: FontWeight.w500,
-          color: SaturdayColors.secondary,
+    return TextTheme(
+      // Display / headline — serif scale.
+      displayLarge: ink(SaturdayType.titleListening),
+      displayMedium: ink(SaturdayType.titleArchive),
+      displaySmall: ink(SaturdayType.section),
+      headlineLarge: ink(SaturdayType.section),
+      headlineMedium: ink(SaturdayType.titleArchive),
+      headlineSmall: ink(SaturdayType.section),
+      // Titles — sans, medium weight on the larger sizes.
+      titleLarge: ink(
+        SaturdayType.body.copyWith(
+          fontSize: 20,
+          fontWeight: SaturdayType.medium,
         ),
       ),
+      titleMedium: ink(
+        SaturdayType.body.copyWith(fontWeight: SaturdayType.medium),
+      ),
+      titleSmall: ink(
+        SaturdayType.bodySmall.copyWith(fontWeight: SaturdayType.medium),
+      ),
+      // Body.
+      bodyLarge: ink(SaturdayType.body.copyWith(fontSize: 16)),
+      bodyMedium: ink(SaturdayType.body),
+      bodySmall: dim(SaturdayType.meta),
+      // Labels.
+      labelLarge: ink(
+        SaturdayType.body.copyWith(fontWeight: SaturdayType.medium),
+      ),
+      labelMedium: ink(
+        SaturdayType.meta.copyWith(fontWeight: SaturdayType.medium),
+      ),
+      labelSmall: dim(SaturdayType.eyebrow),
     );
   }
 }

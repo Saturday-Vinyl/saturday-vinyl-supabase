@@ -3,8 +3,10 @@ import 'package:saturday_consumer_app/config/theme.dart';
 
 /// Spacing constants for consistent layout throughout the app.
 ///
-/// Use these values for padding, margins, and gaps to maintain
-/// visual consistency across all screens.
+/// Deprecated in favor of `lib/config/tokens/spacing.dart` ([SaturdaySpace]),
+/// which uses the named 4-pixel scale from the Saturday constitution
+/// (`space1`..`space24`). These constants are kept during the redesign so
+/// existing screens keep compiling; new code should use [SaturdaySpace].
 class Spacing {
   Spacing._();
 
@@ -133,6 +135,11 @@ class AppShadows {
 }
 
 /// Animation durations for consistent motion.
+///
+/// Deprecated in favor of `lib/config/tokens/motion.dart` ([SaturdayMotion]),
+/// which exposes the durations and curves required by the Saturday
+/// constitution. Springs and bounces are banned — prefer [SaturdayMotion]'s
+/// three named curves over Flutter's defaults.
 class AppDurations {
   AppDurations._();
 

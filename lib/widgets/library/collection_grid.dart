@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:saturday_consumer_app/config/styles.dart';
+import 'package:saturday_consumer_app/config/tokens/tokens.dart';
 import 'package:saturday_consumer_app/models/collection_item.dart';
 import 'package:saturday_consumer_app/models/library_album.dart';
 import 'package:saturday_consumer_app/repositories/cratelist_repository.dart';
@@ -8,7 +8,7 @@ import 'package:saturday_consumer_app/widgets/library/cratelist_tile.dart';
 
 /// Unified grid that renders [CollectionItem]s — a mix of album and
 /// cratelist tiles in one scroll view. Cratelist tiles include a small
-/// type-indicator badge so users can distinguish them from album tiles.
+/// type-indicator badge so they're distinguishable from album tiles.
 class CollectionGrid extends StatelessWidget {
   const CollectionGrid({
     super.key,
@@ -32,11 +32,11 @@ class CollectionGrid extends StatelessWidget {
         final crossAxisCount = _crossAxisCount(constraints.maxWidth);
 
         return GridView.builder(
-          padding: padding ?? Spacing.pagePadding,
+          padding: padding ?? const EdgeInsets.all(SaturdaySpace.space4),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: crossAxisCount,
-            mainAxisSpacing: Spacing.lg,
-            crossAxisSpacing: Spacing.lg,
+            mainAxisSpacing: SaturdaySpace.space4,
+            crossAxisSpacing: SaturdaySpace.space4,
             childAspectRatio: _childAspectRatio(
               constraints.maxWidth,
               crossAxisCount,
@@ -71,7 +71,7 @@ class CollectionGrid extends StatelessWidget {
   }
 
   double _childAspectRatio(double width, int crossAxisCount) {
-    final spacing = Spacing.lg * (crossAxisCount + 1);
+    final spacing = SaturdaySpace.space4 * (crossAxisCount + 1);
     final availableWidth = width - spacing;
     final itemWidth = availableWidth / crossAxisCount;
     const textHeight = 60.0;
@@ -104,12 +104,12 @@ class SliverCollectionGrid extends StatelessWidget {
         final crossAxisCount = _crossAxisCount(constraints.crossAxisExtent);
 
         return SliverPadding(
-          padding: padding ?? Spacing.pagePadding,
+          padding: padding ?? const EdgeInsets.all(SaturdaySpace.space4),
           sliver: SliverGrid(
             gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: crossAxisCount,
-              mainAxisSpacing: Spacing.lg,
-              crossAxisSpacing: Spacing.lg,
+              mainAxisSpacing: SaturdaySpace.space4,
+              crossAxisSpacing: SaturdaySpace.space4,
               childAspectRatio: _childAspectRatio(
                 constraints.crossAxisExtent,
                 crossAxisCount,
@@ -147,7 +147,7 @@ class SliverCollectionGrid extends StatelessWidget {
   }
 
   double _childAspectRatio(double width, int crossAxisCount) {
-    final spacing = Spacing.lg * (crossAxisCount + 1);
+    final spacing = SaturdaySpace.space4 * (crossAxisCount + 1);
     final availableWidth = width - spacing;
     final itemWidth = availableWidth / crossAxisCount;
     const textHeight = 60.0;

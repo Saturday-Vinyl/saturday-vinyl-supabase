@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:saturday_consumer_app/config/styles.dart';
-import 'package:saturday_consumer_app/config/theme.dart';
+import 'package:saturday_consumer_app/config/tokens/tokens.dart';
 import 'package:saturday_consumer_app/providers/supabase_provider.dart';
 
 class PairTvScreen extends ConsumerStatefulWidget {
@@ -74,6 +74,7 @@ class _PairTvScreenState extends ConsumerState<PairTvScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final colors = SaturdayColorTokens.of(context);
     return Scaffold(
       appBar: AppBar(title: const Text('Pair TV')),
       body: ListView(
@@ -84,11 +85,11 @@ class _PairTvScreenState extends ConsumerState<PairTvScreen> {
             Icon(
               Icons.check_circle,
               size: 64,
-              color: SaturdayColors.success,
+              color: colors.ink,
             ),
             const SizedBox(height: Spacing.md),
             Text(
-              'TV paired successfully!',
+              'TV paired',
               style: Theme.of(context).textTheme.titleLarge,
               textAlign: TextAlign.center,
             ),
@@ -101,7 +102,11 @@ class _PairTvScreenState extends ConsumerState<PairTvScreen> {
             ),
             const SizedBox(height: Spacing.xl),
             Container(
-              decoration: AppDecorations.card,
+              decoration: BoxDecoration(
+                color: colors.paperElevated,
+                borderRadius: AppRadius.largeRadius,
+                border: Border.all(color: colors.borderQuiet),
+              ),
               padding: Spacing.cardPadding,
               child: TextField(
                 controller: _codeController,
@@ -110,9 +115,11 @@ class _PairTvScreenState extends ConsumerState<PairTvScreen> {
                 autocorrect: false,
                 enableSuggestions: false,
                 textAlign: TextAlign.center,
-                style: Theme.of(
-                  context,
-                ).textTheme.headlineMedium?.copyWith(letterSpacing: 8),
+                style: SaturdayType.mono.copyWith(
+                  fontSize: 32,
+                  letterSpacing: 8,
+                  color: colors.ink,
+                ),
                 inputFormatters: [
                   FilteringTextInputFormatter.allow(RegExp(r'[a-zA-Z0-9]')),
                   UpperCaseTextFormatter(),
@@ -120,6 +127,9 @@ class _PairTvScreenState extends ConsumerState<PairTvScreen> {
                 decoration: const InputDecoration(
                   counterText: '',
                   border: InputBorder.none,
+                  enabledBorder: InputBorder.none,
+                  focusedBorder: InputBorder.none,
+                  filled: false,
                 ),
                 onSubmitted: (_) => _submitCode(),
               ),
@@ -128,7 +138,7 @@ class _PairTvScreenState extends ConsumerState<PairTvScreen> {
               const SizedBox(height: Spacing.md),
               Text(
                 _errorMessage!,
-                style: TextStyle(color: SaturdayColors.error),
+                style: SaturdayType.body.copyWith(color: colors.inkSecondary),
                 textAlign: TextAlign.center,
               ),
             ],

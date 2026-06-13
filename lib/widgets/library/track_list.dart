@@ -1,86 +1,145 @@
 import 'package:flutter/material.dart';
-import 'package:saturday_consumer_app/config/styles.dart';
-import 'package:saturday_consumer_app/config/theme.dart';
+import 'package:saturday_consumer_app/config/tokens/tokens.dart';
 import 'package:saturday_consumer_app/models/track.dart';
 
-/// A widget that displays a list of tracks with side separation.
+/// Track listing rendered in archive posture.
 ///
-/// Automatically detects Side A/B patterns in track positions and groups them.
+/// Positions and durations are mono (factual tabular data, per the
+/// constitution); titles are sans body in `ink`. When tracks carry a
+/// letter-prefixed position (`A1`, `B2`, …), the list groups them under a
+/// small "Side A" / "Side B" eyebrow.
 class TrackList extends StatelessWidget {
   const TrackList({
     super.key,
     required this.tracks,
     this.showSideDurations = true,
-    this.accentColor,
   });
 
-  /// The tracks to display.
   final List<Track> tracks;
 
-  /// Whether to show total duration for each side.
+  /// Whether to show total duration for each side when the list is grouped.
   final bool showSideDurations;
-
-  /// Optional accent color for track positions and durations.
-  final Color? accentColor;
 
   @override
   Widget build(BuildContext context) {
+    final colors = SaturdayColorTokens.of(context);
+
     if (tracks.isEmpty) {
-      return _buildEmptyState(context);
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: SaturdaySpace.space3),
+        child: Text(
+          "Track listing isn't recorded.",
+          style: SaturdayType.body.copyWith(color: colors.inkSecondary),
+        ),
+      );
     }
 
     final sides = _groupTracksBySide(tracks);
+    final sideKeys = sides.keys.toList();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        for (final entry in sides.entries) ...[
-          if (sides.length > 1) _buildSideHeader(context, entry.key, entry.value),
-          ...entry.value.map((track) => _TrackTile(track: track, accentColor: accentColor)),
-          if (showSideDurations && sides.length > 1)
-            _buildSideDuration(context, entry.value),
-          if (entry.key != sides.keys.last) const SizedBox(height: Spacing.lg),
+        for (var i = 0; i < sideKeys.length; i++) ...[
+          if (sideKeys[i].isNotEmpty)
+            Padding(
+              padding: EdgeInsets.only(
+                bottom: SaturdaySpace.space2,
+                top: i == 0 ? 0 : SaturdaySpace.space4,
+              ),
+              child: Text(
+                sideKeys[i],
+                style: SaturdayType.eyebrow.copyWith(
+                  color: colors.inkSecondary,
+                ),
+              ),
+            ),
+          for (final track in sides[sideKeys[i]]!)
+            _TrackRow(track: track, colors: colors),
+          if (showSideDurations && sideKeys[i].isNotEmpty)
+            _SideTotal(tracks: sides[sideKeys[i]]!, colors: colors),
         ],
       ],
     );
   }
 
-  Widget _buildEmptyState(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: Spacing.lg),
-      child: Center(
-        child: Text(
-          'No track information available',
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: SaturdayColors.secondary,
-              ),
-        ),
-      ),
-    );
+  Map<String, List<Track>> _groupTracksBySide(List<Track> tracks) {
+    final sides = <String, List<Track>>{};
+    for (final track in tracks) {
+      final side = _extractSide(track.position);
+      sides.putIfAbsent(side, () => []).add(track);
+    }
+
+    // Single side with no letter prefix → render flat, no eyebrow.
+    if (sides.length == 1 && sides.keys.first == '') {
+      return {'': tracks};
+    }
+    return sides;
   }
 
-  Widget _buildSideHeader(
-    BuildContext context,
-    String side,
-    List<Track> sideTracks,
-  ) {
+  String _extractSide(String position) {
+    final trimmed = position.trim().toUpperCase();
+    if (trimmed.isNotEmpty && RegExp(r'^[A-Z]').hasMatch(trimmed)) {
+      return 'Side ${trimmed[0]}';
+    }
+    if (trimmed.contains('-')) {
+      final parts = trimmed.split('-');
+      if (parts.length >= 2) return 'Side ${parts[0]}';
+    }
+    return '';
+  }
+}
+
+class _TrackRow extends StatelessWidget {
+  const _TrackRow({required this.track, required this.colors});
+
+  final Track track;
+  final SaturdayColorTokens colors;
+
+  @override
+  Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: Spacing.sm),
-      child: Text(
-        side,
-        style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w600,
+      padding: const EdgeInsets.symmetric(vertical: SaturdaySpace.space2),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 36,
+            child: Text(
+              track.position,
+              style: SaturdayType.mono.copyWith(color: colors.inkTertiary),
             ),
+          ),
+          const SizedBox(width: SaturdaySpace.space3),
+          Expanded(
+            child: Text(
+              track.title,
+              style: SaturdayType.body.copyWith(color: colors.ink),
+            ),
+          ),
+          const SizedBox(width: SaturdaySpace.space3),
+          Text(
+            track.formattedDuration,
+            style: SaturdayType.mono.copyWith(color: colors.inkTertiary),
+          ),
+        ],
       ),
     );
   }
+}
 
-  Widget _buildSideDuration(BuildContext context, List<Track> sideTracks) {
-    final totalSeconds = sideTracks.fold<int>(
+class _SideTotal extends StatelessWidget {
+  const _SideTotal({required this.tracks, required this.colors});
+
+  final List<Track> tracks;
+  final SaturdayColorTokens colors;
+
+  @override
+  Widget build(BuildContext context) {
+    final totalSeconds = tracks.fold<int>(
       0,
       (sum, track) => sum + (track.durationSeconds ?? 0),
     );
-
     if (totalSeconds == 0) return const SizedBox.shrink();
 
     final minutes = totalSeconds ~/ 60;
@@ -89,103 +148,20 @@ class TrackList extends StatelessWidget {
         '${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
 
     return Padding(
-      padding: const EdgeInsets.only(top: Spacing.xs),
-      child: Text(
-        'Total: $formatted',
-        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: SaturdayColors.secondary,
-            ),
-      ),
-    );
-  }
-
-  /// Groups tracks by side based on their position.
-  ///
-  /// Detects patterns like "A1", "A2", "B1", "B2" or "1", "2", "3", "4".
-  Map<String, List<Track>> _groupTracksBySide(List<Track> tracks) {
-    final sides = <String, List<Track>>{};
-
-    for (final track in tracks) {
-      final side = _extractSide(track.position);
-      sides.putIfAbsent(side, () => []).add(track);
-    }
-
-    // If only one side detected, don't show side headers
-    if (sides.length == 1 && sides.keys.first == 'Tracks') {
-      return {'': tracks};
-    }
-
-    return sides;
-  }
-
-  /// Extracts the side identifier from a track position.
-  String _extractSide(String position) {
-    final trimmed = position.trim().toUpperCase();
-
-    // Check for letter prefix (A1, B2, C1, etc.)
-    if (trimmed.isNotEmpty && RegExp(r'^[A-Z]').hasMatch(trimmed)) {
-      final letter = trimmed[0];
-      return 'Side $letter';
-    }
-
-    // Check for numeric position with explicit side markers
-    if (trimmed.contains('-')) {
-      final parts = trimmed.split('-');
-      if (parts.length >= 2) {
-        return 'Side ${parts[0]}';
-      }
-    }
-
-    // Default to "Tracks" if no side pattern detected
-    return 'Tracks';
-  }
-}
-
-/// A single track row.
-class _TrackTile extends StatelessWidget {
-  const _TrackTile({required this.track, this.accentColor});
-
-  final Track track;
-  final Color? accentColor;
-
-  @override
-  Widget build(BuildContext context) {
-    final metaColor = accentColor ?? SaturdayColors.secondary;
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: Spacing.xs),
+      padding: const EdgeInsets.only(top: SaturdaySpace.space2),
       child: Row(
         children: [
-          // Track position
-          SizedBox(
-            width: 32,
-            child: Text(
-              track.position,
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: metaColor,
-                    fontWeight: accentColor != null ? FontWeight.w600 : null,
-                  ),
-            ),
-          ),
-          const SizedBox(width: Spacing.sm),
-
-          // Track title
+          const SizedBox(width: 36),
+          const SizedBox(width: SaturdaySpace.space3),
           Expanded(
             child: Text(
-              track.title,
-              style: Theme.of(context).textTheme.bodyMedium,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
+              'Total',
+              style: SaturdayType.meta.copyWith(color: colors.inkTertiary),
             ),
           ),
-          const SizedBox(width: Spacing.sm),
-
-          // Duration
           Text(
-            track.formattedDuration,
-            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  color: metaColor,
-                ),
+            formatted,
+            style: SaturdayType.mono.copyWith(color: colors.inkSecondary),
           ),
         ],
       ),
@@ -193,7 +169,7 @@ class _TrackTile extends StatelessWidget {
   }
 }
 
-/// A compact track list for use in smaller spaces.
+/// Compact track preview used in card-style surfaces (e.g. detail panels).
 class CompactTrackList extends StatelessWidget {
   const CompactTrackList({
     super.key,
@@ -201,20 +177,17 @@ class CompactTrackList extends StatelessWidget {
     this.maxTracks = 5,
   });
 
-  /// The tracks to display.
   final List<Track> tracks;
-
-  /// Maximum number of tracks to show before truncating.
   final int maxTracks;
 
   @override
   Widget build(BuildContext context) {
+    final colors = SaturdayColorTokens.of(context);
+
     if (tracks.isEmpty) {
       return Text(
-        'No tracks',
-        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: SaturdayColors.secondary,
-            ),
+        'No tracks recorded.',
+        style: SaturdayType.bodySmall.copyWith(color: colors.inkSecondary),
       );
     }
 
@@ -224,21 +197,24 @@ class CompactTrackList extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        ...displayTracks.map((track) => Padding(
-              padding: const EdgeInsets.symmetric(vertical: 2),
-              child: Text(
-                '${track.position}. ${track.title}',
-                style: Theme.of(context).textTheme.bodySmall,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
-            )),
+        ...displayTracks.map(
+          (track) => Padding(
+            padding: const EdgeInsets.symmetric(vertical: 2),
+            child: Text(
+              '${track.position}  ${track.title}',
+              style: SaturdayType.bodySmall.copyWith(color: colors.ink),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ),
         if (remaining > 0)
-          Text(
-            '+$remaining more tracks',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: SaturdayColors.secondary,
-                ),
+          Padding(
+            padding: const EdgeInsets.only(top: 2),
+            child: Text(
+              '$remaining more',
+              style: SaturdayType.meta.copyWith(color: colors.inkTertiary),
+            ),
           ),
       ],
     );
