@@ -50,7 +50,7 @@ class RecentAlbumsGrid extends ConsumerWidget {
   Widget _buildEmptyState(BuildContext context) {
     return Container(
       padding: Spacing.cardPadding,
-      decoration: AppDecorations.card,
+      decoration: AppDecorations.card(context),
       child: Center(
         child: Column(
           children: [
@@ -82,7 +82,7 @@ class RecentAlbumsGrid extends ConsumerWidget {
   Widget _buildErrorState(BuildContext context) {
     return Container(
       padding: Spacing.cardPadding,
-      decoration: AppDecorations.card,
+      decoration: AppDecorations.card(context),
       child: Center(
         child: Text(
           'Failed to load recent albums',

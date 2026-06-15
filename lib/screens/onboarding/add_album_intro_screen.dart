@@ -16,7 +16,7 @@ class AddAlbumIntroScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final currentLibrary = ref.watch(currentLibraryProvider);
-    final libraryName = currentLibrary?.name ?? 'your library';
+    final libraryName = currentLibrary?.name ?? 'your archive';
     final screenHeight = MediaQuery.of(context).size.height;
 
     return Scaffold(
@@ -46,7 +46,7 @@ class AddAlbumIntroScreen extends ConsumerWidget {
 
                 // Success message
                 Text(
-                  'Library Created!',
+                  'Archive Created!',
                   style: Theme.of(context).textTheme.headlineMedium,
                   textAlign: TextAlign.center,
                 ),
@@ -262,7 +262,7 @@ class AddAlbumIntroScreen extends ConsumerWidget {
               ),
               onTap: () {
                 Navigator.pop(context);
-                context.push('/library/add/search');
+                context.push('/search');
               },
             ),
             const SizedBox(height: Spacing.lg),

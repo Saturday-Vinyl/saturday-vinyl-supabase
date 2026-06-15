@@ -23,13 +23,12 @@ final colorExtractionServiceProvider = Provider<ColorExtractionService>((ref) {
   return ColorExtractionService();
 });
 
-/// Provider for the Claude Vision service (album cover recognition).
-final claudeVisionServiceProvider = Provider<ClaudeVisionService?>((ref) {
-  final apiKey = EnvConfig.anthropicApiKey;
-  if (apiKey == null || apiKey.isEmpty) {
-    return null;
-  }
-  return ClaudeVisionService(apiKey: apiKey);
+/// Provider for the album-cover recognition service.
+///
+/// The Anthropic API key and model live in the `identify-album-cover` edge
+/// function, not in the app — there is no client-side gate to fail.
+final claudeVisionServiceProvider = Provider<ClaudeVisionService>((ref) {
+  return ClaudeVisionService();
 });
 
 /// State for the add album flow.
@@ -155,13 +154,6 @@ class AddAlbumNotifier extends StateNotifier<AddAlbumState> {
   Future<AlbumIdentificationResult?> searchByAlbumCover(
       Uint8List imageBytes) async {
     final visionService = _ref.read(claudeVisionServiceProvider);
-    if (visionService == null) {
-      state = state.copyWith(
-        error: 'Album cover recognition is not configured. '
-            'Please add ANTHROPIC_API_KEY to your .env file.',
-      );
-      return null;
-    }
 
     state = state.copyWith(isLoading: true, clearError: true);
 
@@ -256,7 +248,7 @@ class AddAlbumNotifier extends StateNotifier<AddAlbumState> {
     final userId = _ref.read(currentUserIdProvider);
 
     if (libraryId == null || userId == null) {
-      state = state.copyWith(error: 'No library selected or not signed in');
+      state = state.copyWith(error: 'No archive selected or not signed in');
       return false;
     }
 

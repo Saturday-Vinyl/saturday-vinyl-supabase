@@ -109,7 +109,7 @@ class _TagResolutionScreenState extends ConsumerState<TagResolutionScreen> {
               const SizedBox(height: 8),
               Text(
                 'This tag isn\'t linked to an album yet. '
-                'Choose an album from your library to link it.',
+                'Choose an album from your archive to link it.',
                 style: TextStyle(color: SaturdayColors.secondary),
                 textAlign: TextAlign.center,
               ),
@@ -130,14 +130,14 @@ class _TagResolutionScreenState extends ConsumerState<TagResolutionScreen> {
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         Text(
-                          'No albums in your library yet.',
+                          'No albums in your archive yet.',
                           style: TextStyle(color: SaturdayColors.secondary),
                           textAlign: TextAlign.center,
                         ),
                         const SizedBox(height: 16),
                         ElevatedButton(
                           onPressed: () => context.go(RoutePaths.library),
-                          child: const Text('Go to Library'),
+                          child: const Text('Go to Archive'),
                         ),
                       ],
                     ),

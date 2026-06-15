@@ -60,7 +60,7 @@ class _QueueScreenState extends ConsumerState<QueueScreen> {
               ? EmptyState(
                   icon: Icons.playlist_play,
                   title: 'Queue is empty',
-                  message: 'Add albums from your library or a cratelist to '
+                  message: 'Add albums from your archive or a cratelist to '
                       'plan what to listen to next.',
                   actionLabel: 'Add albums',
                   onAction: () => context.push('/now-playing/queue/add'),

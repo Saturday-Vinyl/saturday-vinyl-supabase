@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:saturday_consumer_app/config/styles.dart';
 import 'package:saturday_consumer_app/config/theme.dart';
+import 'package:saturday_consumer_app/config/tokens/tokens.dart';
 import 'package:saturday_consumer_app/providers/track_timing_provider.dart';
 import 'package:saturday_consumer_app/repositories/track_duration_repository.dart';
 
@@ -38,7 +39,7 @@ class _TimingView extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     return Container(
       decoration: BoxDecoration(
-        color: SaturdayColors.white,
+        color: SaturdayColorTokens.of(context).paperElevated,
         borderRadius: AppRadius.largeRadius,
         boxShadow: AppShadows.card,
         border: Border.all(
@@ -304,7 +305,7 @@ class _ReviewView extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     return Container(
       decoration: BoxDecoration(
-        color: SaturdayColors.white,
+        color: SaturdayColorTokens.of(context).paperElevated,
         borderRadius: AppRadius.largeRadius,
         boxShadow: AppShadows.card,
       ),

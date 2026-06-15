@@ -66,7 +66,7 @@ class NowPlayingEmptyState extends StatelessWidget {
               child: ElevatedButton.icon(
                 onPressed: onChooseAlbum,
                 icon: const Icon(Icons.library_music_outlined),
-                label: const Text('Browse Library'),
+                label: const Text('Browse Archive'),
               ),
             ),
             const SizedBox(height: Spacing.md),

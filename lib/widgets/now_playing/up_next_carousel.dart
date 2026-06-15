@@ -56,7 +56,7 @@ class _QueueUpNext extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      decoration: AppDecorations.card,
+      decoration: AppDecorations.card(context),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -193,7 +193,7 @@ class _EmptyQueueRecommendations extends ConsumerWidget {
         if (recs.isEmpty) return const SizedBox.shrink();
         return Container(
           width: double.infinity,
-          decoration: AppDecorations.card,
+          decoration: AppDecorations.card(context),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -346,7 +346,7 @@ class _LoadingShell extends StatelessWidget {
     return Container(
       width: double.infinity,
       height: 80,
-      decoration: AppDecorations.card,
+      decoration: AppDecorations.card(context),
       alignment: Alignment.center,
       child: const SizedBox(
         width: 20,

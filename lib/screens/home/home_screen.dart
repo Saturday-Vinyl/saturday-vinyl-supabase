@@ -20,6 +20,7 @@ import 'package:saturday_consumer_app/providers/realtime_now_playing_provider.da
 import 'package:saturday_consumer_app/providers/track_timing_provider.dart';
 import 'package:saturday_consumer_app/utils/track_position_calculator.dart';
 import 'package:saturday_consumer_app/widgets/common/saturday_app_bar.dart';
+import 'package:saturday_consumer_app/widgets/home/room_observation.dart';
 
 /// The listening room — the app's home tab.
 ///
@@ -509,6 +510,23 @@ String _formatMmSs(int seconds) {
   return '${mins.toString().padLeft(2, '0')}:${secs.toString().padLeft(2, '0')}';
 }
 
+/// "Sunday evening", "Tuesday morning" — the eyebrow on the empty stand.
+/// Buckets: 5–11 morning, 12–17 afternoon, 18–04 evening.
+String _dayAndPartOfDay(DateTime now) {
+  const days = [
+    'Monday', 'Tuesday', 'Wednesday', 'Thursday',
+    'Friday', 'Saturday', 'Sunday',
+  ];
+  final day = days[now.weekday - 1];
+  final h = now.hour;
+  final part = (h >= 5 && h < 12)
+      ? 'morning'
+      : (h >= 12 && h < 18)
+          ? 'afternoon'
+          : 'evening';
+  return '$day $part';
+}
+
 class _PrimaryAction extends ConsumerWidget {
   const _PrimaryAction({required this.state, required this.colors});
 
@@ -810,7 +828,7 @@ class _EmptyStand extends ConsumerWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _SectionEyebrow(label: 'The stand', colors: colors),
+          _SectionEyebrow(label: _dayAndPartOfDay(DateTime.now()), colors: colors),
           const SizedBox(height: SaturdaySpace.space16),
           Text(
             'The stand is empty.',
@@ -839,6 +857,8 @@ class _EmptyStand extends ConsumerWidget {
             const SizedBox(height: SaturdaySpace.space12),
             _LastOnStand(libraryAlbum: lastOnStand, colors: colors),
           ],
+          const SizedBox(height: SaturdaySpace.space8),
+          const RoomObservationLine(),
         ],
       ),
     );

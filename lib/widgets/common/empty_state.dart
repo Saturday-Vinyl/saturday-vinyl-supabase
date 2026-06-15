@@ -109,7 +109,7 @@ class EmptyState extends StatelessWidget {
       key: key,
       icon: Icons.play_circle_outline,
       title: 'Nothing playing',
-      message: 'Select an album from your library or scan a barcode to start listening.',
+      message: 'Select an album from your archive or scan a barcode to start listening.',
       actionLabel: 'Choose Album',
       onAction: onSelectAlbum,
       secondaryActionLabel: 'Scan Barcode',
@@ -167,7 +167,7 @@ class EmptyState extends StatelessWidget {
     return EmptyState(
       key: key,
       icon: Icons.recommend,
-      message: 'Add more albums to your library to get personalized recommendations.',
+      message: 'Add more albums to your archive to get personalized recommendations.',
       compact: true,
     );
   }

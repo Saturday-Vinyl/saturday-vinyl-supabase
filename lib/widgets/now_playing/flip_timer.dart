@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:saturday_consumer_app/config/styles.dart';
 import 'package:saturday_consumer_app/config/theme.dart';
+import 'package:saturday_consumer_app/config/tokens/tokens.dart';
 
 /// A timer widget that shows elapsed and remaining time for the current side.
 ///
@@ -98,7 +99,7 @@ class _FlipTimerState extends State<FlipTimer> with WidgetsBindingObserver {
     return Container(
       padding: const EdgeInsets.all(Spacing.lg),
       decoration: BoxDecoration(
-        color: SaturdayColors.white,
+        color: SaturdayColorTokens.of(context).paperElevated,
         borderRadius: AppRadius.largeRadius,
         boxShadow: AppShadows.card,
         border: isNearFlip || isOvertime

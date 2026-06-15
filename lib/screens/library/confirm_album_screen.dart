@@ -10,23 +10,54 @@ import 'package:saturday_consumer_app/providers/album_provider.dart';
 import 'package:saturday_consumer_app/widgets/library/track_list.dart';
 
 /// Screen for confirming and adding an album to the library.
-class ConfirmAlbumScreen extends ConsumerWidget {
+class ConfirmAlbumScreen extends ConsumerStatefulWidget {
   const ConfirmAlbumScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<ConfirmAlbumScreen> createState() => _ConfirmAlbumScreenState();
+}
+
+class _ConfirmAlbumScreenState extends ConsumerState<ConfirmAlbumScreen> {
+  // Tracks whether we've ever rendered a selected album. The auto-pop
+  // logic exists to bounce users who land here with nothing loaded; once
+  // we've shown an album, a later transition to null is the user
+  // back-navigating away — popping again would over-pop and skip the
+  // referring screen.
+  bool _hasEverHadAlbum = false;
+
+  void _goBack() {
+    // Pop BEFORE clearing selection. Clearing first would rebuild this
+    // widget with album == null, scheduling a second auto-pop on the
+    // next frame.
+    if (context.canPop()) {
+      context.pop();
+    } else {
+      context.go('/library');
+    }
+    ref.read(addAlbumProvider.notifier).clearSelection();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final state = ref.watch(addAlbumProvider);
     final album = state.selectedAlbum;
 
-    if (album == null) {
-      // No album selected, go back to library
+    if (album != null) {
+      _hasEverHadAlbum = true;
+    } else if (!_hasEverHadAlbum) {
+      // No album selected and we never had one — bounce out.
       WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
         if (context.canPop()) {
           context.pop();
         } else {
           context.go('/library');
         }
       });
+      return const SizedBox.shrink();
+    } else {
+      // We had an album but it's been cleared — we're already on the way
+      // out. Render nothing while the pop animates.
       return const SizedBox.shrink();
     }
 
@@ -35,14 +66,7 @@ class ConfirmAlbumScreen extends ConsumerWidget {
         title: const Text('Confirm Album'),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back),
-          onPressed: () {
-            ref.read(addAlbumProvider.notifier).clearSelection();
-            if (context.canPop()) {
-              context.pop();
-            } else {
-              context.go('/library');
-            }
-          },
+          onPressed: _goBack,
         ),
       ),
       body: Column(
@@ -116,7 +140,7 @@ class ConfirmAlbumScreen extends ConsumerWidget {
                           width: 20,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Text('Add to Library'),
+                      : const Text('Add to Archive'),
                 ),
               ),
             ),
@@ -272,7 +296,7 @@ class ConfirmAlbumScreen extends ConsumerWidget {
         ..clearSnackBars()
         ..showSnackBar(
           SnackBar(
-            content: Text('Added "${addedAlbum?.album?.title}" to your library'),
+            content: Text('Added "${addedAlbum?.album?.title}" to your archive'),
             action: SnackBarAction(
               label: 'View',
               onPressed: () {

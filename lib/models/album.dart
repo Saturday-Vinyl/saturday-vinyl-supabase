@@ -11,6 +11,8 @@ class Album extends Equatable {
   final int? discogsId;
   final String title;
   final String artist;
+  final List<int> discogsArtistIds;
+  final List<String> discogsArtistNames;
   final int? year;
   final List<String> genres;
   final List<String> styles;
@@ -26,6 +28,8 @@ class Album extends Equatable {
     this.discogsId,
     required this.title,
     required this.artist,
+    this.discogsArtistIds = const [],
+    this.discogsArtistNames = const [],
     this.year,
     this.genres = const [],
     this.styles = const [],
@@ -43,6 +47,14 @@ class Album extends Equatable {
       discogsId: json['discogs_id'] as int?,
       title: json['title'] as String,
       artist: json['artist'] as String,
+      discogsArtistIds: (json['discogs_artist_ids'] as List<dynamic>?)
+              ?.map((e) => e as int)
+              .toList() ??
+          const [],
+      discogsArtistNames: (json['discogs_artist_names'] as List<dynamic>?)
+              ?.map((e) => e as String)
+              .toList() ??
+          const [],
       year: json['year'] as int?,
       genres: (json['genres'] as List<dynamic>?)
               ?.map((e) => e as String)
@@ -72,6 +84,8 @@ class Album extends Equatable {
       'discogs_id': discogsId,
       'title': title,
       'artist': artist,
+      'discogs_artist_ids': discogsArtistIds,
+      'discogs_artist_names': discogsArtistNames,
       'year': year,
       'genres': genres,
       'styles': styles,
@@ -89,6 +103,8 @@ class Album extends Equatable {
     int? discogsId,
     String? title,
     String? artist,
+    List<int>? discogsArtistIds,
+    List<String>? discogsArtistNames,
     int? year,
     List<String>? genres,
     List<String>? styles,
@@ -104,6 +120,8 @@ class Album extends Equatable {
       discogsId: discogsId ?? this.discogsId,
       title: title ?? this.title,
       artist: artist ?? this.artist,
+      discogsArtistIds: discogsArtistIds ?? this.discogsArtistIds,
+      discogsArtistNames: discogsArtistNames ?? this.discogsArtistNames,
       year: year ?? this.year,
       genres: genres ?? this.genres,
       styles: styles ?? this.styles,
@@ -140,6 +158,8 @@ class Album extends Equatable {
         discogsId,
         title,
         artist,
+        discogsArtistIds,
+        discogsArtistNames,
         year,
         genres,
         styles,

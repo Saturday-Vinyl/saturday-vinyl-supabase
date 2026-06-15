@@ -111,7 +111,7 @@ class _EmptyState extends StatelessWidget {
     return EmptyState(
       icon: Icons.queue_music,
       title: 'No cratelists yet',
-      message: 'Group records from your library into ordered crates you can '
+      message: 'Group records from your archive into ordered crates you can '
           'queue up to play.',
       actionLabel: 'Create cratelist',
       onAction: onCreate,

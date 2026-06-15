@@ -128,8 +128,14 @@ struct FlipTimerWidgetLiveActivity: Widget {
                         Text("flip")
                             .font(SaturdayType.flipMomentExpanded)
                             .foregroundColor(SaturdayPalette.onDarkInk)
-                    } else {
+                    } else if data.hasKnownDuration {
                         Text(timerInterval: data.timerRange, countsDown: true)
+                            .font(SaturdayType.countdownExpanded)
+                            .monospacedDigit()
+                            .foregroundColor(SaturdayPalette.onDarkInk)
+                            .multilineTextAlignment(.trailing)
+                    } else {
+                        Text(data.startDate, style: .timer)
                             .font(SaturdayType.countdownExpanded)
                             .monospacedDigit()
                             .foregroundColor(SaturdayPalette.onDarkInk)
@@ -170,8 +176,15 @@ struct FlipTimerWidgetLiveActivity: Widget {
                     Text("flip")
                         .font(SaturdayType.flipMomentCompact)
                         .foregroundColor(SaturdayPalette.onDarkInk)
-                } else {
+                } else if data.hasKnownDuration {
                     Text(timerInterval: data.timerRange, countsDown: true)
+                        .font(SaturdayType.countdownCompact)
+                        .monospacedDigit()
+                        .multilineTextAlignment(.center)
+                        .frame(width: 44)
+                        .foregroundColor(SaturdayPalette.onDarkInk)
+                } else {
+                    Text(data.startDate, style: .timer)
                         .font(SaturdayType.countdownCompact)
                         .monospacedDigit()
                         .multilineTextAlignment(.center)
@@ -208,8 +221,13 @@ struct LockScreenView: View {
                 Text("Flip the record.")
                     .font(SaturdayType.flipMoment)
                     .foregroundColor(SaturdayPalette.ink)
-            } else {
+            } else if data.hasKnownDuration {
                 Text(timerInterval: data.timerRange, countsDown: true)
+                    .font(SaturdayType.countdownLockScreen)
+                    .monospacedDigit()
+                    .foregroundColor(SaturdayPalette.ink)
+            } else {
+                Text(data.startDate, style: .timer)
                     .font(SaturdayType.countdownLockScreen)
                     .monospacedDigit()
                     .foregroundColor(SaturdayPalette.ink)
@@ -255,6 +273,12 @@ struct LiveData {
     let endDate: Date
     let isOvertime: Bool
 
+    /// Whether we know the total running time of this side. False when the
+    /// album has no recorded track times — in that case there is no flip
+    /// moment to count down to, so we show elapsed time instead and never
+    /// prompt the listener to flip.
+    let hasKnownDuration: Bool
+
     init(context: ActivityViewContext<LiveActivitiesAppAttributes>) {
         let attrs = context.attributes
         self.albumTitle = sharedDefault.string(forKey: attrs.prefixedKey("albumTitle")) ?? ""
@@ -266,6 +290,7 @@ struct LiveData {
 
         let totalDurationSeconds = sharedDefault.integer(forKey: attrs.prefixedKey("totalDurationSeconds"))
         let startedAtTimestamp = sharedDefault.integer(forKey: attrs.prefixedKey("startedAtTimestamp"))
+        self.hasKnownDuration = totalDurationSeconds > 0
         self.startDate = Date(timeIntervalSince1970: Double(startedAtTimestamp) / 1000.0)
         self.endDate = startDate.addingTimeInterval(Double(totalDurationSeconds))
     }
@@ -276,6 +301,6 @@ struct LiveData {
     }
 
     var isAtFlipMoment: Bool {
-        isOvertime || Date() > endDate
+        hasKnownDuration && (isOvertime || Date() > endDate)
     }
 }

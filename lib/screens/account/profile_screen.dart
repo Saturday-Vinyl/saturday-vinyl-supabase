@@ -36,7 +36,7 @@ class ProfileScreen extends ConsumerWidget {
               _ProfileHeader(user: user),
               Spacing.sectionGap,
               Text(
-                'Your library by the numbers',
+                'Your archive by the numbers',
                 style: Theme.of(context).textTheme.titleLarge,
               ),
               const SizedBox(height: 4),
@@ -88,7 +88,7 @@ class _ProfileHeader extends StatelessWidget {
     final email = user?.email as String? ?? '';
 
     return Container(
-      decoration: AppDecorations.card,
+      decoration: AppDecorations.card(context),
       padding: Spacing.cardPadding,
       child: Row(
         children: [
@@ -280,7 +280,7 @@ class _TotalTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      decoration: AppDecorations.card,
+      decoration: AppDecorations.card(context),
       padding: const EdgeInsets.symmetric(
         horizontal: Spacing.md,
         vertical: Spacing.lg,
@@ -349,7 +349,7 @@ class _EmptySectionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      decoration: AppDecorations.card,
+      decoration: AppDecorations.card(context),
       padding: Spacing.cardPadding,
       child: Row(
         children: [
@@ -374,7 +374,7 @@ class _TopAlbumsList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      decoration: AppDecorations.card,
+      decoration: AppDecorations.card(context),
       padding: const EdgeInsets.symmetric(vertical: Spacing.sm),
       child: Column(
         children: [
@@ -502,7 +502,7 @@ class _RankedList extends StatelessWidget {
     final maxCount = entries.fold<int>(0, (m, e) => e.count > m ? e.count : m);
 
     return Container(
-      decoration: AppDecorations.card,
+      decoration: AppDecorations.card(context),
       padding: const EdgeInsets.symmetric(
         horizontal: Spacing.lg,
         vertical: Spacing.md,
@@ -586,7 +586,7 @@ class _GenreChips extends StatelessWidget {
     final maxCount = genres.fold<int>(0, (m, g) => g.playCount > m ? g.playCount : m);
 
     return Container(
-      decoration: AppDecorations.card,
+      decoration: AppDecorations.card(context),
       padding: Spacing.cardPadding,
       child: Wrap(
         spacing: Spacing.sm,
@@ -659,7 +659,7 @@ class _DecadeHeatmap extends StatelessWidget {
         decades.fold<int>(0, (m, d) => d.albumCount > m ? d.albumCount : m);
 
     return Container(
-      decoration: AppDecorations.card,
+      decoration: AppDecorations.card(context),
       padding: Spacing.cardPadding,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -766,7 +766,7 @@ class _ActivityStrip extends StatelessWidget {
     final totalRecent = daily.fold<int>(0, (s, d) => s + d.playCount);
 
     return Container(
-      decoration: AppDecorations.card,
+      decoration: AppDecorations.card(context),
       padding: Spacing.cardPadding,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -831,7 +831,7 @@ class _SignInPrompt extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      decoration: AppDecorations.card,
+      decoration: AppDecorations.card(context),
       padding: Spacing.cardPadding,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -863,7 +863,7 @@ class _EmptyAnalytics extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      decoration: AppDecorations.card,
+      decoration: AppDecorations.card(context),
       padding: Spacing.cardPadding,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -880,7 +880,7 @@ class _EmptyAnalytics extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            'Add albums to your library and play a few records to see them light up here.',
+            'Add albums to your archive and play a few records to see them light up here.',
             style: TextStyle(color: SaturdayColors.secondary),
           ),
         ],
@@ -897,7 +897,7 @@ class _AnalyticsError extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      decoration: AppDecorations.card,
+      decoration: AppDecorations.card(context),
       padding: Spacing.cardPadding,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

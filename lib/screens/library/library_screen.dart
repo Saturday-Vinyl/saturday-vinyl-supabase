@@ -246,7 +246,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
               ),
               onTap: () {
                 Navigator.pop(context);
-                context.push('/library/add/search');
+                context.push('/search');
               },
             ),
             ListTile(
@@ -304,7 +304,7 @@ class _LibraryScreenState extends ConsumerState<LibraryScreen> {
               ),
               onTap: () {
                 Navigator.pop(context);
-                context.push('/library/add/search');
+                context.push('/search');
               },
             ),
             const SizedBox(height: SaturdaySpace.space4),

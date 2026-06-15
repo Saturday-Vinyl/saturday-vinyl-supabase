@@ -52,7 +52,7 @@ class _NowPlayingTrackListState extends State<NowPlayingTrackList> {
     }
 
     return Container(
-      decoration: AppDecorations.card,
+      decoration: AppDecorations.card(context),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -110,7 +110,7 @@ class _NowPlayingTrackListState extends State<NowPlayingTrackList> {
   Widget _buildEmptyState(BuildContext context) {
     return Container(
       padding: Spacing.cardPadding,
-      decoration: AppDecorations.card,
+      decoration: AppDecorations.card(context),
       child: Center(
         child: Text(
           'No track information available',

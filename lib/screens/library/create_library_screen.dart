@@ -71,7 +71,7 @@ class _CreateLibraryScreenState extends ConsumerState<CreateLibraryScreen> {
     } catch (e) {
       setState(() {
         _isLoading = false;
-        _error = 'Failed to create library: $e';
+        _error = 'Failed to create archive: $e';
       });
     }
   }
@@ -80,7 +80,7 @@ class _CreateLibraryScreenState extends ConsumerState<CreateLibraryScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Create Library'),
+        title: const Text('Create Archive'),
         leading: IconButton(
           icon: const Icon(Icons.close),
           onPressed: () => context.pop(),
@@ -108,7 +108,7 @@ class _CreateLibraryScreenState extends ConsumerState<CreateLibraryScreen> {
                 TextFormField(
                   controller: _nameController,
                   decoration: const InputDecoration(
-                    labelText: 'Library Name',
+                    labelText: 'Archive Name',
                     hintText: 'e.g., My Vinyl Collection',
                   ),
                   textCapitalization: TextCapitalization.words,
@@ -129,7 +129,7 @@ class _CreateLibraryScreenState extends ConsumerState<CreateLibraryScreen> {
                   controller: _descriptionController,
                   decoration: const InputDecoration(
                     labelText: 'Description (optional)',
-                    hintText: 'A brief description of this library',
+                    hintText: 'A brief description of this archive',
                   ),
                   textCapitalization: TextCapitalization.sentences,
                   maxLines: 3,
@@ -169,7 +169,7 @@ class _CreateLibraryScreenState extends ConsumerState<CreateLibraryScreen> {
                           width: 20,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Text('Create Library'),
+                      : const Text('Create Archive'),
                 ),
                 const SizedBox(height: Spacing.xl),
 
@@ -187,7 +187,7 @@ class _CreateLibraryScreenState extends ConsumerState<CreateLibraryScreen> {
                       const SizedBox(width: Spacing.sm),
                       Expanded(
                         child: Text(
-                          'You can invite others to view or edit this library later from the library settings.',
+                          'You can invite others to view or edit this archive later from the archive settings.',
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
                       ),

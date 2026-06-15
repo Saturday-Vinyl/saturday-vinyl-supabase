@@ -16,7 +16,7 @@ void main() {
 
     // Verify bottom navigation is present with correct tabs
     expect(find.text('Now Playing'), findsOneWidget);
-    expect(find.text('Library'), findsOneWidget);
+    expect(find.text('Archive'), findsOneWidget);
     expect(find.text('Account'), findsOneWidget);
   });
 

@@ -16,7 +16,6 @@ import 'package:saturday_consumer_app/screens/library/album_detail_screen.dart';
 import 'package:saturday_consumer_app/screens/library/cratelist_album_picker_screen.dart';
 import 'package:saturday_consumer_app/screens/library/cratelist_detail_screen.dart';
 import 'package:saturday_consumer_app/screens/library/cratelists_screen.dart';
-import 'package:saturday_consumer_app/screens/library/discogs_search_screen.dart';
 import 'package:saturday_consumer_app/screens/library/barcode_scanner_screen.dart';
 import 'package:saturday_consumer_app/screens/library/confirm_album_screen.dart';
 import 'package:saturday_consumer_app/screens/library/tag_association_screen.dart';
@@ -32,6 +31,7 @@ import 'package:saturday_consumer_app/screens/account/wifi_reprovision_screen.da
 import 'package:saturday_consumer_app/screens/account/notification_settings_screen.dart';
 import 'package:saturday_consumer_app/screens/account/pair_tv_screen.dart';
 import 'package:saturday_consumer_app/screens/account/profile_screen.dart';
+import 'package:saturday_consumer_app/screens/artist/artist_screen.dart';
 import 'package:saturday_consumer_app/screens/onboarding/quick_start_screen.dart';
 import 'package:saturday_consumer_app/screens/onboarding/add_album_intro_screen.dart';
 import 'package:saturday_consumer_app/screens/search/search_screen.dart';
@@ -59,7 +59,6 @@ class RoutePaths {
   static const String albumDetails = 'album/:id';
   static const String addAlbum = 'add';
   static const String addAlbumScan = 'add/scan';
-  static const String addAlbumSearch = 'add/search';
   static const String addAlbumConfirm = 'add/confirm';
   static const String tagAssociation = 'album/:id/tag';
   static const String hubTagAssociation = 'album/:id/tag/hub';
@@ -77,6 +76,9 @@ class RoutePaths {
   static const String profile = 'profile';
   static const String settings = 'settings';
   static const String search = '/search';
+
+  // Artist landing page (routed by Discogs artist ID)
+  static const String artistByDiscogsId = '/artist/discogs/:id';
 
   // Invitation routes (top-level for deep linking)
   static const String inviteAccept = '/invite/:code';
@@ -108,7 +110,6 @@ class RouteNames {
   static const String albumDetails = 'album-details';
   static const String addAlbum = 'add-album';
   static const String addAlbumScan = 'add-album-scan';
-  static const String addAlbumSearch = 'add-album-search';
   static const String addAlbumConfirm = 'add-album-confirm';
   static const String tagAssociation = 'tag-association';
   static const String hubTagAssociation = 'hub-tag-association';
@@ -127,6 +128,7 @@ class RouteNames {
   static const String profile = 'profile';
   static const String settings = 'settings';
   static const String search = 'search';
+  static const String artistByDiscogsId = 'artist-by-discogs-id';
   static const String setNowPlaying = 'set-now-playing';
   static const String queue = 'queue';
   static const String queueAdd = 'queue-add';
@@ -269,11 +271,6 @@ GoRouter createAppRouter(Ref ref) {
                 name: RouteNames.addAlbumScan,
                 parentNavigatorKey: rootNavigatorKey,
                 builder: (context, state) => const BarcodeScannerScreen(),
-              ),
-              GoRoute(
-                path: RoutePaths.addAlbumSearch,
-                name: RouteNames.addAlbumSearch,
-                builder: (context, state) => const DiscogsSearchScreen(),
               ),
               GoRoute(
                 path: RoutePaths.addAlbumConfirm,
@@ -425,6 +422,21 @@ GoRouter createAppRouter(Ref ref) {
         path: RoutePaths.search,
         name: RouteNames.search,
         builder: (context, state) => const SearchScreen(),
+      ),
+
+      // Artist landing page (Discogs-ID routed)
+      GoRoute(
+        path: RoutePaths.artistByDiscogsId,
+        name: RouteNames.artistByDiscogsId,
+        builder: (context, state) {
+          final id = int.tryParse(state.pathParameters['id'] ?? '');
+          if (id == null) {
+            return const Scaffold(
+              body: Center(child: Text('Invalid artist ID')),
+            );
+          }
+          return ArtistScreen(discogsArtistId: id);
+        },
       ),
 
       // Invitation accept route (top-level for deep linking)

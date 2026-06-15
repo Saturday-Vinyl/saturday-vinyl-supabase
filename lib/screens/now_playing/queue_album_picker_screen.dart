@@ -86,7 +86,7 @@ class _QueueAlbumPickerScreenState
       ),
       body: albumsAsync.when(
         loading: () =>
-            const LoadingIndicator.medium(message: 'Loading library...'),
+            const LoadingIndicator.medium(message: 'Loading archive...'),
         error: (e, _) => ErrorDisplay.fullScreen(
           message: e.toString(),
           onRetry: () => ref.invalidate(libraryAlbumsProvider),
@@ -97,7 +97,7 @@ class _QueueAlbumPickerScreenState
               icon: Icons.library_music_outlined,
               title: 'No albums',
               message:
-                  'Add albums to your library before queuing them up to play.',
+                  'Add albums to your archive before queuing them up to play.',
             );
           }
           return ListView.builder(

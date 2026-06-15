@@ -23,7 +23,7 @@ class CurrentTrackCard extends StatelessWidget {
         : SaturdayColors.secondary;
 
     return Container(
-      decoration: AppDecorations.card,
+      decoration: AppDecorations.card(context),
       padding: Spacing.cardPadding,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

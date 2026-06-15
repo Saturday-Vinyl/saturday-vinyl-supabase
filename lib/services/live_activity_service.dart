@@ -175,8 +175,14 @@ class LiveActivityService {
       // End any existing activity first
       await stopFlipTimerActivity();
 
+      // A side duration of 0 means we have no known track times for this
+      // side, so there is no flip moment to count down to. Never report
+      // overtime in that case — otherwise the lock screen prompts the
+      // listener to flip the record the instant playback begins.
+      final hasKnownDuration = sideDurationSeconds > 0;
       final elapsedSeconds = DateTime.now().difference(startedAt).inSeconds;
-      final isOvertime = elapsedSeconds > sideDurationSeconds;
+      final isOvertime =
+          hasKnownDuration && elapsedSeconds > sideDurationSeconds;
 
       final data = <String, dynamic>{
         'albumTitle': album.title,
@@ -248,8 +254,10 @@ class LiveActivityService {
     }
 
     try {
+      final hasKnownDuration = sideDurationSeconds > 0;
       final elapsedSeconds = DateTime.now().difference(startedAt).inSeconds;
-      final isOvertime = elapsedSeconds > sideDurationSeconds;
+      final isOvertime =
+          hasKnownDuration && elapsedSeconds > sideDurationSeconds;
 
       final data = <String, dynamic>{
         'currentSide': currentSide,

@@ -176,7 +176,7 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
           _buildSearchTip(
             context,
             icon: Icons.album,
-            title: 'Search your library',
+            title: 'Search your archive',
             description: 'Find albums by title, artist, or genre',
           ),
           const SizedBox(height: Spacing.md),
@@ -235,12 +235,48 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
   }
 
   Widget _buildResults(BuildContext context, SearchState searchState) {
+    // Dedupe Discogs artist results that already appear in the library
+    // section so we don't show the same artist twice.
+    final libraryArtistIds =
+        searchState.libraryArtists.map((a) => a.discogsArtistId).toSet();
+    final discogsOnlyArtists = searchState.discogsArtists
+        .where((a) => !libraryArtistIds.contains(a.id))
+        .toList();
+
+    final hasAnyArtists = searchState.libraryArtists.isNotEmpty ||
+        discogsOnlyArtists.isNotEmpty;
+    final hasAnyAlbums = searchState.libraryResults.isNotEmpty ||
+        searchState.discogsResults.isNotEmpty;
+
     return ListView(
       children: [
+        // Artists section (library + Discogs, library first)
+        if (hasAnyArtists)
+          SearchSection(
+            title: 'Artists',
+            icon: Icons.person_outline,
+            resultCount:
+                searchState.libraryArtists.length + discogsOnlyArtists.length,
+            maxItems: 5,
+            children: [
+              ...searchState.libraryArtists.map((artist) =>
+                  LibraryArtistResultItem(
+                    artist: artist,
+                    onTap: () => _openArtist(artist.discogsArtistId),
+                  )),
+              ...discogsOnlyArtists.map((artist) => DiscogsArtistResultItem(
+                    result: artist,
+                    onTap: () => _openArtist(artist.id),
+                  )),
+            ],
+          ),
+
+        if (hasAnyArtists && hasAnyAlbums) const Divider(height: Spacing.xxl),
+
         // Library results
         if (searchState.libraryResults.isNotEmpty)
           SearchSection(
-            title: 'In Your Library',
+            title: 'In Your Archive',
             icon: Icons.library_music,
             resultCount: searchState.libraryResults.length,
             maxItems: 5,
@@ -284,6 +320,10 @@ class _SearchScreenState extends ConsumerState<SearchScreen> {
 
   void _openAlbumDetail(String albumId) {
     context.push('/library/album/$albumId');
+  }
+
+  void _openArtist(int discogsArtistId) {
+    context.push('/artist/discogs/$discogsArtistId');
   }
 
   void _viewDiscogsResult(DiscogsSearchResult result) {

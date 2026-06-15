@@ -47,7 +47,7 @@ class _InvitationAcceptScreenState
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Library Invitation'),
+        title: const Text('Archive Invitation'),
         leading: IconButton(
           icon: const Icon(Icons.close),
           onPressed: () => _navigateAway(),
@@ -142,7 +142,7 @@ class _InvitationAcceptScreenState
           const SizedBox(height: 8),
 
           Text(
-            '${invitation.inviterDisplayName} invited you to join their library',
+            '${invitation.inviterDisplayName} invited you to join their archive',
             style: TextStyle(
               color: SaturdayColors.secondary,
               fontSize: 16,
@@ -154,14 +154,14 @@ class _InvitationAcceptScreenState
 
           // Library details card
           Container(
-            decoration: AppDecorations.card,
+            decoration: AppDecorations.card(context),
             padding: Spacing.cardPadding,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 // Library name
                 Text(
-                  invitation.libraryName ?? 'Vinyl Library',
+                  invitation.libraryName ?? 'Vinyl Archive',
                   style: Theme.of(context).textTheme.titleLarge?.copyWith(
                         fontWeight: FontWeight.bold,
                       ),
@@ -380,8 +380,8 @@ class _InvitationAcceptScreenState
       icon: Icons.check_circle,
       title: 'Already Accepted',
       message:
-          'You\'ve already joined ${invitation.libraryName ?? 'this library'}.',
-      buttonText: 'Go to Library',
+          'You\'ve already joined ${invitation.libraryName ?? 'this archive'}.',
+      buttonText: 'Go to Archive',
       onButtonPressed: () => _navigateToLibrary(invitation.libraryId),
     );
   }
@@ -399,7 +399,7 @@ class _InvitationAcceptScreenState
     return _buildErrorState(
       icon: Icons.cancel,
       title: 'Invitation Revoked',
-      message: 'This invitation has been revoked by the library owner.',
+      message: 'This invitation has been revoked by the archive owner.',
     );
   }
 
@@ -532,7 +532,7 @@ class _InvitationAcceptScreenState
             ..showSnackBar(
               SnackBar(
                 content: Text(
-                  'You\'ve joined ${invitation.libraryName ?? 'the library'}!',
+                  'You\'ve joined ${invitation.libraryName ?? 'the archive'}!',
                 ),
               ),
             );

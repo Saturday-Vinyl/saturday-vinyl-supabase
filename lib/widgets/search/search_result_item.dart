@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:saturday_consumer_app/config/styles.dart';
 import 'package:saturday_consumer_app/config/theme.dart';
 import 'package:saturday_consumer_app/models/library_album.dart';
+import 'package:saturday_consumer_app/models/library_artist.dart';
 import 'package:saturday_consumer_app/services/discogs_service.dart';
 
 /// A search result item for library albums.
@@ -45,7 +46,7 @@ class LibrarySearchResultItem extends StatelessWidget {
           borderRadius: AppRadius.smallRadius,
         ),
         child: Text(
-          'In Library',
+          'In Archive',
           style: Theme.of(context).textTheme.labelSmall?.copyWith(
                 color: SaturdayColors.success,
                 fontWeight: FontWeight.w600,
@@ -114,9 +115,112 @@ class DiscogsSearchResultItem extends StatelessWidget {
           : IconButton(
               icon: const Icon(Icons.add_circle_outline),
               color: SaturdayColors.primaryDark,
-              tooltip: 'Add to Library',
+              tooltip: 'Add to Archive',
               onPressed: onAdd,
             ),
+    );
+  }
+}
+
+/// A search result item for an artist already in the user's library.
+class LibraryArtistResultItem extends StatelessWidget {
+  const LibraryArtistResultItem({
+    super.key,
+    required this.artist,
+    required this.onTap,
+  });
+
+  final LibraryArtist artist;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final albums = artist.albumCount == 1
+        ? '1 album in your archive'
+        : '${artist.albumCount} albums in your archive';
+    return ListTile(
+      onTap: onTap,
+      leading: const _ArtistAvatar(),
+      title: Text(
+        artist.name,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      subtitle: Text(
+        albums,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(color: SaturdayColors.secondary),
+      ),
+      trailing: const Icon(Icons.chevron_right),
+    );
+  }
+}
+
+/// A search result item for a Discogs artist not necessarily in the library.
+class DiscogsArtistResultItem extends StatelessWidget {
+  const DiscogsArtistResultItem({
+    super.key,
+    required this.result,
+    required this.onTap,
+  });
+
+  final DiscogsArtistResult result;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      onTap: onTap,
+      leading: _ArtistAvatar(imageUrl: result.thumbUrl),
+      title: Text(
+        result.name,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+      subtitle: Text(
+        'Artist on Discogs',
+        style: TextStyle(color: SaturdayColors.secondary),
+      ),
+      trailing: const Icon(Icons.chevron_right),
+    );
+  }
+}
+
+/// Circular avatar for an artist row.
+class _ArtistAvatar extends StatelessWidget {
+  const _ArtistAvatar({this.imageUrl});
+
+  final String? imageUrl;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 48,
+      height: 48,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        color: SaturdayColors.secondary.withValues(alpha: 0.2),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: imageUrl != null && imageUrl!.isNotEmpty
+          ? CachedNetworkImage(
+              imageUrl: imageUrl!,
+              fit: BoxFit.cover,
+              placeholder: (_, __) => _buildPlaceholder(),
+              errorWidget: (_, __, ___) => _buildPlaceholder(),
+            )
+          : _buildPlaceholder(),
+    );
+  }
+
+  Widget _buildPlaceholder() {
+    return Center(
+      child: Icon(
+        Icons.person_outline,
+        size: 24,
+        color: SaturdayColors.secondary,
+      ),
     );
   }
 }

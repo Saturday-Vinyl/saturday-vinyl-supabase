@@ -107,7 +107,7 @@ class _CratelistAlbumPickerScreenState
       ),
       body: albumsAsync.when(
         loading: () =>
-            const LoadingIndicator.medium(message: 'Loading library...'),
+            const LoadingIndicator.medium(message: 'Loading archive...'),
         error: (e, _) => ErrorDisplay.fullScreen(
           message: e.toString(),
           onRetry: () => ref.invalidate(libraryAlbumsProvider),
@@ -124,9 +124,9 @@ class _CratelistAlbumPickerScreenState
               icon: Icons.library_music_outlined,
               title: albums.isEmpty ? 'No albums' : 'All caught up',
               message: albums.isEmpty
-                  ? 'Add albums to your library before grouping them into a '
+                  ? 'Add albums to your archive before grouping them into a '
                       'cratelist.'
-                  : 'Every album in this library is already in the cratelist.',
+                  : 'Every album in this archive is already in the cratelist.',
             );
           }
 

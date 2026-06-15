@@ -337,15 +337,60 @@ class _Header extends StatelessWidget {
           ),
         ),
         const SizedBox(height: SaturdaySpace.space1),
-        Text(
-          album?.artist ?? 'Artist unknown',
-          style: SaturdayType.body.copyWith(
-            color: colors.inkSecondary,
-            fontSize: 16,
-          ),
-        ),
+        _ArtistLine(album: album, colors: colors),
       ],
     );
+  }
+}
+
+/// Artist credit line. When the album has Discogs artist IDs, each name
+/// renders as a tappable link to that artist's landing page; when it
+/// doesn't (legacy or non-Discogs records), falls back to plain text.
+class _ArtistLine extends StatelessWidget {
+  const _ArtistLine({required this.album, required this.colors});
+
+  final Album? album;
+  final SaturdayColorTokens colors;
+
+  @override
+  Widget build(BuildContext context) {
+    final style = SaturdayType.body.copyWith(
+      color: colors.inkSecondary,
+      fontSize: 16,
+    );
+
+    if (album == null) {
+      return Text('Artist unknown', style: style);
+    }
+
+    final ids = album!.discogsArtistIds;
+    final names = album!.discogsArtistNames;
+    final hasLinks = ids.isNotEmpty && ids.length == names.length;
+
+    if (!hasLinks) {
+      return Text(album!.artist, style: style);
+    }
+
+    final children = <Widget>[];
+    for (var i = 0; i < ids.length; i++) {
+      if (i > 0) children.add(Text(', ', style: style));
+      final id = ids[i];
+      final name = names[i];
+      children.add(
+        InkWell(
+          onTap: () => context.push('/artist/discogs/$id'),
+          child: Text(
+            name,
+            style: style.copyWith(
+              color: colors.ink,
+              decoration: TextDecoration.underline,
+              decorationColor: colors.borderStrong,
+            ),
+          ),
+        ),
+      );
+    }
+    return Wrap(children: children);
   }
 }
 
@@ -415,7 +460,7 @@ class _SendToTheRoomAction extends ConsumerWidget {
       onTap = () => context.go(RoutePaths.nowPlaying);
     } else {
       label = 'Send to the room';
-      onTap = () => _send(ref, nowPlaying);
+      onTap = () => _send(ref);
     }
 
     return _ArchiveButton(
@@ -426,16 +471,13 @@ class _SendToTheRoomAction extends ConsumerWidget {
     );
   }
 
-  Future<void> _send(WidgetRef ref, NowPlayingState nowPlaying) async {
-    if (nowPlaying.currentAlbum == null) {
-      // Empty stand — place the record there, queued, awaiting the needle.
-      await ref.read(nowPlayingProvider.notifier).queueOnStand(libraryAlbum);
-    } else {
-      // Stand is occupied — record joins the session.
-      await ref
-          .read(playbackQueueProvider.notifier)
-          .addAlbum(libraryAlbum.id);
-    }
+  Future<void> _send(WidgetRef ref) async {
+    // Sending a record to the room always places it on the stand, replacing
+    // whatever is there. queueOnStand cancels any existing active session
+    // (via queueSession -> _cancelExistingActive) before queueing the new
+    // record, so the previous session — even one left lingering in `queued`
+    // after a finished or stopped record — is terminated first.
+    await ref.read(nowPlayingProvider.notifier).queueOnStand(libraryAlbum);
   }
 
   String _ordinalUp(int zeroIndexed) {

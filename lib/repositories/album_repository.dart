@@ -1,5 +1,6 @@
 import 'package:saturday_consumer_app/models/album.dart';
 import 'package:saturday_consumer_app/models/library_album.dart';
+import 'package:saturday_consumer_app/models/library_artist.dart';
 import 'package:saturday_consumer_app/repositories/base_repository.dart';
 
 /// Sort options for library albums.
@@ -78,6 +79,49 @@ class AlbumRepository extends BaseRepository {
         .limit(limit);
 
     return (response as List).map((row) => Album.fromJson(row)).toList();
+  }
+
+  /// Searches distinct artists in a library matching the query string.
+  ///
+  /// Only returns artists with a Discogs ID — artists known only by
+  /// free-text name are intentionally excluded so every result routes
+  /// to a disambiguated landing page.
+  Future<List<LibraryArtist>> searchLibraryArtists(
+    String libraryId,
+    String query, {
+    int limit = 10,
+  }) async {
+    final response = await client.rpc(
+      'search_library_artists',
+      params: {
+        'p_library_id': libraryId,
+        'p_query': query,
+        'p_limit': limit,
+      },
+    );
+
+    return (response as List)
+        .map((row) => LibraryArtist.fromJson(row as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// Returns all albums in a library credited to a Discogs artist ID,
+  /// newest first. Backs the artist landing page.
+  Future<List<LibraryAlbum>> getLibraryAlbumsByArtistId(
+    String libraryId,
+    int discogsArtistId,
+  ) async {
+    final response = await client.rpc(
+      'get_library_albums_by_artist',
+      params: {
+        'p_library_id': libraryId,
+        'p_discogs_artist_id': discogsArtistId,
+      },
+    );
+
+    return (response as List)
+        .map((row) => LibraryAlbum.fromJson(row as Map<String, dynamic>))
+        .toList();
   }
 
   /// Gets all albums in a library with optional filtering and sorting.

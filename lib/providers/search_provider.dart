@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:saturday_consumer_app/models/library_album.dart';
+import 'package:saturday_consumer_app/models/library_artist.dart';
 import 'package:saturday_consumer_app/providers/add_album_provider.dart';
 import 'package:saturday_consumer_app/providers/album_provider.dart';
 import 'package:saturday_consumer_app/providers/library_provider.dart';
+import 'package:saturday_consumer_app/providers/repository_providers.dart';
 import 'package:saturday_consumer_app/services/discogs_service.dart';
 
 /// State for global search.
@@ -12,6 +14,8 @@ class SearchState {
   final bool isSearching;
   final List<LibraryAlbum> libraryResults;
   final List<DiscogsSearchResult> discogsResults;
+  final List<LibraryArtist> libraryArtists;
+  final List<DiscogsArtistResult> discogsArtists;
   final String? error;
   final bool hasSearched;
 
@@ -20,6 +24,8 @@ class SearchState {
     this.isSearching = false,
     this.libraryResults = const [],
     this.discogsResults = const [],
+    this.libraryArtists = const [],
+    this.discogsArtists = const [],
     this.error,
     this.hasSearched = false,
   });
@@ -29,6 +35,8 @@ class SearchState {
     bool? isSearching,
     List<LibraryAlbum>? libraryResults,
     List<DiscogsSearchResult>? discogsResults,
+    List<LibraryArtist>? libraryArtists,
+    List<DiscogsArtistResult>? discogsArtists,
     String? error,
     bool? hasSearched,
   }) {
@@ -37,13 +45,18 @@ class SearchState {
       isSearching: isSearching ?? this.isSearching,
       libraryResults: libraryResults ?? this.libraryResults,
       discogsResults: discogsResults ?? this.discogsResults,
+      libraryArtists: libraryArtists ?? this.libraryArtists,
+      discogsArtists: discogsArtists ?? this.discogsArtists,
       error: error,
       hasSearched: hasSearched ?? this.hasSearched,
     );
   }
 
   bool get hasResults =>
-      libraryResults.isNotEmpty || discogsResults.isNotEmpty;
+      libraryResults.isNotEmpty ||
+      discogsResults.isNotEmpty ||
+      libraryArtists.isNotEmpty ||
+      discogsArtists.isNotEmpty;
 
   bool get isEmpty => !isSearching && hasSearched && !hasResults;
 }
@@ -68,6 +81,8 @@ class SearchNotifier extends StateNotifier<SearchState> {
         isSearching: false,
         libraryResults: [],
         discogsResults: [],
+        libraryArtists: [],
+        discogsArtists: [],
         hasSearched: false,
       );
       return;
@@ -85,16 +100,20 @@ class SearchNotifier extends StateNotifier<SearchState> {
     if (query.trim().isEmpty) return;
 
     try {
-      // Search in parallel: library and Discogs
+      // Search in parallel: library albums + artists, Discogs albums + artists.
       final results = await Future.wait([
         _searchLibrary(query),
         _searchDiscogs(query),
+        _searchLibraryArtists(query),
+        _searchDiscogsArtists(query),
       ]);
 
       state = state.copyWith(
         isSearching: false,
         libraryResults: results[0] as List<LibraryAlbum>,
         discogsResults: results[1] as List<DiscogsSearchResult>,
+        libraryArtists: results[2] as List<LibraryArtist>,
+        discogsArtists: results[3] as List<DiscogsArtistResult>,
         hasSearched: true,
       );
     } catch (e) {
@@ -135,6 +154,30 @@ class SearchNotifier extends StateNotifier<SearchState> {
     try {
       final discogsService = _ref.read(discogsServiceProvider);
       return await discogsService.search(query, perPage: 10);
+    } catch (e) {
+      // Don't fail the whole search if Discogs fails
+      return [];
+    }
+  }
+
+  /// Searches distinct artists in the current library.
+  Future<List<LibraryArtist>> _searchLibraryArtists(String query) async {
+    final currentLibraryId = _ref.read(currentLibraryIdProvider);
+    if (currentLibraryId == null) return [];
+
+    try {
+      final albumRepo = _ref.read(albumRepositoryProvider);
+      return await albumRepo.searchLibraryArtists(currentLibraryId, query);
+    } catch (e) {
+      return [];
+    }
+  }
+
+  /// Searches artists on Discogs.
+  Future<List<DiscogsArtistResult>> _searchDiscogsArtists(String query) async {
+    try {
+      final discogsService = _ref.read(discogsServiceProvider);
+      return await discogsService.searchArtists(query, perPage: 5);
     } catch (e) {
       // Don't fail the whole search if Discogs fails
       return [];

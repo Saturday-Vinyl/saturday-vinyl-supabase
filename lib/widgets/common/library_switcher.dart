@@ -14,7 +14,7 @@ class LibrarySwitcherButton extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final currentLibrary = ref.watch(currentLibraryProvider);
 
-    final libraryName = currentLibrary?.name ?? 'Library';
+    final libraryName = currentLibrary?.name ?? 'Archive';
 
     return GestureDetector(
       onTap: () => _showLibrarySwitcher(context),
@@ -74,7 +74,7 @@ class LibrarySwitcherSheet extends ConsumerWidget {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Text(
-                    'Switch Library',
+                    'Change Archive',
                     style: Theme.of(context).textTheme.titleLarge,
                   ),
                   IconButton(
@@ -102,7 +102,7 @@ class LibrarySwitcherSheet extends ConsumerWidget {
                         // Create new library button
                         return ListTile(
                           leading: const Icon(Icons.add_circle_outline),
-                          title: const Text('Create New Library'),
+                          title: const Text('Create New Archive'),
                           onTap: () {
                             Navigator.pop(context);
                             context.push('/library/create');
@@ -155,7 +155,7 @@ class LibrarySwitcherSheet extends ConsumerWidget {
                             size: 48, color: SaturdayColors.error),
                         const SizedBox(height: Spacing.md),
                         Text(
-                          'Failed to load libraries',
+                          'Failed to load archives',
                           style: Theme.of(context).textTheme.titleMedium,
                         ),
                         const SizedBox(height: Spacing.sm),
@@ -191,12 +191,12 @@ class LibrarySwitcherSheet extends ConsumerWidget {
             ),
             const SizedBox(height: Spacing.lg),
             Text(
-              'No Libraries Yet',
+              'No Archives Yet',
               style: Theme.of(context).textTheme.headlineSmall,
             ),
             const SizedBox(height: Spacing.sm),
             Text(
-              'Create your first library to start adding albums',
+              'Create your first archive to start adding albums',
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                     color: SaturdayColors.secondary,
                   ),
@@ -209,7 +209,7 @@ class LibrarySwitcherSheet extends ConsumerWidget {
                 context.push('/library/create');
               },
               icon: const Icon(Icons.add),
-              label: const Text('Create Library'),
+              label: const Text('Create Archive'),
             ),
           ],
         ),

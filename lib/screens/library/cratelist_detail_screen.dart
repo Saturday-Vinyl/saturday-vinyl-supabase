@@ -253,7 +253,7 @@ class _CratelistDetailScreenState
         title: const Text('Delete cratelist?'),
         content: Text(
           'This removes "${cratelist.name}" for everyone with access. The '
-          'records themselves stay in your library.',
+          'records themselves stay in your archive.',
         ),
         actions: [
           TextButton(

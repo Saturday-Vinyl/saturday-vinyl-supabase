@@ -222,7 +222,7 @@ class NotificationSettingsScreen extends ConsumerWidget {
   }) {
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
-      decoration: AppDecorations.card,
+      decoration: AppDecorations.card(context),
       child: ListTile(
         leading: Icon(
           icon,

@@ -85,7 +85,7 @@ class _TabletScaffold extends StatelessWidget {
               NavigationRailDestination(
                 icon: Icon(Icons.album_outlined),
                 selectedIcon: Icon(Icons.album),
-                label: Text('Library'),
+                label: Text('Archive'),
               ),
               NavigationRailDestination(
                 icon: Icon(Icons.person_outline),
@@ -153,7 +153,7 @@ class SaturdayBottomNav extends StatelessWidget {
             NavigationDestination(
               icon: Icon(Icons.album_outlined),
               selectedIcon: Icon(Icons.album),
-              label: 'Library',
+              label: 'Archive',
             ),
             NavigationDestination(
               icon: Icon(Icons.person_outline),

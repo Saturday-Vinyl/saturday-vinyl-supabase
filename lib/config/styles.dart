@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:saturday_consumer_app/config/theme.dart';
+import 'package:saturday_consumer_app/config/tokens/tokens.dart';
 
 /// Spacing constants for consistent layout throughout the app.
 ///
@@ -200,16 +201,16 @@ class AlbumArtSizes {
 class AppDecorations {
   AppDecorations._();
 
-  /// Standard card decoration
-  static BoxDecoration get card => BoxDecoration(
-        color: SaturdayColors.white,
+  /// Standard card decoration — uses the theme-adaptive paperElevated surface.
+  static BoxDecoration card(BuildContext context) => BoxDecoration(
+        color: SaturdayColorTokens.of(context).paperElevated,
         borderRadius: AppRadius.largeRadius,
         boxShadow: AppShadows.card,
       );
 
   /// Elevated card decoration
-  static BoxDecoration get elevatedCard => BoxDecoration(
-        color: SaturdayColors.white,
+  static BoxDecoration elevatedCard(BuildContext context) => BoxDecoration(
+        color: SaturdayColorTokens.of(context).paperElevated,
         borderRadius: AppRadius.largeRadius,
         boxShadow: AppShadows.elevated,
       );

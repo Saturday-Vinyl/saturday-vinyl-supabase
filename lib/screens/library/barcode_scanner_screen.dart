@@ -134,23 +134,6 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
   }
 
   Future<void> _onCapturePhoto() async {
-    // Check if vision service is available
-    final visionService = ref.read(claudeVisionServiceProvider);
-    if (visionService == null) {
-      ScaffoldMessenger.of(context)
-        ..clearSnackBars()
-        ..showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Album cover recognition requires an Anthropic API key. '
-              'Please add ANTHROPIC_API_KEY to your .env file.',
-            ),
-            duration: Duration(seconds: 4),
-          ),
-        );
-      return;
-    }
-
     setState(() {
       _isSearching = true;
     });
@@ -287,7 +270,7 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
           TextButton(
             onPressed: () {
               Navigator.pop(context);
-              context.pushReplacement('/library/add/search');
+              context.pushReplacement('/search');
             },
             child: const Text('Search Manually'),
           ),
@@ -442,7 +425,7 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
           TextButton(
             onPressed: () {
               Navigator.pop(context);
-              context.pushReplacement('/library/add/search');
+              context.pushReplacement('/search');
             },
             child: const Text('Search Manually'),
           ),
@@ -873,7 +856,7 @@ class _BarcodeScannerScreenState extends ConsumerState<BarcodeScannerScreen> {
               _buildActionButton(
                 icon: Icons.edit,
                 label: 'Manual',
-                onTap: () => context.pushReplacement('/library/add/search'),
+                onTap: () => context.pushReplacement('/search'),
               ),
 
               // Capture photo button (large center button)

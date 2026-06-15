@@ -1,8 +1,8 @@
 import 'dart:convert';
 import 'dart:typed_data';
-import 'package:http/http.dart' as http;
+import 'package:supabase_flutter/supabase_flutter.dart';
 
-/// Result from Claude vision album identification.
+/// Result from album-cover identification.
 class AlbumIdentificationResult {
   final String? artist;
   final String? albumTitle;
@@ -16,12 +16,13 @@ class AlbumIdentificationResult {
     this.rawResponse,
   });
 
-  /// Whether the identification was successful.
+  /// Whether the identification was successful enough to act on.
   bool get isSuccessful =>
       artist != null &&
       artist!.isNotEmpty &&
       albumTitle != null &&
-      albumTitle!.isNotEmpty;
+      albumTitle!.isNotEmpty &&
+      confidence != 'none';
 
   /// Returns a search query combining artist and album.
   String get searchQuery {
@@ -36,154 +37,68 @@ class AlbumIdentificationResult {
   }
 }
 
-/// Service for identifying album covers using Claude's vision capabilities.
+/// Identifies vinyl album covers from photos.
+///
+/// Calls the `identify-album-cover` edge function, which proxies the request
+/// to Anthropic's vision API server-side. The model ID, prompt, and API key
+/// all live in the edge function — none of those require a mobile app
+/// release to change.
 class ClaudeVisionService {
-  ClaudeVisionService({
-    required this.apiKey,
-    http.Client? httpClient,
-  }) : _client = httpClient ?? http.Client();
+  ClaudeVisionService({SupabaseClient? client})
+      : _client = client ?? Supabase.instance.client;
 
-  static const String _baseUrl = 'https://api.anthropic.com/v1/messages';
-  static const String _model = 'claude-sonnet-4-20250514';
+  static const String _functionName = 'identify-album-cover';
 
-  final String apiKey;
-  final http.Client _client;
+  final SupabaseClient _client;
 
   /// Identifies an album from a photo of its cover.
-  ///
-  /// Takes the image as bytes and returns the identified artist and album title.
   Future<AlbumIdentificationResult> identifyAlbumCover(
     Uint8List imageBytes, {
     String mimeType = 'image/jpeg',
   }) async {
     final base64Image = base64Encode(imageBytes);
 
-    final requestBody = {
-      'model': _model,
-      'max_tokens': 256,
-      'messages': [
-        {
-          'role': 'user',
-          'content': [
-            {
-              'type': 'image',
-              'source': {
-                'type': 'base64',
-                'media_type': mimeType,
-                'data': base64Image,
-              },
-            },
-            {
-              'type': 'text',
-              'text': '''Identify this vinyl record album cover.
-
-Return ONLY a JSON object with these fields:
-- "artist": the artist or band name
-- "album": the album title
-- "confidence": "high", "medium", or "low"
-
-If you cannot identify the album, return:
-{"artist": null, "album": null, "confidence": "none"}
-
-Do not include any other text, just the JSON object.''',
-            },
-          ],
-        },
-      ],
-    };
-
     try {
-      final response = await _client.post(
-        Uri.parse(_baseUrl),
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
+      final response = await _client.functions.invoke(
+        _functionName,
+        body: {
+          'image_base64': base64Image,
+          'mime_type': mimeType,
         },
-        body: jsonEncode(requestBody),
       );
 
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body) as Map<String, dynamic>;
-        return _parseResponse(data);
-      } else if (response.statusCode == 401) {
+      final status = response.status;
+      final data = response.data;
+
+      if (status != 200) {
+        final message = data is Map<String, dynamic>
+            ? data['error']?.toString() ?? 'Status $status'
+            : 'Status $status';
+        throw ClaudeVisionException(message, status);
+      }
+
+      if (data is! Map<String, dynamic>) {
         throw ClaudeVisionException(
-          'Invalid API key. Please check your ANTHROPIC_API_KEY.',
-          response.statusCode,
-        );
-      } else if (response.statusCode == 429) {
-        throw ClaudeVisionException(
-          'Rate limit exceeded. Please try again later.',
-          response.statusCode,
-        );
-      } else {
-        throw ClaudeVisionException(
-          'Claude API error: ${response.statusCode}',
-          response.statusCode,
+          'Unexpected response shape from vision service',
+          status,
         );
       }
+
+      return AlbumIdentificationResult(
+        artist: data['artist'] as String?,
+        albumTitle: data['album'] as String?,
+        confidence: data['confidence'] as String?,
+        rawResponse: jsonEncode(data),
+      );
+    } on ClaudeVisionException {
+      rethrow;
     } catch (e) {
-      if (e is ClaudeVisionException) rethrow;
       throw ClaudeVisionException('Failed to identify album: $e', 0);
     }
   }
-
-  /// Parses Claude's response into an AlbumIdentificationResult.
-  AlbumIdentificationResult _parseResponse(Map<String, dynamic> data) {
-    try {
-      // Extract the text content from Claude's response
-      final content = data['content'] as List<dynamic>?;
-      if (content == null || content.isEmpty) {
-        return AlbumIdentificationResult(rawResponse: jsonEncode(data));
-      }
-
-      final textBlock = content.firstWhere(
-        (block) => block['type'] == 'text',
-        orElse: () => null,
-      );
-
-      if (textBlock == null) {
-        return AlbumIdentificationResult(rawResponse: jsonEncode(data));
-      }
-
-      final text = textBlock['text'] as String;
-
-      // Try to parse as JSON
-      // Sometimes Claude wraps JSON in markdown code blocks
-      String jsonText = text.trim();
-      if (jsonText.startsWith('```json')) {
-        jsonText = jsonText.substring(7);
-      } else if (jsonText.startsWith('```')) {
-        jsonText = jsonText.substring(3);
-      }
-      if (jsonText.endsWith('```')) {
-        jsonText = jsonText.substring(0, jsonText.length - 3);
-      }
-      jsonText = jsonText.trim();
-
-      final parsed = jsonDecode(jsonText) as Map<String, dynamic>;
-
-      return AlbumIdentificationResult(
-        artist: parsed['artist'] as String?,
-        albumTitle: parsed['album'] as String?,
-        confidence: parsed['confidence'] as String?,
-        rawResponse: text,
-      );
-    } catch (e) {
-      // If JSON parsing fails, try to extract artist/album from raw text
-      return AlbumIdentificationResult(
-        rawResponse: jsonEncode(data),
-      );
-    }
-  }
-
-  /// Dispose of resources.
-  void dispose() {
-    _client.close();
-  }
 }
 
-/// Exception for Claude Vision API errors.
+/// Exception for vision identification errors.
 class ClaudeVisionException implements Exception {
   final String message;
   final int statusCode;

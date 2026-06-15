@@ -44,7 +44,7 @@ class _QuickStartScreenState extends ConsumerState<QuickStartScreen> {
       final user = await ref.read(currentUserProvider.future);
       if (user == null) {
         setState(() {
-          _errorMessage = 'Please sign in to create a library';
+          _errorMessage = 'Please sign in to create an archive';
           _isCreating = false;
         });
         return;
@@ -74,7 +74,7 @@ class _QuickStartScreenState extends ConsumerState<QuickStartScreen> {
     } catch (e) {
       debugPrint('Failed to create library: $e');
       setState(() {
-        _errorMessage = 'Failed to create library: $e';
+        _errorMessage = 'Failed to create archive: $e';
         _isCreating = false;
       });
     }
@@ -111,7 +111,7 @@ class _QuickStartScreenState extends ConsumerState<QuickStartScreen> {
                 const SizedBox(height: Spacing.md),
 
                 Text(
-                  'Let\'s set up your first library to start\norganizing your vinyl collection.',
+                  'Let\'s set up your first archive to start\norganizing your vinyl collection.',
                   style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                         color: SaturdayColors.secondary,
                       ),
@@ -126,14 +126,14 @@ class _QuickStartScreenState extends ConsumerState<QuickStartScreen> {
                   child: TextFormField(
                     controller: _nameController,
                     decoration: const InputDecoration(
-                      labelText: 'Library Name',
+                      labelText: 'Archive Name',
                       hintText: 'e.g., My Vinyl, Home Collection',
                     ),
                     textCapitalization: TextCapitalization.words,
                     textInputAction: TextInputAction.done,
                     validator: (value) {
                       if (value == null || value.trim().isEmpty) {
-                        return 'Please enter a library name';
+                        return 'Please enter an archive name';
                       }
                       if (value.trim().length < 2) {
                         return 'Name must be at least 2 characters';
@@ -165,7 +165,7 @@ class _QuickStartScreenState extends ConsumerState<QuickStartScreen> {
                       const SizedBox(width: Spacing.sm),
                       Expanded(
                         child: Text(
-                          'You can create more libraries later for different locations or collections.',
+                          'You can create more archives later for different locations or collections.',
                           style: Theme.of(context).textTheme.bodySmall?.copyWith(
                                 color: SaturdayColors.primaryDark,
                               ),

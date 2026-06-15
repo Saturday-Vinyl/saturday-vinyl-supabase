@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:saturday_consumer_app/config/styles.dart';
 import 'package:saturday_consumer_app/config/theme.dart';
+import 'package:saturday_consumer_app/config/tokens/tokens.dart';
 
 /// A banner prompting the user to record track times.
 ///
@@ -22,7 +23,7 @@ class TrackTimingBanner extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.all(Spacing.lg),
         decoration: BoxDecoration(
-          color: SaturdayColors.white,
+          color: SaturdayColorTokens.of(context).paperElevated,
           borderRadius: AppRadius.largeRadius,
           boxShadow: AppShadows.card,
           border: Border.all(

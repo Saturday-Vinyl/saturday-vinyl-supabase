@@ -34,8 +34,8 @@ class LibraryDetailsScreen extends ConsumerWidget {
     final libraryId = ref.watch(currentLibraryIdProvider);
     if (libraryId == null) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Library Details')),
-        body: const Center(child: Text('No library selected')),
+        appBar: AppBar(title: const Text('Archive Details')),
+        body: const Center(child: Text('No archive selected')),
       );
     }
 
@@ -45,7 +45,7 @@ class LibraryDetailsScreen extends ConsumerWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Library Details'),
+        title: const Text('Archive Details'),
         leading: IconButton(
           icon: const Icon(Icons.close),
           onPressed: () => context.pop(),
@@ -54,7 +54,7 @@ class LibraryDetailsScreen extends ConsumerWidget {
           if (isOwner)
             IconButton(
               icon: const Icon(Icons.share),
-              tooltip: 'Share Library',
+              tooltip: 'Share Archive',
               onPressed: () => _showShareSheet(context, ref, libraryId),
             ),
         ],
@@ -69,7 +69,7 @@ class LibraryDetailsScreen extends ConsumerWidget {
           libraryId,
         ),
         loading: () => const LoadingIndicator.medium(
-          message: 'Loading library details...',
+          message: 'Loading archive details...',
         ),
         error: (error, stack) => ErrorDisplay.fullScreen(
           message: error.toString(),
@@ -143,7 +143,7 @@ class LibraryDetailsScreen extends ConsumerWidget {
 
   Widget _buildInfoCard(BuildContext context, LibraryDetails details) {
     return Container(
-      decoration: AppDecorations.card,
+      decoration: AppDecorations.card(context),
       padding: Spacing.cardPadding,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -217,7 +217,7 @@ class LibraryDetailsScreen extends ConsumerWidget {
 
   Widget _buildAlbumCountSection(BuildContext context, LibraryDetails details) {
     return Container(
-      decoration: AppDecorations.card,
+      decoration: AppDecorations.card(context),
       padding: Spacing.cardPadding,
       child: Row(
         children: [
@@ -277,7 +277,7 @@ class LibraryDetailsScreen extends ConsumerWidget {
         _buildSectionHeader(context, 'Most Played'),
         const SizedBox(height: 12),
         Container(
-          decoration: AppDecorations.card,
+          decoration: AppDecorations.card(context),
           child: Column(
             children: details.popularAlbums.map((album) {
               final index = details.popularAlbums.indexOf(album);
@@ -366,7 +366,7 @@ class LibraryDetailsScreen extends ConsumerWidget {
         _buildSectionHeader(context, 'Members'),
         const SizedBox(height: 12),
         Container(
-          decoration: AppDecorations.card,
+          decoration: AppDecorations.card(context),
           child: Column(
             children: details.members.asMap().entries.map((entry) {
               final index = entry.key;
@@ -419,7 +419,7 @@ class LibraryDetailsScreen extends ConsumerWidget {
             _buildSectionHeader(context, 'Pending Invitations'),
             const SizedBox(height: 12),
             Container(
-              decoration: AppDecorations.card,
+              decoration: AppDecorations.card(context),
               child: Column(
                 children: invitations.asMap().entries.map((entry) {
                   final index = entry.key;
@@ -487,7 +487,7 @@ class LibraryDetailsScreen extends ConsumerWidget {
       onPressed: () => _confirmLeaveLibrary(context, ref, libraryId, userId),
       icon: Icon(Icons.exit_to_app, color: SaturdayColors.error),
       label: Text(
-        'Leave Library',
+        'Leave Archive',
         style: TextStyle(color: SaturdayColors.error),
       ),
     );
@@ -536,7 +536,7 @@ class LibraryDetailsScreen extends ConsumerWidget {
       builder: (context) => AlertDialog(
         title: const Text('Remove Member'),
         content: Text(
-          'Are you sure you want to remove ${member.displayName} from this library?',
+          'Are you sure you want to remove ${member.displayName} from this archive?',
         ),
         actions: [
           TextButton(
@@ -627,9 +627,9 @@ class LibraryDetailsScreen extends ConsumerWidget {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Leave Library'),
+        title: const Text('Leave Archive'),
         content: const Text(
-          'Are you sure you want to leave this library? You will lose access to all albums in it.',
+          'Are you sure you want to leave this archive? You will lose access to all albums in it.',
         ),
         actions: [
           TextButton(

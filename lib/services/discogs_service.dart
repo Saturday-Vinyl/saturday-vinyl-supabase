@@ -58,6 +58,114 @@ class DiscogsSearchResult {
   }
 }
 
+/// Artist result from a Discogs `type=artist` search.
+class DiscogsArtistResult {
+  final int id;
+  final String name;
+  final String? thumbUrl;
+
+  DiscogsArtistResult({
+    required this.id,
+    required this.name,
+    this.thumbUrl,
+  });
+
+  factory DiscogsArtistResult.fromJson(Map<String, dynamic> json) {
+    final rawTitle = json['title'] as String? ?? '';
+    return DiscogsArtistResult(
+      id: json['id'] as int,
+      // Discogs returns the artist name in `title` for artist-type results,
+      // appended with " (N)" when the namespace is disambiguated.
+      name: rawTitle.replaceAll(RegExp(r'\s*\(\d+\)\s*$'), ''),
+      thumbUrl: json['thumb'] as String?,
+    );
+  }
+}
+
+/// Full artist details from Discogs `/artists/:id`.
+class DiscogsArtist {
+  final int id;
+  final String name;
+  final String? profile;
+  final String? imageUrl;
+
+  DiscogsArtist({
+    required this.id,
+    required this.name,
+    this.profile,
+    this.imageUrl,
+  });
+
+  factory DiscogsArtist.fromJson(Map<String, dynamic> json) {
+    final rawName = json['name'] as String? ?? 'Unknown Artist';
+    final images = json['images'] as List<dynamic>?;
+    String? imageUrl;
+    if (images != null && images.isNotEmpty) {
+      final primary = images.firstWhere(
+        (img) => img['type'] == 'primary',
+        orElse: () => images.first,
+      );
+      imageUrl = primary['uri'] as String?;
+    }
+    return DiscogsArtist(
+      id: json['id'] as int,
+      name: rawName.replaceAll(RegExp(r'\s*\(\d+\)\s*$'), ''),
+      profile: (json['profile'] as String?)?.trim().isEmpty == true
+          ? null
+          : json['profile'] as String?,
+      imageUrl: imageUrl,
+    );
+  }
+}
+
+/// A page of an artist's discography along with pagination metadata,
+/// so the caller knows whether more pages are available.
+class DiscogsArtistReleasesPage {
+  final List<DiscogsArtistRelease> releases;
+  final int page;
+  final int totalPages;
+
+  DiscogsArtistReleasesPage({
+    required this.releases,
+    required this.page,
+    required this.totalPages,
+  });
+
+  bool get hasMore => page < totalPages;
+}
+
+/// A single release within an artist's discography from
+/// `/artists/:id/releases`. Always references a concrete release ID
+/// (not a master) so it plugs into the existing add-album flow.
+class DiscogsArtistRelease {
+  final int id;
+  final String title;
+  final int? year;
+  final String? thumbUrl;
+  final String? format;
+  final String? label;
+
+  DiscogsArtistRelease({
+    required this.id,
+    required this.title,
+    this.year,
+    this.thumbUrl,
+    this.format,
+    this.label,
+  });
+
+  factory DiscogsArtistRelease.fromJson(Map<String, dynamic> json) {
+    return DiscogsArtistRelease(
+      id: json['id'] as int,
+      title: json['title'] as String? ?? 'Untitled',
+      year: json['year'] as int?,
+      thumbUrl: json['thumb'] as String?,
+      format: json['format'] as String?,
+      label: json['label'] as String?,
+    );
+  }
+}
+
 /// Service for interacting with the Discogs API.
 ///
 /// Handles searching for albums, looking up by barcode, and retrieving
@@ -131,6 +239,86 @@ class DiscogsService {
         .toList();
   }
 
+  /// Search for artists by query string.
+  Future<List<DiscogsArtistResult>> searchArtists(
+    String query, {
+    int perPage = 10,
+  }) async {
+    if (query.trim().isEmpty) return [];
+
+    await _respectRateLimit();
+
+    final uri = Uri.parse('$_baseUrl/database/search').replace(
+      queryParameters: {
+        'q': query,
+        'type': 'artist',
+        'per_page': perPage.toString(),
+      },
+    );
+
+    final response = await _makeRequest(uri);
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    final results = data['results'] as List<dynamic>? ?? [];
+
+    return results
+        .map((r) => DiscogsArtistResult.fromJson(r as Map<String, dynamic>))
+        .toList();
+  }
+
+  /// Get full artist details by Discogs artist ID.
+  Future<DiscogsArtist?> getArtist(int artistId) async {
+    await _respectRateLimit();
+
+    final uri = Uri.parse('$_baseUrl/artists/$artistId');
+    final response = await _makeRequest(uri);
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+
+    return DiscogsArtist.fromJson(data);
+  }
+
+  /// Get a page of an artist's discography. Filters to releases credited
+  /// as the main artist (role == "Main") and excludes master entries so
+  /// each result is a concrete release that can be added via the existing
+  /// add-album flow. Returns the page along with total-page metadata so
+  /// the caller can paginate through the full discography.
+  Future<DiscogsArtistReleasesPage> getArtistReleases(
+    int artistId, {
+    int page = 1,
+    int perPage = 50,
+  }) async {
+    await _respectRateLimit();
+
+    final uri = Uri.parse('$_baseUrl/artists/$artistId/releases').replace(
+      queryParameters: {
+        'sort': 'year',
+        'sort_order': 'desc',
+        'page': page.toString(),
+        'per_page': perPage.toString(),
+      },
+    );
+
+    final response = await _makeRequest(uri);
+    final data = jsonDecode(response.body) as Map<String, dynamic>;
+    final releases = data['releases'] as List<dynamic>? ?? [];
+    final pagination = data['pagination'] as Map<String, dynamic>?;
+
+    final parsed = releases
+        .where((r) {
+          final m = r as Map<String, dynamic>;
+          final type = m['type'] as String?;
+          final role = m['role'] as String?;
+          return type == 'release' && (role == null || role == 'Main');
+        })
+        .map((r) => DiscogsArtistRelease.fromJson(r as Map<String, dynamic>))
+        .toList();
+
+    return DiscogsArtistReleasesPage(
+      releases: parsed,
+      page: pagination?['page'] as int? ?? page,
+      totalPages: pagination?['pages'] as int? ?? page,
+    );
+  }
+
   /// Get full details for a release by Discogs ID.
   Future<Album?> getRelease(int releaseId) async {
     await _respectRateLimit();
@@ -145,12 +333,27 @@ class DiscogsService {
   /// Parse Discogs release response into an Album model.
   Album? _parseReleaseToAlbum(Map<String, dynamic> data, int releaseId) {
     try {
-      // Extract artist(s)
-      final artists = data['artists'] as List<dynamic>?;
-      final artistName = artists?.isNotEmpty == true
-          ? (artists![0]['name'] as String?)
-                  ?.replaceAll(RegExp(r'\s*\(\d+\)\s*$'), '') ??
-              'Unknown Artist'
+      // Extract artist(s). Discogs returns an ordered list of credited
+      // artists; we capture all of them so multi-artist releases (e.g.
+      // "El-P & Killer Mike", or collaborations) surface under each
+      // artist's landing page. Names are stripped of Discogs' " (2)"
+      // disambiguators since those are an artifact of their namespace,
+      // not the canonical artist name.
+      final artists = data['artists'] as List<dynamic>? ?? const [];
+      final discogsArtistIds = <int>[];
+      final discogsArtistNames = <String>[];
+      for (final a in artists) {
+        final map = a as Map<String, dynamic>;
+        final id = map['id'] as int?;
+        final rawName = map['name'] as String?;
+        if (id == null || rawName == null) continue;
+        discogsArtistIds.add(id);
+        discogsArtistNames.add(
+          rawName.replaceAll(RegExp(r'\s*\(\d+\)\s*$'), ''),
+        );
+      }
+      final artistName = discogsArtistNames.isNotEmpty
+          ? discogsArtistNames.join(', ')
           : 'Unknown Artist';
 
       // Extract tracks
@@ -194,6 +397,8 @@ class DiscogsService {
         discogsId: releaseId,
         title: data['title'] as String? ?? 'Unknown Album',
         artist: artistName,
+        discogsArtistIds: discogsArtistIds,
+        discogsArtistNames: discogsArtistNames,
         year: data['year'] as int?,
         genres: genres,
         styles: styles,

@@ -68,7 +68,7 @@ class _ShareLibraryBottomSheetState
 
               // Title
               Text(
-                'Share Library',
+                'Share Archive',
                 style: Theme.of(context).textTheme.titleLarge?.copyWith(
                       fontWeight: FontWeight.bold,
                     ),
@@ -77,7 +77,7 @@ class _ShareLibraryBottomSheetState
               const SizedBox(height: 8),
 
               Text(
-                'Invite someone to access your library',
+                'Invite someone to access your archive',
                 style: TextStyle(color: SaturdayColors.secondary),
               ),
 

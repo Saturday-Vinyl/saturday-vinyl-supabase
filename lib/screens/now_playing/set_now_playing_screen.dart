@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:saturday_consumer_app/config/routes.dart';
 import 'package:saturday_consumer_app/config/styles.dart';
 import 'package:saturday_consumer_app/config/theme.dart';
+import 'package:saturday_consumer_app/config/tokens/tokens.dart';
 import 'package:saturday_consumer_app/widgets/now_playing/recent_albums_grid.dart';
 
 /// Screen for manually setting what's now playing.
@@ -34,7 +35,7 @@ class SetNowPlayingScreen extends ConsumerWidget {
               // Input method cards
               _InputMethodCard(
                 icon: Icons.library_music_outlined,
-                title: 'Choose from Library',
+                title: 'Choose from Archive',
                 subtitle: 'Browse your vinyl collection',
                 onTap: () {
                   context.go(RoutePaths.library);
@@ -121,7 +122,7 @@ class _InputMethodCard extends StatelessWidget {
     return Opacity(
       opacity: enabled ? 1.0 : 0.5,
       child: Material(
-        color: SaturdayColors.white,
+        color: SaturdayColorTokens.of(context).paperElevated,
         borderRadius: AppRadius.largeRadius,
         child: InkWell(
           onTap: enabled ? onTap : null,

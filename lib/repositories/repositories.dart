@@ -12,6 +12,7 @@ export 'library_repository.dart';
 export 'listening_history_repository.dart';
 export 'playback_queue_repository.dart';
 export 'playback_session_repository.dart';
+export 'room_observation_repository.dart';
 export 'tag_repository.dart';
 export 'track_duration_repository.dart';
 export 'unit_repository.dart';
