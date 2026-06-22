@@ -5,7 +5,8 @@ import 'package:saturday_app/models/capability.dart';
 
 /// Dialog that generates form fields from a command's JSON Schema parameters.
 ///
-/// Supports: string, string+enum, integer, number, and array of integer fields.
+/// Supports: string, enum (string/integer/number), integer, number, and array
+/// of integer fields. Enforces `minimum`/`maximum` for integer and number fields.
 /// Pre-populates defaults and validates required fields.
 class CommandParameterDialog extends StatefulWidget {
   final CapabilityCommand command;
@@ -142,11 +143,13 @@ class _CommandParameterDialogState extends State<CommandParameterDialog> {
         );
 
       case _FieldType.integer:
+        final min = _toNum(propSchema['minimum']);
+        final max = _toNum(propSchema['maximum']);
         field = TextFormField(
           controller: _controllers[name],
           decoration: InputDecoration(
             labelText: label,
-            helperText: description,
+            helperText: _helperWithRange(description, min, max),
             helperMaxLines: 3,
             border: const OutlineInputBorder(),
             isDense: true,
@@ -155,19 +158,23 @@ class _CommandParameterDialogState extends State<CommandParameterDialog> {
           inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d-]'))],
           validator: (v) {
             if (isRequired && (v == null || v.isEmpty)) return 'Required';
-            if (v != null && v.isNotEmpty && int.tryParse(v) == null) {
-              return 'Must be an integer';
-            }
+            if (v == null || v.isEmpty) return null;
+            final parsed = int.tryParse(v);
+            if (parsed == null) return 'Must be an integer';
+            if (min != null && parsed < min) return 'Must be ≥ $min';
+            if (max != null && parsed > max) return 'Must be ≤ $max';
             return null;
           },
         );
 
       case _FieldType.number:
+        final min = _toNum(propSchema['minimum']);
+        final max = _toNum(propSchema['maximum']);
         field = TextFormField(
           controller: _controllers[name],
           decoration: InputDecoration(
             labelText: label,
-            helperText: description,
+            helperText: _helperWithRange(description, min, max),
             helperMaxLines: 3,
             border: const OutlineInputBorder(),
             isDense: true,
@@ -176,9 +183,11 @@ class _CommandParameterDialogState extends State<CommandParameterDialog> {
           inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[\d.\-]'))],
           validator: (v) {
             if (isRequired && (v == null || v.isEmpty)) return 'Required';
-            if (v != null && v.isNotEmpty && num.tryParse(v) == null) {
-              return 'Must be a number';
-            }
+            if (v == null || v.isEmpty) return null;
+            final parsed = num.tryParse(v);
+            if (parsed == null) return 'Must be a number';
+            if (min != null && parsed < min) return 'Must be ≥ $min';
+            if (max != null && parsed > max) return 'Must be ≤ $max';
             return null;
           },
         );
@@ -242,7 +251,7 @@ class _CommandParameterDialogState extends State<CommandParameterDialog> {
         case _FieldType.enumDropdown:
           final value = _dropdownValues[name];
           if (value != null && value.isNotEmpty) {
-            params[name] = value;
+            params[name] = _coerceEnumValue(propSchema, value);
           }
 
         case _FieldType.integer:
@@ -279,7 +288,13 @@ class _CommandParameterDialogState extends State<CommandParameterDialog> {
 
   static _FieldType _fieldType(Map<String, dynamic> propSchema) {
     final type = propSchema['type'] as String?;
-    if (type == 'string' && propSchema.containsKey('enum')) {
+    final hasEnum = propSchema['enum'] is List &&
+        (propSchema['enum'] as List).isNotEmpty;
+    if (hasEnum &&
+        (type == null ||
+            type == 'string' ||
+            type == 'integer' ||
+            type == 'number')) {
       return _FieldType.enumDropdown;
     }
     if (type == 'integer') {
@@ -292,6 +307,33 @@ class _CommandParameterDialogState extends State<CommandParameterDialog> {
       return _FieldType.intArray;
     }
     return _FieldType.string;
+  }
+
+  static dynamic _coerceEnumValue(Map<String, dynamic> propSchema, String value) {
+    final type = propSchema['type'] as String?;
+    if (type == 'integer') return int.tryParse(value) ?? value;
+    if (type == 'number') return num.tryParse(value) ?? value;
+    return value;
+  }
+
+  static num? _toNum(dynamic value) {
+    if (value is num) return value;
+    if (value is String) return num.tryParse(value);
+    return null;
+  }
+
+  static String? _helperWithRange(String? description, num? min, num? max) {
+    String? range;
+    if (min != null && max != null) {
+      range = 'Range: $min … $max';
+    } else if (min != null) {
+      range = 'Min: $min';
+    } else if (max != null) {
+      range = 'Max: $max';
+    }
+    if (description == null || description.isEmpty) return range;
+    if (range == null) return description;
+    return '$description ($range)';
   }
 
   static String _formatLabel(String name) {

@@ -539,6 +539,7 @@ class _DeviceCommandPanelState extends ConsumerState<DeviceCommandPanel> {
         final propSchema = entry.value as Map<String, dynamic>;
         final type = propSchema['type'] as String? ?? 'unknown';
         final description = propSchema['description'] as String?;
+        final constraints = _propertyConstraintsSummary(propSchema);
 
         return ListTile(
           dense: true,
@@ -547,8 +548,26 @@ class _DeviceCommandPanelState extends ConsumerState<DeviceCommandPanel> {
             propName,
             style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
           ),
-          subtitle: description != null
-              ? Text(description, style: const TextStyle(fontSize: 11))
+          subtitle: (description != null || constraints != null)
+              ? Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (description != null)
+                      Text(description, style: const TextStyle(fontSize: 11)),
+                    if (constraints != null)
+                      Padding(
+                        padding: EdgeInsets.only(top: description != null ? 2 : 0),
+                        child: Text(
+                          constraints,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: Colors.grey[700],
+                            fontFamily: 'monospace',
+                          ),
+                        ),
+                      ),
+                  ],
+                )
               : null,
           trailing: Container(
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
@@ -568,6 +587,20 @@ class _DeviceCommandPanelState extends ConsumerState<DeviceCommandPanel> {
         );
       }).toList(),
     );
+  }
+
+  static String? _propertyConstraintsSummary(Map<String, dynamic> propSchema) {
+    final parts = <String>[];
+    final enumValues = propSchema['enum'];
+    if (enumValues is List && enumValues.isNotEmpty) {
+      parts.add('enum: ${enumValues.join(', ')}');
+    }
+    final min = propSchema['minimum'];
+    final max = propSchema['maximum'];
+    if (min != null || max != null) {
+      parts.add('range: ${min ?? '−∞'} … ${max ?? '∞'}');
+    }
+    return parts.isEmpty ? null : parts.join(' · ');
   }
 
   Future<void> _confirmAndExecute(

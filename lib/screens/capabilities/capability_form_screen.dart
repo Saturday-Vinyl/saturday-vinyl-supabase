@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:saturday_app/config/theme.dart';
@@ -92,8 +91,19 @@ class _CapabilityFormScreenState extends ConsumerState<CapabilityFormScreen> {
         description: fieldSchema['description']?.toString(),
         isRequired: required.contains(entry.key),
         children: children,
+        enumValues: (fieldSchema['enum'] as List<dynamic>?)
+            ?.map((v) => v.toString())
+            .toList(),
+        minimum: _toNum(fieldSchema['minimum']),
+        maximum: _toNum(fieldSchema['maximum']),
       );
     }).toList();
+  }
+
+  static num? _toNum(dynamic value) {
+    if (value is num) return value;
+    if (value is String) return num.tryParse(value);
+    return null;
   }
 
   Map<String, dynamic> _buildSchema(List<SchemaProperty> properties) {
@@ -120,6 +130,18 @@ class _CapabilityFormScreenState extends ConsumerState<CapabilityFormScreen> {
         }
       }
 
+      if (prop.enumValues != null && prop.enumValues!.isNotEmpty) {
+        propSchema['enum'] = _coerceEnumValues(prop.type, prop.enumValues!);
+      }
+      if (_typeSupportsRange(prop.type)) {
+        if (prop.minimum != null) {
+          propSchema['minimum'] = _coerceNumForType(prop.type, prop.minimum!);
+        }
+        if (prop.maximum != null) {
+          propSchema['maximum'] = _coerceNumForType(prop.type, prop.maximum!);
+        }
+      }
+
       propsMap[prop.name] = propSchema;
       if (prop.isRequired) {
         required.add(prop.name);
@@ -131,6 +153,38 @@ class _CapabilityFormScreenState extends ConsumerState<CapabilityFormScreen> {
       'properties': propsMap,
       if (required.isNotEmpty) 'required': required,
     };
+  }
+
+  static bool _typeSupportsRange(String type) =>
+      type == 'integer' || type == 'number';
+
+  static bool _typeSupportsEnum(String type) =>
+      type == 'string' || type == 'integer' || type == 'number';
+
+  static List<dynamic> _coerceEnumValues(String type, List<String> values) {
+    if (type == 'integer') {
+      return values.map((v) => int.tryParse(v.trim()) ?? v).toList();
+    }
+    if (type == 'number') {
+      return values.map((v) => num.tryParse(v.trim()) ?? v).toList();
+    }
+    return values.map((v) => v).toList();
+  }
+
+  static num _coerceNumForType(String type, num value) =>
+      type == 'integer' ? value.toInt() : value;
+
+  static String? _constraintsSummary(SchemaProperty prop) {
+    final parts = <String>[];
+    if (prop.enumValues != null && prop.enumValues!.isNotEmpty) {
+      parts.add('enum: ${prop.enumValues!.join(', ')}');
+    }
+    if (prop.minimum != null || prop.maximum != null) {
+      final min = prop.minimum?.toString() ?? '−∞';
+      final max = prop.maximum?.toString() ?? '∞';
+      parts.add('range: $min … $max');
+    }
+    return parts.isEmpty ? null : parts.join(' · ');
   }
 
   @override
@@ -532,6 +586,17 @@ class _CapabilityFormScreenState extends ConsumerState<CapabilityFormScreen> {
                           color: SaturdayColors.info,
                         ),
                       ),
+                      if (_constraintsSummary(prop) != null) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          _constraintsSummary(prop)!,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: SaturdayColors.secondaryGrey,
+                            fontFamily: 'monospace',
+                          ),
+                        ),
+                      ],
                       if (prop.description != null &&
                           prop.description!.isNotEmpty) ...[
                         const SizedBox(height: 4),
@@ -606,6 +671,15 @@ class _CapabilityFormScreenState extends ConsumerState<CapabilityFormScreen> {
     final nameController = TextEditingController(text: property?.name ?? '');
     final descController =
         TextEditingController(text: property?.description ?? '');
+    final enumController = TextEditingController(
+      text: property?.enumValues?.join(', ') ?? '',
+    );
+    final minController = TextEditingController(
+      text: property?.minimum?.toString() ?? '',
+    );
+    final maxController = TextEditingController(
+      text: property?.maximum?.toString() ?? '',
+    );
     String selectedType = property?.type ?? 'string';
     bool isRequired = property?.isRequired ?? false;
 
@@ -616,57 +690,106 @@ class _CapabilityFormScreenState extends ConsumerState<CapabilityFormScreen> {
           title: Text(title),
           content: SizedBox(
             width: 400,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: nameController,
-                  decoration: const InputDecoration(
-                    labelText: 'Property Name *',
-                    hintText: 'e.g., device_id, temperature',
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: nameController,
+                    decoration: const InputDecoration(
+                      labelText: 'Property Name *',
+                      hintText: 'e.g., device_id, temperature',
+                    ),
                   ),
-                ),
-                const SizedBox(height: 16),
-                DropdownButtonFormField<String>(
-                  value: selectedType,
-                  decoration: const InputDecoration(
-                    labelText: 'Type',
+                  const SizedBox(height: 16),
+                  DropdownButtonFormField<String>(
+                    value: selectedType,
+                    decoration: const InputDecoration(
+                      labelText: 'Type',
+                    ),
+                    items: const [
+                      DropdownMenuItem(value: 'string', child: Text('String')),
+                      DropdownMenuItem(value: 'number', child: Text('Number')),
+                      DropdownMenuItem(value: 'integer', child: Text('Integer')),
+                      DropdownMenuItem(value: 'boolean', child: Text('Boolean')),
+                      DropdownMenuItem(value: 'object', child: Text('Object')),
+                      DropdownMenuItem(value: 'array', child: Text('Array')),
+                    ],
+                    onChanged: (value) {
+                      setDialogState(() {
+                        selectedType = value ?? 'string';
+                      });
+                    },
                   ),
-                  items: const [
-                    DropdownMenuItem(value: 'string', child: Text('String')),
-                    DropdownMenuItem(value: 'number', child: Text('Number')),
-                    DropdownMenuItem(value: 'integer', child: Text('Integer')),
-                    DropdownMenuItem(value: 'boolean', child: Text('Boolean')),
-                    DropdownMenuItem(value: 'object', child: Text('Object')),
-                    DropdownMenuItem(value: 'array', child: Text('Array')),
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: descController,
+                    decoration: const InputDecoration(
+                      labelText: 'Description',
+                      hintText: 'Brief description of this property',
+                    ),
+                    maxLines: 2,
+                  ),
+                  if (_typeSupportsEnum(selectedType)) ...[
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: enumController,
+                      decoration: const InputDecoration(
+                        labelText: 'Allowed Values (enum)',
+                        hintText: 'Comma-separated, e.g. red, green, blue',
+                        helperText:
+                            'Leave blank for no restriction. Integer/number values are coerced.',
+                      ),
+                    ),
                   ],
-                  onChanged: (value) {
-                    setDialogState(() {
-                      selectedType = value ?? 'string';
-                    });
-                  },
-                ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: descController,
-                  decoration: const InputDecoration(
-                    labelText: 'Description',
-                    hintText: 'Brief description of this property',
+                  if (_typeSupportsRange(selectedType)) ...[
+                    const SizedBox(height: 16),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: minController,
+                            decoration: const InputDecoration(
+                              labelText: 'Minimum',
+                              hintText: 'e.g., 0',
+                            ),
+                            keyboardType: const TextInputType.numberWithOptions(
+                              signed: true,
+                              decimal: true,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: TextField(
+                            controller: maxController,
+                            decoration: const InputDecoration(
+                              labelText: 'Maximum',
+                              hintText: 'e.g., 100',
+                            ),
+                            keyboardType: const TextInputType.numberWithOptions(
+                              signed: true,
+                              decimal: true,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                  const SizedBox(height: 8),
+                  CheckboxListTile(
+                    title: const Text('Required'),
+                    value: isRequired,
+                    contentPadding: EdgeInsets.zero,
+                    onChanged: (value) {
+                      setDialogState(() {
+                        isRequired = value ?? false;
+                      });
+                    },
                   ),
-                  maxLines: 2,
-                ),
-                const SizedBox(height: 8),
-                CheckboxListTile(
-                  title: const Text('Required'),
-                  value: isRequired,
-                  contentPadding: EdgeInsets.zero,
-                  onChanged: (value) {
-                    setDialogState(() {
-                      isRequired = value ?? false;
-                    });
-                  },
-                ),
-              ],
+                ],
+              ),
             ),
           ),
           actions: [
@@ -683,6 +806,75 @@ class _CapabilityFormScreenState extends ConsumerState<CapabilityFormScreen> {
                   );
                   return;
                 }
+
+                List<String>? enumValues;
+                if (_typeSupportsEnum(selectedType)) {
+                  final raw = enumController.text.trim();
+                  if (raw.isNotEmpty) {
+                    enumValues = raw
+                        .split(',')
+                        .map((v) => v.trim())
+                        .where((v) => v.isNotEmpty)
+                        .toList();
+                    if (enumValues.isEmpty) enumValues = null;
+                    if (selectedType != 'string' && enumValues != null) {
+                      final bad = enumValues.firstWhere(
+                        (v) => num.tryParse(v) == null,
+                        orElse: () => '',
+                      );
+                      if (bad.isNotEmpty) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              'Enum value "$bad" is not a valid $selectedType',
+                            ),
+                          ),
+                        );
+                        return;
+                      }
+                    }
+                  }
+                }
+
+                num? minimum;
+                num? maximum;
+                if (_typeSupportsRange(selectedType)) {
+                  final minRaw = minController.text.trim();
+                  final maxRaw = maxController.text.trim();
+                  if (minRaw.isNotEmpty) {
+                    minimum = num.tryParse(minRaw);
+                    if (minimum == null) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Minimum must be a number'),
+                        ),
+                      );
+                      return;
+                    }
+                  }
+                  if (maxRaw.isNotEmpty) {
+                    maximum = num.tryParse(maxRaw);
+                    if (maximum == null) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Maximum must be a number'),
+                        ),
+                      );
+                      return;
+                    }
+                  }
+                  if (minimum != null &&
+                      maximum != null &&
+                      minimum > maximum) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Minimum must be ≤ maximum'),
+                      ),
+                    );
+                    return;
+                  }
+                }
+
                 onSave(SchemaProperty(
                   name: name,
                   type: selectedType,
@@ -690,6 +882,11 @@ class _CapabilityFormScreenState extends ConsumerState<CapabilityFormScreen> {
                       ? null
                       : descController.text.trim(),
                   isRequired: isRequired,
+                  enumValues: enumValues,
+                  minimum: minimum,
+                  maximum: maximum,
+                  // Preserve children when editing an object
+                  children: property?.children ?? const [],
                 ));
                 Navigator.pop(context);
               },
@@ -811,137 +1008,171 @@ class _CapabilityFormScreenState extends ConsumerState<CapabilityFormScreen> {
     final nameController = TextEditingController(text: command?.name ?? '');
     final displayNameController =
         TextEditingController(text: command?.displayName ?? '');
-    final descController = TextEditingController(text: command?.description ?? '');
-    final paramsController = TextEditingController(
-      text: command?.parametersSchema.isNotEmpty == true
-          ? const JsonEncoder.withIndent('  ').convert(command!.parametersSchema)
-          : '',
-    );
-    final resultController = TextEditingController(
-      text: command?.resultSchema.isNotEmpty == true
-          ? const JsonEncoder.withIndent('  ').convert(command!.resultSchema)
-          : '',
-    );
+    final descController =
+        TextEditingController(text: command?.description ?? '');
+
+    // Parse existing schemas into structured property lists.
+    // A malformed scalar schema (no `properties`) parses to an empty list,
+    // which is the correct recovery: the user starts fresh with the structured
+    // editor, which always emits a well-formed object schema on save.
+    List<SchemaProperty> paramsProperties =
+        _parseSchemaProperties(command?.parametersSchema);
+    List<SchemaProperty> resultProperties =
+        _parseSchemaProperties(command?.resultSchema);
+
+    final isMalformed = _isMalformedObjectSchema(command?.parametersSchema) ||
+        _isMalformedObjectSchema(command?.resultSchema);
 
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(title),
-        content: SizedBox(
-          width: 500,
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: nameController,
-                  decoration: const InputDecoration(
-                    labelText: 'Name (machine-readable) *',
-                    hintText: 'e.g., connect, scan, get_dataset',
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(title),
+          content: SizedBox(
+            width: 560,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  TextField(
+                    controller: nameController,
+                    decoration: const InputDecoration(
+                      labelText: 'Name (machine-readable) *',
+                      hintText: 'e.g., connect, scan, get_dataset',
+                    ),
                   ),
-                ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: displayNameController,
-                  decoration: const InputDecoration(
-                    labelText: 'Display Name *',
-                    hintText: 'e.g., Connect to Wi-Fi',
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: displayNameController,
+                    decoration: const InputDecoration(
+                      labelText: 'Display Name *',
+                      hintText: 'e.g., Connect to Wi-Fi',
+                    ),
                   ),
-                ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: descController,
-                  decoration: const InputDecoration(
-                    labelText: 'Description',
-                    hintText: 'What this command does',
+                  const SizedBox(height: 16),
+                  TextField(
+                    controller: descController,
+                    decoration: const InputDecoration(
+                      labelText: 'Description',
+                      hintText: 'What this command does',
+                    ),
+                    maxLines: 2,
                   ),
-                  maxLines: 2,
-                ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: paramsController,
-                  decoration: const InputDecoration(
-                    labelText: 'Parameters Schema (JSON)',
-                    hintText: '{"type": "object", "properties": {...}}',
+                  if (isMalformed) ...[
+                    const SizedBox(height: 16),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: SaturdayColors.warning.withValues(alpha: 0.1),
+                        border: Border.all(
+                          color: SaturdayColors.warning.withValues(alpha: 0.5),
+                        ),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(Icons.warning_amber,
+                              color: SaturdayColors.warning, size: 18),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Existing schema was not an object with properties '
+                              'and could not be loaded. Re-add the parameters '
+                              'below; the device protocol requires params to be '
+                              'an object.',
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: SaturdayColors.warning,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 24),
+                  _buildSectionHeader('Parameters Schema'),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Fields the technician fills in when running this command. '
+                    'Sent as the `params` object.',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: SaturdayColors.secondaryGrey,
+                        ),
                   ),
-                  maxLines: 4,
-                  style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-                ),
-                const SizedBox(height: 16),
-                TextField(
-                  controller: resultController,
-                  decoration: const InputDecoration(
-                    labelText: 'Result Schema (JSON)',
-                    hintText: '{"type": "object", "properties": {...}}',
+                  const SizedBox(height: 12),
+                  _buildSchemaEditor(
+                    properties: paramsProperties,
+                    onChanged: (props) =>
+                        setDialogState(() => paramsProperties = props),
                   ),
-                  maxLines: 4,
-                  style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-                ),
-              ],
+                  const SizedBox(height: 24),
+                  _buildSectionHeader('Result Schema'),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Fields the device returns in the response `data` object.',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: SaturdayColors.secondaryGrey,
+                        ),
+                  ),
+                  const SizedBox(height: 12),
+                  _buildSchemaEditor(
+                    properties: resultProperties,
+                    onChanged: (props) =>
+                        setDialogState(() => resultProperties = props),
+                  ),
+                ],
+              ),
             ),
           ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final name = nameController.text.trim();
+                final displayName = displayNameController.text.trim();
+
+                if (name.isEmpty || displayName.isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content:
+                          Text('Name and display name are required'),
+                    ),
+                  );
+                  return;
+                }
+
+                onSave(CapabilityCommand(
+                  name: name,
+                  displayName: displayName,
+                  description: descController.text.trim().isEmpty
+                      ? null
+                      : descController.text.trim(),
+                  parametersSchema: _buildSchema(paramsProperties),
+                  resultSchema: _buildSchema(resultProperties),
+                ));
+                Navigator.pop(context);
+              },
+              child: const Text('Save'),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () {
-              final name = nameController.text.trim();
-              final displayName = displayNameController.text.trim();
-
-              if (name.isEmpty || displayName.isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                      content: Text('Name and display name are required')),
-                );
-                return;
-              }
-
-              Map<String, dynamic> paramsSchema = {};
-              Map<String, dynamic> resultSchema = {};
-
-              try {
-                if (paramsController.text.trim().isNotEmpty) {
-                  paramsSchema = jsonDecode(paramsController.text.trim())
-                      as Map<String, dynamic>;
-                }
-              } catch (e) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Invalid parameters JSON: $e')),
-                );
-                return;
-              }
-
-              try {
-                if (resultController.text.trim().isNotEmpty) {
-                  resultSchema = jsonDecode(resultController.text.trim())
-                      as Map<String, dynamic>;
-                }
-              } catch (e) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Invalid result JSON: $e')),
-                );
-                return;
-              }
-
-              onSave(CapabilityCommand(
-                name: name,
-                displayName: displayName,
-                description: descController.text.trim().isEmpty
-                    ? null
-                    : descController.text.trim(),
-                parametersSchema: paramsSchema,
-                resultSchema: resultSchema,
-              ));
-              Navigator.pop(context);
-            },
-            child: const Text('Save'),
-          ),
-        ],
       ),
     );
+  }
+
+  /// True if a schema is non-empty but not a usable object-with-properties
+  /// schema. Used to warn the user when a legacy/hand-authored scalar schema
+  /// can't be round-tripped through the structured editor.
+  static bool _isMalformedObjectSchema(Map<String, dynamic>? schema) {
+    if (schema == null || schema.isEmpty) return false;
+    final properties = schema['properties'];
+    return properties is! Map || properties.isEmpty;
   }
 
   CborSizeEstimate get _heartbeatEstimate {
@@ -1084,6 +1315,9 @@ class SchemaProperty {
   final String? description;
   final bool isRequired;
   final List<SchemaProperty> children; // For nested object properties
+  final List<String>? enumValues;
+  final num? minimum;
+  final num? maximum;
 
   SchemaProperty({
     required this.name,
@@ -1091,6 +1325,9 @@ class SchemaProperty {
     this.description,
     this.isRequired = false,
     List<SchemaProperty>? children,
+    this.enumValues,
+    this.minimum,
+    this.maximum,
   }) : children = children ?? [];
 
   SchemaProperty copyWith({
@@ -1099,6 +1336,9 @@ class SchemaProperty {
     String? description,
     bool? isRequired,
     List<SchemaProperty>? children,
+    List<String>? enumValues,
+    num? minimum,
+    num? maximum,
   }) {
     return SchemaProperty(
       name: name ?? this.name,
@@ -1106,6 +1346,9 @@ class SchemaProperty {
       description: description ?? this.description,
       isRequired: isRequired ?? this.isRequired,
       children: children ?? this.children,
+      enumValues: enumValues ?? this.enumValues,
+      minimum: minimum ?? this.minimum,
+      maximum: maximum ?? this.maximum,
     );
   }
 }
